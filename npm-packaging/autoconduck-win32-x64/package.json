@@ -1,0 +1,13 @@
+{
+  "name": "autoconduck-win32-x64",
+  "version": "0.1.0",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/"
+  ]
+}

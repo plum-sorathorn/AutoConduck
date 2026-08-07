@@ -1,0 +1,111 @@
+# ============================================================
+# Python — bytecode, caches, packaging
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+wheels/
+*.whl
+*.sdist
+MANIFEST
+
+# ============================================================
+# Virtual environments
+# ============================================================
+.venv/
+venv/
+env/
+ENV/
+.env
+.ENV
+
+# ============================================================
+# Test / coverage / lint caches
+# ============================================================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+coverage.xml
+*.cover
+
+# ============================================================
+# Jupyter
+# ============================================================
+.ipynb_checkpoints/
+*.ipynb
+
+# ============================================================
+# Logs
+# ============================================================
+*.log
+logs/
+*.jsonl
+
+# ============================================================
+# AutoConduck runtime state
+# Primary state lives in ~/.autoconduck/ (outside repo, see
+# autoconduck/config.py:home_dir() -> $AUTOCONDUCK_HOME or
+# ~/.autoconduck).  The entries below are safety-nets in case
+# a local directory/file is created inside the checkout
+# during development or when AUTOCONDUCK_HOME is pointed at
+# the repo root.
+# ============================================================
+.autoconduck/
+state.json
+routing.jsonl
+cache/
+backups/
+
+# ============================================================
+# npm-packaging build artifacts
+# ============================================================
+npm-packaging/*/dist/
+npm-packaging/*/node_modules/
+npm-packaging/autoconduck/dist/
+npm-packaging/autoconduck/node_modules/
+*.tgz
+npm-packaging/*/bin/*.exe
+*.spec
+
+# ============================================================
+# OS noise
+# ============================================================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ============================================================
+# Editor / IDE
+# ============================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.history/
+*.sublime-project
+*.sublime-workspace
+
+# ============================================================
+# Keep source, tests, docs, packaging metadata
+# (do NOT add rules that would match these)
+# autoconduck/**/*.py, tests/, *.md, requirements.txt,
+# pyproject.toml, pricing_fallback.json are intentionally
+# NOT ignored.
+# ============================================================
+
+/graphify-out

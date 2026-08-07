@@ -1,0 +1,11 @@
+{
+  "gpt-4o": {"price_in": 2.5, "price_out": 10.0},
+  "gpt-4o-mini": {"price_in": 0.15, "price_out": 0.6},
+  "claude-3-5-sonnet-20241022": {"price_in": 3.0, "price_out": 15.0},
+  "claude-3-5-haiku-20241022": {"price_in": 0.25, "price_out": 1.25},
+  "o1-preview": {"price_in": 15.0, "price_out": 60.0},
+  "o1-mini": {"price_in": 3.0, "price_out": 12.0},
+  "gemini-1.5-pro": {"price_in": 1.25, "price_out": 5.0},
+  "gemini-1.5-flash": {"price_in": 0.075, "price_out": 0.3},
+  "mistral-large-latest": {"price_in": 2.0, "price_out": 6.0}
+}
