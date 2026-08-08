@@ -36,6 +36,13 @@ Agent → LiteLLM Proxy (streaming/provider abstraction)
 3. **LangGraph** runs the asynchronous subagent DAG through `orchestrator/`.
    The dashboard and Textual `tui/` make routing decisions inspectable.
 
+The orchestrator planner and subagents resolve their model from the active
+configuration via `resolve_orchestrator_model` in `config.py`; they do not use
+a fixed runtime model. Gateway `api_base` values may be entered with or
+without `/v1`: `normalize_api_base()` retains the raw value in
+`config.yaml` and appends `/v1` at each LiteLLM call site when the host root has
+no path.
+
 ## Quick start
 
 ```bash
@@ -50,6 +57,26 @@ the onboarding flow, then select any AutoConduck pseudo-model.
 The LiteLLM-Proxy-backed surface serves `/v1/chat/completions` (intercepting
 the three pseudo-models) and `/v1/models` (returning them), while AutoConduck
 owns `/stats` for routing-decision audit and cost-saved data, plus `/healthz`.
+
+### Custom provider registration
+
+Custom providers are stored in `~/.autoconduck/config.yaml`, or in
+`$AUTOCONDUCK_HOME/config.yaml`. For example:
+
+```yaml
+custom_models:
+  - provider: llmgateway
+    base_url: https://api.llmgateway.io
+    api_key_env: LLMGATEWAY_API_KEY
+    enabled: true
+model_list:
+  - model_name: deepseek-v4-flash
+    provider: llmgateway
+    tier: balanced
+```
+
+Use the TUI Model Source screen to register this shape; keep the API key in
+the environment variable named by `api_key_env`.
 
 ## Seamless agent integration
 

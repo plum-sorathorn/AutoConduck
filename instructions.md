@@ -57,6 +57,12 @@ The aliases do not identify an upstream provider model. `pricing.py` selects
 the cheapest capable real model from the configured pool, using LiteLLM costs,
 token correction, and degraded-routing safeguards.
 
+On the Slow path, the planner and subagents resolve their model from the active
+configuration via `resolve_orchestrator_model` in `config.py`, not from a
+hardcoded runtime default. Gateway `api_base` values may be entered with or
+without `/v1`; `normalize_api_base()` keeps the raw value in `config.yaml` and
+appends `/v1` at each LiteLLM call site when the host root has no path.
+
 ## Dashboard and audit data
 
 The Textual dashboard shows recent routing decisions, active agents, service
@@ -117,6 +123,20 @@ provider-specific integration.
 The `model_presets.py` and `providers.py` settings are stored under the
 AutoConduck home directory. Keep provider secrets in environment variables or
 the onboarding secret flow; do not commit them to agent configuration.
+
+For example, a custom LLM Gateway registration in `config.yaml` has this shape:
+
+```yaml
+custom_models:
+  - provider: llmgateway
+    base_url: https://api.llmgateway.io
+    api_key_env: LLMGATEWAY_API_KEY
+    enabled: true
+model_list:
+  - model_name: deepseek-v4-flash
+    provider: llmgateway
+    tier: balanced
+```
 
 ## Configuration checklist
 

@@ -12,6 +12,7 @@ import json
 import os
 import uuid
 from typing import Any
+from .config import normalize_api_base, qualify_model, resolve_api_key
 
 PSEUDO_MODELS = {"autoconduck", "autoconduck-budget", "autoconduck-expensive"}
 
@@ -120,11 +121,20 @@ def litellm_params_for(model_id: str, cfg) -> dict:
     entry = custom_entry(cfg, model_id)
     if entry and entry.get("base_url"):
         return {
-            "model": model_id,
-            "api_base": entry["base_url"],
-            "api_key": os.environ.get(entry.get("api_key_env") or "", ""),
+            "model": qualify_model(model_id),
+            "api_base": normalize_api_base(entry["base_url"]),
+            "api_key": resolve_api_key(entry),
         }
-    return {"model": model_id}
+    result = {"model": qualify_model(model_id)}
+    if entry and entry.get("api_key_env"):
+        result["api_key"] = resolve_api_key(entry)
+    return result
+
+def messages_litellm_kwargs(model_id: str, extra: dict | None = None) -> dict:
+    from .config import qualify_model
+    kwargs = dict(extra or {})
+    kwargs["model"] = qualify_model(model_id)
+    return kwargs
 
 
 def count_tokens(text: str) -> int:

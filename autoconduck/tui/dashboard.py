@@ -1,7 +1,5 @@
 """Compact live routing dashboard."""
 from __future__ import annotations
-import json
-from pathlib import Path
 from .keymap import FOOTER_HINT
 def move_cursor(cursor: int, delta: int, length: int) -> int:
     return 0 if length <= 0 else max(0, min(length - 1, cursor + delta))
@@ -27,14 +25,6 @@ except ImportError:
     _TEXTUAL = False
     class Screen: pass
     def _require(): raise RuntimeError("Textual is required to use the AutoConduck TUI")
-
-def read_decisions(path: Path) -> list[dict]:
-    if not path.exists(): return []
-    rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try: rows.append(json.loads(line))
-        except json.JSONDecodeError: continue
-    return rows
 
 if _TEXTUAL:
     class DashboardScreen(Screen):

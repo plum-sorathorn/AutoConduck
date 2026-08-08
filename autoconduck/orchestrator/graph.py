@@ -38,15 +38,18 @@ def _response_text(response: Any) -> str:
 
 
 def _call(client: Any, model: str, messages: list[dict[str, str]]) -> str:
+    from autoconduck.config import orchestrator_litellm_params, get_config, qualify_model
+    params = orchestrator_litellm_params(get_config())
+    params["model"] = qualify_model(model)
     if client is not None and hasattr(client, "completion"):
-        return _response_text(client.completion(model=model, messages=messages))
+        return _response_text(client.completion(messages=messages, **params))
     if client is not None and hasattr(client, "chat"):
-        return _response_text(client.chat.completions.create(model=model, messages=messages))
+        return _response_text(client.chat.completions.create(messages=messages, **params))
     import litellm
-    return _response_text(litellm.completion(model=model, messages=messages))
+    return _response_text(litellm.completion(messages=messages, **params))
 
 
-def _executor_model(pseudo_model: str) -> str:
+def _executor_model(pseudo_model: str, cfg=None) -> str:
     try:
         from autoconduck import pricing
         selected = pricing.select(pseudo_model)
@@ -56,15 +59,18 @@ def _executor_model(pseudo_model: str) -> str:
             return str(getattr(selected, "model", selected))
     except Exception:
         pass
-    return "gpt-4o"
+    from autoconduck.config import resolve_orchestrator_model
+    return resolve_orchestrator_model(cfg)
 
 
 def run(messages: list, history, pseudo_model: str = "autoconduck", client=None) -> str | None:
     if not _LANGGRAPH_AVAILABLE:
         return None
     try:
+        from autoconduck.config import get_config
+        cfg = get_config()
         def planner_node(state: State) -> dict:
-            plan = build_task_plan(state.messages, client=client)
+            plan = build_task_plan(state.messages, client=client, cfg=cfg)
             attempt = state.attempt + 1
             return {"plan": plan, "attempt": attempt, "fallback": plan is None and attempt >= 2}
 
@@ -83,7 +89,7 @@ def run(messages: list, history, pseudo_model: str = "autoconduck", client=None)
                 for task in ready:
                     Send("subagent_pool", {"task_id": task.id})
                     upstream = "\n".join(completed[dep] for dep in task.depends_on)
-                    completed[task.id] = run_subagent(task, upstream, client=client)
+                    completed[task.id] = run_subagent(task, upstream, client=client, cfg=cfg)
                     pending.remove(task)
             return {"subagent_outputs": completed}
 
@@ -96,7 +102,7 @@ def run(messages: list, history, pseudo_model: str = "autoconduck", client=None)
 
         def executor_node(state: State) -> dict:
             prompt = f"Original request:\n{state.messages}\n\nAnalyst summary:\n{state.compacted}"
-            return {"result": _call(client, _executor_model(state.pseudo_model), [{"role": "user", "content": prompt}])}
+            return {"result": _call(client, _executor_model(state.pseudo_model, cfg), [{"role": "user", "content": prompt}])}
 
         def after_plan(state: State):
             if state.plan is not None:

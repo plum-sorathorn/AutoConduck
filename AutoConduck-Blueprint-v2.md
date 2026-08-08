@@ -16,6 +16,8 @@ AutoConduck transparently routes every request turn to the cheapest real model c
 
 **Provider coverage note:** AutoConduck does not require a model source to be a "named provider" in LiteLLM's registry. LiteLLM's generic `openai/<model>` + `api_base` mechanism lets any OpenAI-compatible endpoint — including flat-rate gateways like DevPass (LLM Gateway) — be added as a routing target through config alone. See Section 6.5 for how this is surfaced in the TUI.
 
+Runtime calls qualify models with `qualify_model()` as `openai/<id>`. `resolve_api_key()` accepts literal `api_key`, an environment name in `api_key_env`, or the `api_key_env` value as a literal fallback.
+
 ---
 
 ## 2. Foundation Libraries ("The Three Pillars")
@@ -178,11 +180,37 @@ This means AutoConduck's job is **not** to build provider-specific integrations 
 - **Generated LiteLLM config entries:** each selected model from a custom endpoint is written into the `model_list` using the `openai/<model>` + `api_base` pattern above — this is pure config generation, not new routing code.
 - **A small built-in preset for DevPass specifically** (base URL, known env var names, doc link) so it shows up as a one-click option rather than requiring the user to go through the fully generic "Custom Endpoint" flow — worth doing given how common gateway subscriptions like this are, and cheap to maintain since it's just a config stub, not integration code.
 
+Provider configuration is persisted in `~/.autoconduck/config.yaml`, or under
+`$AUTOCONDUCK_HOME/config.yaml` when that override is set. A custom provider
+may be represented as follows (the TUI writes the corresponding entries):
+
+```yaml
+custom_models:
+  - provider: llmgateway
+    base_url: https://api.llmgateway.io
+    api_key_env: LLMGATEWAY_API_KEY
+    enabled: true
+model_list:
+  - model_name: deepseek-v4-flash
+    provider: llmgateway
+    tier: balanced
+```
+
+Users may enter a gateway base URL with or without a trailing `/v1`.
+`config.yaml` retains the raw value, while `normalize_api_base()` in
+`config.py` appends `/v1` when the host root has no path. This normalization is
+applied at every LiteLLM call site, so `https://api.llmgateway.io` and
+`https://api.llmgateway.io/v1` are equivalent.
+
 **Cost-tracking implication (`pricing.py`):** DevPass and similar flat-rate gateways bill a fixed subscription, not metered per-token cost — so `litellm.model_cost` won't have accurate per-token pricing for models routed through it out of the box. `pricing.py`'s existing local JSON fallback (Section 6.4) is exactly the mechanism to handle this: define an entry that reflects effective cost (e.g., subscription price ÷ included allowance, or a flat $0 with a separate "quota remaining" indicator) rather than pretending it's metered at provider rates. The dashboard's cost-saved figure should visually distinguish metered spend from subscription-allowance spend — showing "$12.40 saved" when the underlying model was actually "free" against an already-paid subscription is misleading otherwise.
 
 ### 6.6 `orchestrator/` — LangGraph DAG (replaces old `orchestrator.py`)
 
-- **Planner node:** requests a structured `TaskPlan` from a fast-tier model. Schema unchanged from v1:
+- **Planner node:** requests a structured `TaskPlan` from the first enabled
+  model resolved from the active configuration via
+  `resolve_orchestrator_model` (`config.py`), rather than from a hardcoded
+  runtime default. The same configured-model resolution is used by the
+  subagent pool and other orchestrator model calls. Schema unchanged from v1:
 
   ```python
   class SubTask(BaseModel):

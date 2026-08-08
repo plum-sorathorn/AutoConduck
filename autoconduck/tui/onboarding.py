@@ -142,7 +142,7 @@ if _TEXTUAL:
             super().__init__(); self.controller=controller; self.agents=agents; self.provider=provider
         def compose(self):
             old=next((x for x in get_config().custom_models if x.get("provider")==self.provider),{})
-            yield Vertical(Static("Custom provider"),Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"),Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"),Input(value=old.get("api_key_env",""),placeholder="api_key_env",id="api_key"),TextArea("\n".join(x["id"] for x in get_config().custom_models if x.get("provider")==self.provider),id="models"),Static("enter: save · ctrl+s: save · esc: cancel", id="error"))
+            yield Vertical(Static("Custom provider"),Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"),Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"),Input(value=old.get("api_key",old.get("api_key_env","")),placeholder="API key or environment variable name",id="api_key"),TextArea("\n".join(x["id"] for x in get_config().custom_models if x.get("provider")==self.provider),id="models"),Static("enter: save · ctrl+s: save · esc: cancel", id="error"))
         def on_input_submitted(self, event): self.action_save()
         def action_cancel(self): self.controller.pop_screen()
         def action_save(self):

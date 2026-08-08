@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
 from pydantic import BaseModel, Field
 import yaml
@@ -23,6 +24,66 @@ class Config(BaseModel):
     preset_overrides: dict[str, list[dict]] = Field(default_factory=dict)
     shims: dict[str, str] = Field(default_factory=dict)
     managed_server: bool = False
+
+def resolve_api_key(entry: dict) -> str:
+    if entry.get("api_key"):
+        return str(entry["api_key"])
+    name = entry.get("api_key_env")
+    if name:
+        return os.environ.get(name, name)
+    return ""
+
+def qualify_model(model_id: str) -> str:
+    """Return a LiteLLM provider-qualified model name."""
+    value = str(model_id or "")
+    return value if "/" in value else f"openai/{value}"
+
+def normalize_api_base(base_url: str) -> str:
+    """Return an OpenAI-compatible endpoint URL with the required /v1 path."""
+    value = str(base_url or "").rstrip("/")
+    if not value:
+        return value
+    parts = urlsplit(value)
+    if parts.path.rstrip("/").split("/")[-1].lower() == "v1":
+        return value
+    return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/") + "/v1", parts.query, parts.fragment))
+
+def resolve_orchestrator_model(cfg=None) -> str:
+    """Select the first enabled configured model for orchestration calls."""
+    if cfg is None:
+        try:
+            cfg = get_config()
+        except Exception:
+            cfg = None
+    for source in (getattr(cfg, "model_list", []) or [], getattr(cfg, "custom_models", []) or []):
+        for entry in source:
+            if not isinstance(entry, dict) or entry.get("enabled", True) is False:
+                continue
+            model = entry.get("id") or entry.get("model_name") or entry.get("model")
+            if not model and isinstance(entry.get("litellm_params"), dict):
+                model = entry["litellm_params"].get("model")
+            if model:
+                return str(model)
+    return "gpt-4o"
+
+def orchestrator_litellm_params(cfg=None) -> dict[str, str]:
+    """Build LiteLLM kwargs for the configured orchestration model."""
+    model = resolve_orchestrator_model(cfg)
+    for source in (getattr(cfg, "model_list", []) or [], getattr(cfg, "custom_models", []) or []):
+        for entry in source:
+            if not isinstance(entry, dict):
+                continue
+            raw = entry.get("id") or entry.get("model_name") or entry.get("model")
+            params = entry.get("litellm_params") if isinstance(entry.get("litellm_params"), dict) else entry
+            if str(raw or "").removeprefix("openai/") != str(model).removeprefix("openai/"):
+                continue
+            result = {"model": qualify_model(model)}
+            if params.get("base_url") or params.get("api_base"):
+                result["api_base"] = normalize_api_base(params.get("base_url") or params["api_base"])
+            if params.get("api_key_env"):
+                result["api_key"] = resolve_api_key(params)
+            return result
+    return {"model": qualify_model(model)}
 def home_dir() -> Path: return Path(os.environ.get("AUTOCONDUCK_HOME", Path.home() / ".autoconduck"))
 def backups_dir(agent: str | None = None) -> Path:
     path = home_dir() / "backups"

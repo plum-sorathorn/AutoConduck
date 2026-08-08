@@ -6,6 +6,12 @@ from .semantic_router import RouteMatch
 STACK_TRACE_BOOST = 0.25
 ESCALATION_THRESHOLD = 0.80
 HYSTERESIS_FLOOR = 0.50
+_SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.IGNORECASE | re.DOTALL)
+
+
+def clean_routing_text(text: object) -> str:
+    """Remove Claude Code's injected reminders before measuring user intent."""
+    return _SYSTEM_REMINDER.sub("", str(text or "")).strip()
 
 @dataclass(frozen=True)
 class Score:
@@ -32,7 +38,8 @@ def complexity_of(text: str) -> float:
 def _last(messages: list) -> str:
     if not messages: return ""
     item = messages[-1]
-    return str(getattr(item, "content", item))
+    content = item.get("content", "") if isinstance(item, dict) else getattr(item, "content", item)
+    return clean_routing_text(content)
 
 def score(messages: list, history, match: RouteMatch, pseudo_model: str = "autoconduck", config=None) -> Score:
     text = _last(messages)

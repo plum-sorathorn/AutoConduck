@@ -35,14 +35,18 @@ def _text(response: Any) -> str:
     return str(response.choices[0].message.content)
 
 
-def run_subagent(task: SubTask, upstream_summaries: str, client=None) -> str:
+def run_subagent(task: SubTask, upstream_summaries: str, client=None, cfg=None) -> str:
     try:
+        from autoconduck.config import resolve_orchestrator_model
+        from autoconduck.config import orchestrator_litellm_params
+        model = resolve_orchestrator_model(cfg)
+        params = orchestrator_litellm_params(cfg)
         messages = [{"role": "user", "content": build_subagent_prompt(task, upstream_summaries)}]
         if client is not None and hasattr(client, "completion"):
-            return _text(client.completion(model="gpt-4o-mini", messages=messages))
+            return _text(client.completion(messages=messages, **params))
         if client is not None and hasattr(client, "chat"):
-            return _text(client.chat.completions.create(model="gpt-4o-mini", messages=messages))
+            return _text(client.chat.completions.create(messages=messages, **params))
         import litellm
-        return _text(litellm.completion(model="gpt-4o-mini", messages=messages))
+        return _text(litellm.completion(messages=messages, **params))
     except Exception as exc:
         return f"Subagent error: {exc}"

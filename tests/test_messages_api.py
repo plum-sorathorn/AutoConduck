@@ -104,12 +104,15 @@ def test_custom_entry_and_litellm_params_use_base_url_and_env(monkeypatch):
     assert entry["base_url"] == "https://example.com/v1"
 
     params = m.litellm_params_for("my-model", cfg)
-    assert params["model"] == "my-model"
+    assert params["model"] == "openai/my-model"
     assert params["api_base"] == "https://example.com/v1"
     assert params["api_key"] == "secret-token"
 
     default_params = m.litellm_params_for("autoconduck", cfg)
-    assert default_params == {"model": "autoconduck"}
+    assert default_params == {"model": "openai/autoconduck"}
+
+def test_messages_kwargs_do_not_clobber_qualified_model():
+    assert m.messages_litellm_kwargs("deepseek-v4-flash", {"model": "openai/deepseek-v4-flash"})["model"] == "openai/deepseek-v4-flash"
 
 
 def test_translator_text_stream_events():

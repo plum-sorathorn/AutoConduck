@@ -1,6 +1,7 @@
 """AutoConduck CLI and pragmatic FastAPI/LiteLLM hybrid surface."""
 from __future__ import annotations
 import argparse, asyncio, json, os, sys, time, subprocess
+from contextlib import asynccontextmanager
 from typing import Any
 from .config import get_config, load_config, save_config, home_dir
 
@@ -112,7 +113,14 @@ try:
         tool_choice: Any | None = None
     class _Stats:
         decisions: list[dict[str, Any]] = []
-    stats = _Stats(); app = FastAPI(title="AutoConduck")
+    @asynccontextmanager
+    async def lifespan(_app):
+        try:
+            import litellm  # warm the local import before the first request
+        except ImportError:
+            pass
+        yield
+    stats = _Stats(); app = FastAPI(title="AutoConduck", lifespan=lifespan)
     PSEUDO = PSEUDO_MODELS
     async def _call(model, body):
         llm = _litellm()
@@ -132,7 +140,7 @@ try:
         if body_model in PSEUDO:
             try:
                 from .dispatcher import route
-                decision = route(messages, [], pseudo_model=body_model)
+                decision = await asyncio.to_thread(route, messages, [], pseudo_model=body_model, config=cfg)
                 path = getattr(decision, "path", "FAST").upper(); model = getattr(decision, "model", None)
             except Exception: path, model = "FAST", None
             stats.decisions.append({"path": path, "model": model or body_model, "time": time.time()})
@@ -147,7 +155,9 @@ try:
                 try:
                     from .pricing import select
                     model = select(getattr(cfg, "model_list", []), body_model, cfg)
-                except Exception: model = body_model
+                except Exception:
+                    from .config import resolve_orchestrator_model
+                    model = resolve_orchestrator_model(cfg)
             target = model
         kwargs = litellm_params_for(target, cfg)
         return target, kwargs
@@ -198,7 +208,8 @@ try:
                         yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                 return StreamingResponse(relay_answer(), media_type="text/event-stream")
             return JSONResponse(anthropic_response_text(answer, target or body.model))
-        kwargs = dict(extra); kwargs["model"] = target
+        from .messages_api import messages_litellm_kwargs
+        kwargs = messages_litellm_kwargs(target, extra)
         if body.stream:
             async def relay():
                 translator = AnthropicSSETranslator(target, input_text=json.dumps(oai_messages))

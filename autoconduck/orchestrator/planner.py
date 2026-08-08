@@ -125,26 +125,25 @@ def _format_file_contents(files: dict[str, str]) -> str:
     return "\n".join(parts)
 
 
-def _model_name() -> str:
+def _model_name(cfg=None) -> str:
     try:
-        from autoconduck import config  # type: ignore
-        for name in ("FAST_MODEL", "fast_model", "DEFAULT_FAST_MODEL"):
-            value = getattr(config, name, None)
-            if isinstance(value, str) and value:
-                return value
+        from autoconduck.config import resolve_orchestrator_model
+        return resolve_orchestrator_model(cfg)
     except Exception:
         pass
-    return "gpt-4o-mini"
+    return "gpt-4o"
 
 
-def _completion(client: Any, messages: list[dict[str, str]], **kwargs: Any) -> Any:
+def _completion(client: Any, messages: list[dict[str, str]], cfg=None, **kwargs: Any) -> Any:
+    from autoconduck.config import orchestrator_litellm_params
+    kwargs = {**orchestrator_litellm_params(cfg), **kwargs}
     if client is not None:
         if hasattr(client, "completion"):
-            return client.completion(model=_model_name(), messages=messages, **kwargs)
+            return client.completion(messages=messages, **kwargs)
         if hasattr(client, "chat") and hasattr(client.chat, "completions"):
-            return client.chat.completions.create(model=_model_name(), messages=messages, **kwargs)
+            return client.chat.completions.create(messages=messages, **kwargs)
     import litellm
-    return litellm.completion(model=_model_name(), messages=messages, **kwargs)
+    return litellm.completion(messages=messages, **kwargs)
 
 
 def _content(response: Any) -> str:
@@ -155,7 +154,7 @@ def _content(response: Any) -> str:
     return str(response.choices[0].message.content)
 
 
-def build_task_plan(messages: list, client=None) -> TaskPlan | None:
+def build_task_plan(messages: list, client=None, cfg=None) -> TaskPlan | None:
     """Ask the fast model for a plan; tolerate unavailable dependencies and bad models."""
     try:
         schema = TaskPlan.model_json_schema()
@@ -165,7 +164,7 @@ def build_task_plan(messages: list, client=None) -> TaskPlan | None:
         prompt_messages = [{"role": "system", "content": system_content}, *messages]
         for _ in range(2):
             try:
-                response = _completion(client, prompt_messages, response_format={
+                response = _completion(client, prompt_messages, cfg=cfg, response_format={
                     "type": "json_schema", "json_schema": {"name": "TaskPlan", "schema": schema, "strict": True}
                 })
                 raw = _content(response)
