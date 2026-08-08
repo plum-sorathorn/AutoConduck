@@ -36,6 +36,15 @@ class PseudoModelConfig(BaseModel):
     transform: str = "x"
 
 
+class OrchestrationSettings(BaseModel):
+    exploration: bool = True
+    max_rounds: int = 2
+    verifier: Literal["rule", "llm", "auto"] = "auto"
+    worker_tools: bool = True
+    escalate: bool = True
+    allow_command_checks: bool = False
+
+
 class Config(BaseModel):
     version: int = CONFIG_VERSION
     port: int = DEFAULT_PORT
@@ -64,6 +73,9 @@ class Config(BaseModel):
     )
     max_workers: int = 4
     max_in_flight: int = 32
+    orchestration: OrchestrationSettings = Field(default_factory=OrchestrationSettings)
+    pseudo_orchestration: dict[str, OrchestrationSettings] = Field(default_factory=dict)
+    playbook_path: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +145,9 @@ def load_config(path: Path | None = None) -> Config:
     env_log = os.environ.get("AUTOCONDUCK_LOG_LEVEL")
     if env_log:
         data["log_level"] = env_log.lower()
+    env_playbook = os.environ.get("AUTOCONDUCK_PLAYBOOK")
+    if env_playbook:
+        data["playbook_path"] = env_playbook
 
     if not data:
         # return defaults (onboarding will populate models)
@@ -164,3 +179,12 @@ def apply_cli_overrides(cfg: Config, port: int | None = None, cache_enabled: boo
     if cache_enabled is not None:
         cfg.cache_enabled = cache_enabled
     return cfg
+
+
+def orchestration_for(pseudo: str) -> OrchestrationSettings:
+    base = get_config().orchestration
+    override = get_config().pseudo_orchestration.get(pseudo)
+    if override is not None:
+        # merge partial override over base (only explicitly set fields)
+        return base.model_copy(update=override.model_dump(exclude_unset=True))
+    return base

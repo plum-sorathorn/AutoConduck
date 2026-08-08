@@ -12,6 +12,13 @@ from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import Config, ModelEntry, get_config
+# orchestration_for / OrchestrationSettings imported lazily with fallback (contract-first)
+try:
+    from .config import OrchestrationSettings as _OrchestrationSettings  # type: ignore
+    from .config import orchestration_for as _orchestration_for  # type: ignore
+except Exception:  # pragma: no cover - contract-first fallback
+    _OrchestrationSettings = None  # type: ignore
+    _orchestration_for = None  # type: ignore
 from . import gatekeeper as gatekeeper_mod
 from . import evaluator as evaluator_mod
 from . import pricing as pricing_mod
@@ -473,6 +480,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         t0 = time.perf_counter()
         request_id = str(uuid.uuid4())[:8]
         steps_ms: dict[str, float] = {}
+        rounds_used = None  # for telemetry, set in slow path
         body_bytes: bytes | None = None
         try:
             raw = await request.body()
@@ -553,7 +561,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         real_model=chat.model,
                         path="passthrough",
                         gate_reason="passthrough",
-                        latency_overhead_ms=(time.perf_counter() - t0) * 1000,
+                        rounds_used=rounds_used,
+                            latency_overhead_ms=(time.perf_counter() - t0) * 1000,
                     )
                     telemetry_mod.telemetry.push(evt)
                     return resp
@@ -576,7 +585,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         pseudo_model=None,
                         real_model=chat.model,
                         path="passthrough",
-                        latency_overhead_ms=(time.perf_counter() - t0) * 1000,
+                        rounds_used=rounds_used,
+                            latency_overhead_ms=(time.perf_counter() - t0) * 1000,
                     )
                     telemetry_mod.telemetry.push(evt)
                     return JSONResponse(content=body, headers={"x-autoconduck-model": chat.model})
@@ -620,7 +630,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         real_model="cache",
                         path="cache_hit",
                         cache_hit=True,
-                        latency_overhead_ms=(time.perf_counter() - t0) * 1000,
+                        rounds_used=rounds_used,
+                            latency_overhead_ms=(time.perf_counter() - t0) * 1000,
                     )
                     telemetry_mod.telemetry.push(evt)
                     if cached.lstrip().startswith(b"data:"):
@@ -700,6 +711,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         degraded_to_fast = False
         worker_ok = None
         worker_fail = None
+        rounds_used = None
         plan_model_id: str | None = None
         worker_model_id: str | None = None
 
@@ -724,13 +736,98 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 # stash in ctx
                 ctx.orch = {"plan_model_id": plan_model_id, "worker_model_id": worker_model_id}
 
+                # --- adaptive orchestration wiring (contract-first, keep 0.40/0.55 above) ---
+                # settings = orchestration_for(pseudo) with fallback
+                try:
+                    if _orchestration_for is not None and pseudo is not None:
+                        settings = _orchestration_for(pseudo)  # type: ignore
+                    else:
+                        raise ImportError("orchestration_for unavailable")
+                except Exception:
+                    try:
+                        # fallback: per-pseudo override else global orchestration
+                        _cfg_tmp = cfg_local
+                        if pseudo and getattr(_cfg_tmp, "pseudo_orchestration", None) and pseudo in _cfg_tmp.pseudo_orchestration:
+                            settings = _cfg_tmp.pseudo_orchestration[pseudo]
+                        else:
+                            settings = getattr(_cfg_tmp, "orchestration", None)
+                            if settings is None:
+                                raise ValueError("no orchestration")
+                    except Exception:
+                        try:
+                            if _OrchestrationSettings is not None:
+                                settings = _OrchestrationSettings()  # type: ignore
+                            else:
+                                # minimal fallback object
+                                from types import SimpleNamespace
+                                settings = SimpleNamespace(escalate=True, verifier="auto", exploration=True, max_rounds=2, worker_tools=True, allow_command_checks=False)
+                        except Exception:
+                            from types import SimpleNamespace
+                            settings = SimpleNamespace(escalate=True, verifier="auto", exploration=True, max_rounds=2, worker_tools=True, allow_command_checks=False)
+
+                # Build escalation ladder
+                worker_model_ladder = None
+                try:
+                    if getattr(settings, "escalate", False):
+                        ladder: list[str] = [worker_model_id] if worker_model_id else []
+                        try:
+                            mid = pricing_mod.select(0.75, cfg_local.models, t_in_est, t_out_est).id
+                            ladder.append(mid)
+                        except Exception:
+                            pass
+                        try:
+                            high = pricing_mod.select(0.90, cfg_local.models, t_in_est, t_out_est).id
+                            ladder.append(high)
+                        except Exception:
+                            pass
+                        # dedupe consecutive duplicates
+                        deduped: list[str] = []
+                        for mid2 in ladder:
+                            if not deduped or deduped[-1] != mid2:
+                                deduped.append(mid2)
+                        if deduped:
+                            worker_model_ladder = deduped
+                        else:
+                            worker_model_ladder = [worker_model_id] if worker_model_id else None
+                    else:
+                        worker_model_ladder = None
+                except Exception:
+                    worker_model_ladder = None
+
+                # verifier model (cheapest) if needed
+                verifier_model_id = None
+                try:
+                    if getattr(settings, "verifier", "auto") in ("llm", "auto"):
+                        try:
+                            verifier_model_id = pricing_mod.select(0.30, cfg_local.models, t_in_est, t_out_est).id
+                        except Exception:
+                            verifier_model_id = None
+                except Exception:
+                    verifier_model_id = None
+
+                exploration_model_id = plan_model_id
+
+                # max_workers from cfg_local if available
+                _max_workers = getattr(cfg_local, "max_workers", None)
+
                 t_orch = time.perf_counter()
                 orch_result = await orchestrator.plan_and_execute(
-                    chat, plan_model_id=plan_model_id, worker_model_id=worker_model_id
+                    chat,
+                    plan_model_id=plan_model_id,
+                    worker_model_id=worker_model_id,
+                    worker_model_ladder=worker_model_ladder,
+                    orch_settings=settings,
+                    verifier_model_id=verifier_model_id,
+                    exploration_model_id=exploration_model_id,
+                    max_workers=_max_workers,
                 )
                 steps_ms["orchestrator"] = (time.perf_counter() - t_orch) * 1000
                 worker_ok = orch_result.worker_ok
                 worker_fail = orch_result.worker_fail
+                try:
+                    rounds_used = getattr(orch_result, "rounds_used", None)
+                except Exception:
+                    rounds_used = None
                 ctx.orch = orch_result
                 # O6: worker/plan error accounting
                 try:
@@ -824,7 +921,33 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         original_model = chat.model
         chat.model = selected.id
         if compacted and not degraded_to_fast:
-            sys_msg = Message(role="system", content=f"[AutoConduck context]\n{compacted}")
+            # extended injection: plan summary + round history, kept < ~2000 chars
+            try:
+                _rh_raw = getattr(orch_result, "round_history", "") if orch_result is not None else ""
+                if _rh_raw is None:
+                    _rh_raw = ""
+                _rh_raw = str(_rh_raw)
+            except Exception:
+                _rh_raw = ""
+            if len(_rh_raw) > 800:
+                _rh_raw = _rh_raw[:800]
+            try:
+                _plan = getattr(orch_result, "plan", None) if orch_result is not None else None
+                if _plan is None:
+                    _plan_summary = "n/a"
+                else:
+                    _plan_summary = getattr(_plan, "summary", "")  # type: ignore
+                    if _plan_summary is None:
+                        _plan_summary = ""
+                    _plan_summary = str(_plan_summary) if _plan_summary else "n/a"
+                    if _plan_summary == "":
+                        _plan_summary = "n/a"
+            except Exception:
+                _plan_summary = "n/a"
+            _injected = f"[AutoConduck context]\n{compacted}\n\nPlan summary: {_plan_summary}\n\nRound history:\n{_rh_raw}"
+            if len(_injected) > 2000:
+                _injected = _injected[: 2000 - 12] + "\n[truncated]"
+            sys_msg = Message(role="system", content=_injected)
             idx = 0
             for i, m in enumerate(chat.messages):
                 if m.role == "system":
@@ -916,6 +1039,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             cancelled=True,
                             worker_ok=worker_ok,
                             worker_fail=worker_fail,
+                            rounds_used=rounds_used,
                             steps_ms=steps_ms,
                         )
                         telemetry_mod.telemetry.push(evt2)
@@ -941,6 +1065,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                             latency_overhead_ms=overhead_ms,
                             worker_ok=worker_ok,
                             worker_fail=worker_fail,
+                            rounds_used=rounds_used,
                             steps_ms=steps_ms,
                         )
                         telemetry_mod.telemetry.push(evt)
@@ -995,6 +1120,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         cancelled=True,
                         worker_ok=worker_ok,
                         worker_fail=worker_fail,
+                            rounds_used=rounds_used,
                         steps_ms=steps_ms,
                     )
                     telemetry_mod.telemetry.push(evt)
@@ -1036,6 +1162,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     latency_overhead_ms=overhead_ms,
                     worker_ok=worker_ok,
                     worker_fail=worker_fail,
+                            rounds_used=rounds_used,
                     steps_ms=steps_ms,
                 )
                 telemetry_mod.telemetry.push(evt)
@@ -1064,6 +1191,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 latency_overhead_ms=overhead_ms,
                 cancelled=True,
                 steps_ms=steps_ms,
+                            rounds_used=rounds_used,
             )
             telemetry_mod.telemetry.push(evt)
             return Response(status_code=499, content=b"cancelled")
@@ -1100,6 +1228,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     error=str(e)[:500],
                     worker_ok=worker_ok,
                     worker_fail=worker_fail,
+                            rounds_used=rounds_used,
                     steps_ms=steps_ms,
                 )
                 telemetry_mod.telemetry.push(evt)
@@ -1123,6 +1252,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 error=str(e)[:500],
                 worker_ok=worker_ok,
                 worker_fail=worker_fail,
+                            rounds_used=rounds_used,
                 steps_ms=steps_ms,
             )
             telemetry_mod.telemetry.push(evt)

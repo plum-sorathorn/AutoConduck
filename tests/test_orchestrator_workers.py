@@ -47,7 +47,7 @@ def test_honors_max_workers():
             max_seen = max(max_seen, concurrent)
             await asyncio.sleep(0.05)
             concurrent -= 1
-            return f"result-{concurrent}"
+            return f"result-{concurrent}-" + "x" * 50
 
         orch._call_llm = fake_call  # type: ignore[method-assign]
 
@@ -82,7 +82,7 @@ def test_backward_compatibility_falls_back_to_config_default():
             max_seen = max(max_seen, concurrent)
             await asyncio.sleep(0.05)
             concurrent -= 1
-            return "ok"
+            return "x" * 50 + " ok padding to exceed 40 char minimum threshold for no-acceptance verification"
 
         orch._call_llm = fake_call  # type: ignore[method-assign]
 
@@ -124,7 +124,7 @@ def test_semaphore_uses_configured_value():
         async def fake_call(model, messages, **kwargs):
             if model == "plan-model":
                 return PLAN_JSON_4
-            return "ok"
+            return "x" * 50 + " ok padding to exceed 40 char minimum threshold for no-acceptance verification"
 
         orch._call_llm = fake_call  # type: ignore[method-assign]
 

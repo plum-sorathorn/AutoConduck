@@ -30,6 +30,7 @@ class RoutingEvent(BaseModel):
     error: str | None = None
     worker_ok: int | None = None
     worker_fail: int | None = None
+    rounds_used: int | None = None
     steps_ms: dict[str, float] | None = None
 
 
