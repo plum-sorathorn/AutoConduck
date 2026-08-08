@@ -5,6 +5,7 @@ from .base import BaseAdapter
 from ..config import Config
 
 class OpenCodeAdapter(BaseAdapter):
+    binary_name = "opencode"
     id = "opencode"
     display_name = "OpenCode"
     def detect(self) -> bool:

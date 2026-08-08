@@ -7,6 +7,7 @@ from .base import BaseAdapter
 
 
 class CursorAdapter(BaseAdapter):
+    binary_name = "cursor"
     id = "cursor"
     display_name = "Cursor"
 

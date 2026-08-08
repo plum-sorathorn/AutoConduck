@@ -1,0 +1,16 @@
+from autoconduck.tui.keymap import FOOTER_HINT, KEYMAP, QUIT_KEY
+
+
+def test_shared_keymap_bindings():
+    assert KEYMAP["ctrl+c"][0] == "quit"
+    assert not ("q" in KEYMAP and KEYMAP["q"][0] == "quit")
+    assert QUIT_KEY == "ctrl+c"
+    assert "[ctrl+c]" in FOOTER_HINT()
+    assert KEYMAP["j"][0] == "move_down"
+    assert KEYMAP["k"][0] == "move_up"
+    assert KEYMAP["enter"][0] == "select"
+    assert KEYMAP["esc"][0] == "back"
+    assert KEYMAP["/"][0] == "filter"
+    assert KEYMAP["?"][0] == "help"
+    assert KEYMAP["p"][0] == "pause"
+    assert KEYMAP["e"][0] == "edit"

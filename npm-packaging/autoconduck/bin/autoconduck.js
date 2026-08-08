@@ -1,64 +1,29 @@
 #!/usr/bin/env node
-const { spawn, spawnSync } = require("child_process");
+const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 
 function platformKey() {
-  const plat = process.platform; // darwin, linux, win32
-  const arch = process.arch; // x64, arm64
-  if (plat === "darwin" && arch === "arm64") return "darwin-arm64";
-  if (plat === "darwin" && arch === "x64") return "darwin-x64";
-  if (plat === "linux" && arch === "x64") return "linux-x64";
-  if (plat === "linux" && arch === "arm64") return "linux-arm64";
-  if (plat === "win32" && arch === "x64") return "win32-x64";
-  return `${plat}-${arch}`;
+  const key = `${process.platform}-${process.arch}`;
+  return ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64"].includes(key) ? key : key;
 }
-
-function resolveBinary() {
-  const key = platformKey();
-  const pkg = `autoconduck-${key}`;
-  // try to resolve platform package
-  try {
-    const resolved = require.resolve(`${pkg}/bin/autoconduck`, { paths: [__dirname, process.cwd(), path.join(__dirname, "..")] });
-    return resolved;
-  } catch {}
-  // try direct path relative to node_modules
-  const candidates = [
-    path.join(__dirname, "..", "..", pkg, "bin", process.platform === "win32" ? "autoconduck.exe" : "autoconduck"),
-    path.join(__dirname, "..", "node_modules", pkg, "bin", process.platform === "win32" ? "autoconduck.exe" : "autoconduck"),
-    path.join(process.cwd(), "node_modules", pkg, "bin", process.platform === "win32" ? "autoconduck.exe" : "autoconduck"),
-  ];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
+function resolvePackage() {
+  const pkg = `autoconduck-${platformKey()}`;
+  try { return path.dirname(require.resolve(`${pkg}/package.json`, { paths: [__dirname, process.cwd()] })); } catch {}
+  for (const candidate of [path.join(__dirname, "..", "..", pkg), path.join(__dirname, "..", "node_modules", pkg), path.join(process.cwd(), "node_modules", pkg)]) {
+    if (fs.existsSync(path.join(candidate, "package.json"))) return candidate;
   }
-  // fallback: try python -m autoconduck (dev mode)
   return null;
 }
-
-const bin = resolveBinary();
-const args = process.argv.slice(2);
-
-if (!bin) {
-  // dev fallback: try python
-  const pyCandidates = ["python", "python3", "py"];
-  let ran = false;
-  for (const py of pyCandidates) {
-    const r = spawnSync(py, ["-m", "autoconduck.main", ...args], { stdio: "inherit" });
-    if (r.error && r.error.code === "ENOENT") continue;
-    ran = true;
-    process.exit(r.status ?? 0);
-    break;
-  }
-  if (!ran) {
-    console.error(`[autoconduck] binary not found for platform ${platformKey()}.`);
-    console.error(`  Install the matching optionalDependency: autoconduck-${platformKey()}`);
-    console.error(`  Or run via python: python -m autoconduck ${args.join(" ")}`);
-    process.exit(1);
-  }
-} else {
-  const child = spawn(bin, args, { stdio: "inherit" });
-  child.on("exit", (code, signal) => {
-    if (signal) process.kill(process.pid, signal);
-    else process.exit(code ?? 0);
-  });
+function findPython() {
+  const candidates = process.env.AUTOCONDUCK_PYTHON ? [process.env.AUTOCONDUCK_PYTHON] : (process.platform === "win32" ? ["python3", "python", "py"] : ["python3", "python"]);
+  return candidates[0];
 }
+const python = findPython();
+if (!python) { console.error("[autoconduck] Python 3.11+ is required. Set AUTOCONDUCK_PYTHON."); process.exit(1); }
+const env = { ...process.env };
+const pkg = resolvePackage();
+if (pkg) env.AUTOCONDUCK_WHEEL_DIR = path.join(pkg, "python");
+const child = spawn(python, [path.join(__dirname, "bootstrap.py"), ...process.argv.slice(2)], { stdio: "inherit", env });
+child.on("error", (error) => { console.error(`[autoconduck] unable to start Python: ${error.message}`); process.exit(1); });
+child.on("exit", (code, signal) => { if (signal) process.kill(process.pid, signal); else process.exit(code ?? 1); });

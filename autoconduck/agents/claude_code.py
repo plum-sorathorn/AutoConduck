@@ -5,6 +5,7 @@ from .base import BaseAdapter
 from ..config import Config
 
 class ClaudeCodeAdapter(BaseAdapter):
+    binary_name = "claude"
     id = "claude_code"
     display_name = "Claude Code"
 

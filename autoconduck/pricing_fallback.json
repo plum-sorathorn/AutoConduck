@@ -1,11 +1,1 @@
-{
-  "gpt-4o": {"price_in": 2.5, "price_out": 10.0},
-  "gpt-4o-mini": {"price_in": 0.15, "price_out": 0.6},
-  "claude-3-5-sonnet-20241022": {"price_in": 3.0, "price_out": 15.0},
-  "claude-3-5-haiku-20241022": {"price_in": 0.25, "price_out": 1.25},
-  "o1-preview": {"price_in": 15.0, "price_out": 60.0},
-  "o1-mini": {"price_in": 3.0, "price_out": 12.0},
-  "gemini-1.5-pro": {"price_in": 1.25, "price_out": 5.0},
-  "gemini-1.5-flash": {"price_in": 0.075, "price_out": 0.3},
-  "mistral-large-latest": {"price_in": 2.0, "price_out": 6.0}
-}
+{"claude-fable-5":{"price_in":5.0,"price_out":25.0},"claude-haiku-4-5":{"price_in":0.8,"price_out":4.0},"gpt-5-mini":{"price_in":0.25,"price_out":2.0},"gpt-5":{"price_in":5.0,"price_out":15.0},"deepseek-chat":{"price_in":0.14,"price_out":0.28},"deepseek-reasoner":{"price_in":0.55,"price_out":2.19},"devpass-claude-fable-5":{"subscription":true,"price_in":0.0,"price_out":0.0,"note":"flat-rate gateway allowance"}}

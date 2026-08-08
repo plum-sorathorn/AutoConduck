@@ -1,0 +1,8 @@
+{
+  "name": "autoconduck",
+  "private": true,
+  "description": "CI gate shim: maps `npm test` to the real Python test runner (pytest). This is not a Node project.",
+  "scripts": {
+    "test": "python -m pytest -q"
+  }
+}

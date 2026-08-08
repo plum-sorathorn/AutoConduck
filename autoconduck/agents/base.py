@@ -14,6 +14,7 @@ END_MARKER = "# END AUTOCONDUCK"
 
 
 class BaseAdapter(ABC):
+    binary_name: str | None = None
     id: str = "base"
     display_name: str = "Base"
 

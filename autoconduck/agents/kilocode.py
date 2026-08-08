@@ -4,6 +4,7 @@ from .base import BaseAdapter
 from ..config import Config
 
 class KiloCodeAdapter(BaseAdapter):
+    binary_name = "kilocode"
     id = "kilocode"
     display_name = "Kilo Code"
     def detect(self) -> bool:

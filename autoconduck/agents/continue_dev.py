@@ -5,6 +5,7 @@ from .base import BaseAdapter
 from ..config import Config
 
 class ContinueDevAdapter(BaseAdapter):
+    binary_name = "continue"
     id = "continue_dev"
     display_name = "Continue"
     def detect(self) -> bool:

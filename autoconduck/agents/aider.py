@@ -5,6 +5,7 @@ from .base import BaseAdapter
 from ..config import Config
 
 class AiderAdapter(BaseAdapter):
+    binary_name = "aider"
     id = "aider"
     display_name = "Aider"
     def detect(self) -> bool:

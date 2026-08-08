@@ -12,7 +12,9 @@ dependencies = [
   "pyyaml>=6.0",
   "tiktoken>=0.6",
   "textual>=0.70",
-  "litellm>=1.40",
+  "litellm[proxy]>=1.40",
+  "semantic-router",
+  "langgraph",
 ]
 [project.scripts]
 autoconduck = "autoconduck.main:main"

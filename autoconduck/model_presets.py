@@ -32,6 +32,11 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
     ],
 }
 
+PRESET_ORDER = ["custom", "openai", "anthropic", "google", "mistral"]
+
+def default_preset_models(key: str) -> list[dict[str, Any]]:
+    return list(PRESETS.get(key, []))
+
 
 def _load_fallback() -> dict[str, dict]:
     if FALLBACK_PATH.exists():
@@ -64,6 +69,7 @@ def discover_models(
     preset_keys: list[str] | None = None,
     custom_models: list[dict[str, Any]] | None = None,
     use_litellm: bool = True,
+    overrides: dict[str, list[ModelEntry]] | None = None,
 ) -> list[ModelEntry]:
     """
     Build normalized ModelEntry list from presets + custom + pricing registry.
@@ -74,7 +80,9 @@ def discover_models(
 
     keys = preset_keys or []
     for k in keys:
-        for raw in PRESETS.get(k, []):
+        raw_models = custom_models if k == "custom" else (overrides[k] if overrides and k in overrides else PRESETS.get(k, []))
+        for raw_entry in raw_models or []:
+            raw = raw_entry.model_dump(mode="python") if isinstance(raw_entry, ModelEntry) else raw_entry
             mid = raw["id"]
             # enrich price from litellm if available
             price_in = raw.get("price_in")
@@ -97,7 +105,7 @@ def discover_models(
                 )
             )
 
-    for raw in custom_models or []:
+    for raw in ([] if "custom" in keys else (custom_models or [])):
         mid = raw.get("id") or raw.get("model")
         if not mid:
             continue
@@ -128,3 +136,7 @@ def discover_models(
 
 def normalize_entries(raw_list: list[dict[str, Any]]) -> list[ModelEntry]:
     return [ModelEntry.model_validate(r) for r in raw_list]
+
+def resolve_models(cfg: Any) -> list[ModelEntry]:
+    cfg.models = discover_models(cfg.selected_presets, cfg.custom_models, overrides=cfg.preset_overrides)
+    return cfg.models

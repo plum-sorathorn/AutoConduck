@@ -28,3 +28,7 @@ def all_adapters() -> list[BaseAdapter]:
         CursorAdapter(),
         GenericOpenAIAdapter(),
     ]
+
+def binary_name_for(agent_id: str) -> str | None:
+    adapter = next((a for a in all_adapters() if a.id == agent_id), None)
+    return getattr(adapter, "binary_name", None) if adapter else None

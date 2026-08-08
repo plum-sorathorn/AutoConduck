@@ -8,6 +8,6 @@
     "arm64"
   ],
   "files": [
-    "bin/"
+    "python/"
   ]
 }

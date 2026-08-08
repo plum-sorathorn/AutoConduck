@@ -64,9 +64,6 @@ logs/
 # the repo root.
 # ============================================================
 .autoconduck/
-state.json
-routing.jsonl
-cache/
 backups/
 
 # ============================================================
@@ -109,3 +106,5 @@ Desktop.ini
 # ============================================================
 
 /graphify-out
+/sandbox/home/
+/sandbox/work/
