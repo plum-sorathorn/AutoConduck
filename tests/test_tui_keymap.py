@@ -6,8 +6,10 @@ def test_shared_keymap_bindings():
     assert not ("q" in KEYMAP and KEYMAP["q"][0] == "quit")
     assert QUIT_KEY == "ctrl+c"
     assert "[ctrl+c]" in FOOTER_HINT()
-    assert KEYMAP["j"][0] == "move_down"
-    assert KEYMAP["k"][0] == "move_up"
+    assert KEYMAP["down"][0] == "move_down"
+    assert KEYMAP["up"][0] == "move_up"
+    assert "j" not in KEYMAP
+    assert "k" not in KEYMAP
     assert KEYMAP["enter"][0] == "select"
     assert KEYMAP["esc"][0] == "back"
     assert KEYMAP["/"][0] == "filter"

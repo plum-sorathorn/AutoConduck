@@ -8,6 +8,7 @@ from .config import ModelEntry
 
 # Bundled fallback pricing (populated in pricing_fallback.json)
 FALLBACK_PATH = Path(__file__).parent / "pricing_fallback.json"
+_litellm_costs_cache: dict[str, dict] | None = None
 
 # Preset groups
 
@@ -48,6 +49,9 @@ def _load_fallback() -> dict[str, dict]:
 
 
 def _ingest_litellm_costs() -> dict[str, dict]:
+    global _litellm_costs_cache
+    if _litellm_costs_cache is not None:
+        return _litellm_costs_cache
     try:
         import litellm  # type: ignore
 
@@ -60,6 +64,7 @@ def _ingest_litellm_costs() -> dict[str, dict]:
                     "price_in": float(v.get("input_cost_per_token", 0)) * 1000,
                     "price_out": float(v.get("output_cost_per_token", 0)) * 1000,
                 }
+        _litellm_costs_cache = out
         return out
     except Exception:
         return {}
@@ -98,12 +103,14 @@ def discover_models(
                     id=mid,
                     provider=raw.get("provider", "openai"),
                     api_key_env=raw.get("api_key_env", "OPENAI_API_KEY"),
-                    tier=raw.get("tier", "balanced"),  # type: ignore
+                    base_url=raw.get("base_url"),
+                    tier=raw.get("tier", "balanced"),
                     price_in=float(price_in or 0),
                     price_out=float(price_out or 0),
-                    enabled=True,
+                    enabled=bool(raw.get("enabled", True)),
                 )
             )
+
 
     for raw in ([] if "custom" in keys else (custom_models or [])):
         mid = raw.get("id") or raw.get("model")
@@ -120,12 +127,14 @@ def discover_models(
                 id=str(mid),
                 provider=str(raw.get("provider", "openai")),
                 api_key_env=str(raw.get("api_key_env", "OPENAI_API_KEY")),
-                tier=str(raw.get("tier", "balanced")),  # type: ignore
+                base_url=raw.get("base_url"),
+                tier=str(raw.get("tier", "balanced")),
                 price_in=float(pi or 0.001),
                 price_out=float(po or 0.002),
                 enabled=bool(raw.get("enabled", True)),
             )
         )
+
 
     # de-duplicate by id (last wins)
     seen: dict[str, ModelEntry] = {}
@@ -141,3 +150,4 @@ def resolve_models(cfg: Any) -> list[ModelEntry]:
     models = discover_models(getattr(cfg, "selected_presets", []), getattr(cfg, "custom_models", []), overrides=getattr(cfg, "preset_overrides", {}))
     cfg.model_list = [model.model_dump() for model in models]
     return models
+

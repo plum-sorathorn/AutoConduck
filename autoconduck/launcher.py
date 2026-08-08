@@ -89,19 +89,74 @@ def real_binary_path(agent_id):
     path = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if p.lower() != blocked)
     return shutil.which(name, path=path)
 
+def _claude_env_blocks(port: int, pseudo: str) -> tuple[str, str]:
+    """Return (bash_exports, cmd_sets) for the Claude Code agent_id only."""
+    bash = (
+        'export ANTHROPIC_BASE_URL="http://127.0.0.1:${PORT}"\n'
+        'export ANTHROPIC_AUTH_TOKEN="autoconduck-local"\n'
+        f'export ANTHROPIC_MODEL="{pseudo}"\n'
+        f'export ANTHROPIC_DEFAULT_OPUS_MODEL="{pseudo}"\n'
+        f'export ANTHROPIC_DEFAULT_SONNET_MODEL="{pseudo}"\n'
+        f'export ANTHROPIC_DEFAULT_HAIKU_MODEL="{pseudo}"\n'
+        f'export ANTHROPIC_CUSTOM_MODEL_OPTION="{pseudo}"\n'
+        'export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="AutoConduck local router"\n'
+        'export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"\n'
+        'export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS="1"'
+    )
+    cmd = (
+        'set "ANTHROPIC_BASE_URL=http://127.0.0.1:%PORT%"\n'
+        'set "ANTHROPIC_AUTH_TOKEN=autoconduck-local"\n'
+        f'set "ANTHROPIC_MODEL={pseudo}"\n'
+        f'set "ANTHROPIC_DEFAULT_OPUS_MODEL={pseudo}"\n'
+        f'set "ANTHROPIC_DEFAULT_SONNET_MODEL={pseudo}"\n'
+        f'set "ANTHROPIC_DEFAULT_HAIKU_MODEL={pseudo}"\n'
+        f'set "ANTHROPIC_CUSTOM_MODEL_OPTION={pseudo}"\n'
+        'set "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION=AutoConduck local router"\n'
+        'set "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"\n'
+        'set "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1"'
+    )
+    return bash, cmd
+
 def shim_script(agent_id, real_bin):
     import shlex
     real_bin = str(real_bin)
-    return ("#!/usr/bin/env bash\nset -u\n" f"REAL_BIN={shlex.quote(real_bin)}\nPY={shlex.quote(sys.executable)}\n"
-            f'PORT="${{AUTOCONDUCK_PORT:-{config.get_config().port}}}"\n" "$PY" -m autoconduck ensure --port "$PORT" || true\n'
-            '"$REAL_BIN" "$@"\nrc=$?\n"$PY" -m autoconduck release --port "$PORT" || true\nexit $rc\n')
+    cfg = config.get_config()
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -u",
+        f"REAL_BIN={shlex.quote(real_bin)}",
+        f"PY={shlex.quote(sys.executable)}",
+        f'PORT="${{AUTOCONDUCK_PORT:-{cfg.port}}}"',
+    ]
+    if agent_id == "claude_code":
+        bash_env, _ = _claude_env_blocks(cfg.port, cfg.pseudo_model)
+        lines.append(bash_env)
+    lines.append('"$PY" -m autoconduck ensure --port "$PORT" || true')
+    lines.append('"$REAL_BIN" "$@"')
+    lines.append("rc=$?")
+    lines.append('"$PY" -m autoconduck release --port "$PORT" || true')
+    lines.append("exit $rc")
+    return "\n".join(lines) + "\n"
 def shim_script_win(agent_id, real_bin):
     real_bin = str(real_bin).replace("\\", "/")
     def esc(s): return s.replace("%", "%%").replace('"', '""')
-    return (f'@echo off\nset "REAL_BIN={esc(real_bin)}"\nset "PY={esc(sys.executable)}"\n'
-            'set "PORT=%AUTOCONDUCK_PORT%"\nif not defined PORT set PORT=' + str(config.get_config().port) + '\n'
-            '"%PY%" -m autoconduck ensure --port %PORT%\n"%REAL_BIN%" %*\nset RC=%ERRORLEVEL%\n'
-            '"%PY%" -m autoconduck release --port %PORT%\nexit /b %RC%\n')
+    cfg = config.get_config()
+    lines = [
+        "@echo off",
+        f'set "REAL_BIN={esc(real_bin)}"',
+        f'set "PY={esc(sys.executable)}"',
+        'set "PORT=%AUTOCONDUCK_PORT%"',
+        "if not defined PORT set PORT=" + str(cfg.port),
+    ]
+    if agent_id == "claude_code":
+        _, cmd_env = _claude_env_blocks(cfg.port, cfg.pseudo_model)
+        lines.append(cmd_env)
+    lines.append('"%PY%" -m autoconduck ensure --port %PORT%')
+    lines.append('"%REAL_BIN%" %*')
+    lines.append("set RC=%ERRORLEVEL%")
+    lines.append('"%PY%" -m autoconduck release --port %PORT%')
+    lines.append("exit /b %RC%")
+    return "\n".join(lines) + "\n"
 
 def install_shims(agent_ids):
     directory = shims_dir(); directory.mkdir(parents=True, exist_ok=True); result = {}

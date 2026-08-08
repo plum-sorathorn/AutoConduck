@@ -7,6 +7,7 @@ class ModelEntry(BaseModel):
     id: str
     provider: str = "openai"
     api_key_env: str = "OPENAI_API_KEY"
+    base_url: str | None = None
     tier: str = "balanced"
     price_in: float = 0.0
     price_out: float = 0.0
@@ -35,9 +36,23 @@ def load_config(path=None) -> Config:
     if "AUTOCONDUCK_LOG_LEVEL" in os.environ: data["log_level"] = os.environ["AUTOCONDUCK_LOG_LEVEL"]
     return Config(**data)
 _config = None
+_config_digest = None
+_config_path = None
 def get_config() -> Config:
-    global _config
-    if _config is None: _config = load_config()
+    global _config, _config_digest, _config_path
+    path = (home_dir() / "config.yaml").resolve()
+    try:
+        digest = path.read_bytes()
+    except FileNotFoundError:
+        digest = None
+    if _config is None or _config_path != path or _config_digest != digest:
+        _config = load_config(path)
+        _config_path = path
+        _config_digest = digest
     return _config
 def save_config(cfg, path=None):
+    global _config, _config_digest, _config_path
     p = Path(path) if path else home_dir() / "config.yaml"; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(yaml.safe_dump(cfg.model_dump()), encoding="utf-8")
+    _config = None
+    _config_digest = None
+    _config_path = None

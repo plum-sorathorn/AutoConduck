@@ -41,11 +41,11 @@ if _TEXTUAL:
         BINDINGS = [("d", "drill", "drill"), ("/", "filter", "filter"), ("p", "pause", "pause")]
         def __init__(self): super().__init__(); self.records: list[dict] = []; self.cursor = 0; self.paused = False
         def compose(self):
-            yield Vertical(Static(self._header(), id="header"), Static("recent routing decisions\n" + render_log_rows(self.records, self.cursor), id="log", markup=True), Static("active agents: none", id="agents"), Static("[j/k] move  [d] details  [/] filter  [p] pause  [ctrl+c] quit", id="footer"))
+            yield Vertical(Static(self._header(), id="header"), Static("recent routing decisions\n" + render_log_rows(self.records, self.cursor), id="log", markup=True), Static("active agents: none", id="agents"), Static("[↑/↓] move  [d] details  [/] filter  [p] pause  [ctrl+c] quit", id="footer"))
         def _header(self): return "┌─ AutoConduck ─ proxy: ● running" + (" ─ PAUSED" if self.paused else "") + " ─ saved: $0.00 today ┐"
         def on_key(self, event):
-            if event.key in ("j", "down"): self.cursor = move_cursor(self.cursor, 1, len(self.records)); self.query_one("#log").update("recent routing decisions\n" + render_log_rows(self.records, self.cursor))
-            elif event.key in ("k", "up"): self.cursor = move_cursor(self.cursor, -1, len(self.records)); self.query_one("#log").update("recent routing decisions\n" + render_log_rows(self.records, self.cursor))
+            if event.key == "down": self.cursor = move_cursor(self.cursor, 1, len(self.records)); self.query_one("#log").update("recent routing decisions\n" + render_log_rows(self.records, self.cursor))
+            elif event.key == "up": self.cursor = move_cursor(self.cursor, -1, len(self.records)); self.query_one("#log").update("recent routing decisions\n" + render_log_rows(self.records, self.cursor))
         def action_pause(self): self.paused = not self.paused; self.query_one("#header").update(self._header())
         def action_filter(self): self.mount(Input(placeholder="filter by agent/model/path", id="filter"))
         def action_drill(self):

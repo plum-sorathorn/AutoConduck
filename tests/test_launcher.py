@@ -28,3 +28,17 @@ def test_path_block_is_idempotent_and_removable(tmp_path, monkeypatch):
     assert bashrc.read_text().count("BEGIN AUTOCONDUCK PATH") == 1
     launcher.remove_path_entry()
     assert "BEGIN AUTOCONDUCK PATH" not in bashrc.read_text()
+
+
+def test_claude_code_shim_sets_anthropic_env():
+    posix = launcher.shim_script("claude_code", "/opt/claude")
+    windows = launcher.shim_script_win("claude_code", "/opt/claude")
+    for text in (posix, windows):
+        assert "ANTHROPIC_BASE_URL" in text
+        assert "ANTHROPIC_AUTH_TOKEN" in text
+        assert "ANTHROPIC_MODEL" in text
+
+    other_posix = launcher.shim_script("some_other_agent", "/opt/other")
+    other_windows = launcher.shim_script_win("some_other_agent", "/opt/other")
+    for text in (other_posix, other_windows):
+        assert "ANTHROPIC_BASE_URL" not in text

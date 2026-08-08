@@ -47,7 +47,7 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
 - `pricing.py`: `litellm.model_cost`, EMA token correction `α=0.1`, `ln(1+cost)`
   scaling, and failover after a trailing error rate above 20%.
 - `providers.py`: LiteLLM `openai/<model>` plus `api_base`, `/v1/models`
-  discovery, and the DevPass preset.
+  discovery.
 - `launcher.py`: launcher shims, `ensure_server`/`release_server` refcounting,
   PATH integration, `real_binary_path`, and `stop_server`.
 - `orchestrator/`: LangGraph `graph.py` planner → Send-based `subagents.py`
@@ -65,3 +65,4 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
 - Do not add legacy routing, state, caching, or telemetry layers. The LiteLLM
   Proxy is the API surface; dispatcher placement relative to LangGraph follows
   the blueprint's open integration verification item.
+

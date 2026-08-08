@@ -1,0 +1,4 @@
+# BEGIN AUTOCONDUCK — do not edit between these markers
+openai_api_base: http://127.0.0.1:11434/v1
+openai_api_type: openai
+# END AUTOCONDUCK

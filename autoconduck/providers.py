@@ -9,5 +9,3 @@ def discover_models(endpoint):
 def generate_litellm_config(endpoint, selected_models):
     key = endpoint.api_key or (os.environ.get(endpoint.api_key_env) if endpoint.api_key_env else None)
     return [{"model_name": m, "litellm_params": {"model": f"openai/{m}", "api_base": endpoint.base_url.rstrip("/") + "/v1", "api_key": key or (f"os.environ/{endpoint.api_key_env}" if endpoint.api_key_env else None)}} for m in selected_models]
-DEVPASS_PRESET = {"display_name":"DevPass (LLM Gateway)","base_url":"https://api.llmgateway.io/v1","api_key_env":"DEVPASS_API_KEY","doc_link":"https://llmgateway.io/docs"}
-GATEWAY_PRESETS = [DEVPASS_PRESET]

@@ -1,1 +1,2 @@
-{"claude-fable-5":{"price_in":5.0,"price_out":25.0},"claude-haiku-4-5":{"price_in":0.8,"price_out":4.0},"gpt-5-mini":{"price_in":0.25,"price_out":2.0},"gpt-5":{"price_in":5.0,"price_out":15.0},"deepseek-chat":{"price_in":0.14,"price_out":0.28},"deepseek-reasoner":{"price_in":0.55,"price_out":2.19},"devpass-claude-fable-5":{"subscription":true,"price_in":0.0,"price_out":0.0,"note":"flat-rate gateway allowance"}}
+{"claude-fable-5":{"price_in":5.0,"price_out":25.0},"claude-haiku-4-5":{"price_in":0.8,"price_out":4.0},"gpt-5-mini":{"price_in":0.25,"price_out":2.0},"gpt-5":{"price_in":5.0,"price_out":15.0},"deepseek-chat":{"price_in":0.14,"price_out":0.28},"deepseek-reasoner":{"price_in":0.55,"price_out":2.19}}
+

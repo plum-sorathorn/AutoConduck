@@ -19,7 +19,7 @@ if _TEXTUAL:
         def action_pause(self): self.paused = not self.paused
         def action_edit(self): self.push_screen(ModelSourceScreen(self))
         def action_ignore_quit(self): pass
-        def action_help(self): self.notify("j/k move · enter toggle · esc back · / filter · ctrl+c quit · p pause · e edit")
+        def action_help(self): self.notify("↑/↓ move · enter toggle · esc back · / filter · ctrl+c quit · p pause · e edit")
 else:
     class AutoConduckApp(App):
         def __init__(self, *args, **kwargs): raise RuntimeError("Textual is required to use the AutoConduck TUI")

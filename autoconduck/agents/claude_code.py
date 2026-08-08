@@ -1,8 +1,10 @@
 from __future__ import annotations
+import json
 import shutil
 from pathlib import Path
 from .base import BaseAdapter
 from ..config import Config
+
 
 class ClaudeCodeAdapter(BaseAdapter):
     binary_name = "claude"
@@ -23,32 +25,18 @@ class ClaudeCodeAdapter(BaseAdapter):
         ]
 
     def patch(self, config: Config) -> None:
-        endpoint = f"http://127.0.0.1:{config.port}/v1"
-        def updater(data: dict):
-            # Merge autoconduck namespace
-            data.setdefault("autoconduck", {})
-            data["autoconduck"]["api_base"] = endpoint
-            data["autoconduck"]["models"] = ["autoconduck","autoconduck-budget","autoconduck-expensive"]
-            # also set env override if present
-            env = data.setdefault("env", {})
-            # preserve existing
-        # patch primary path
-        paths = self.config_paths()
-        target = paths[0]
-        # if any existing path exists, patch that one; else create first
-        for p in paths:
-            if p.exists():
-                target = p
-                break
-        self._patch_json(target, updater)
+        """Leave settings.json untouched; env is injected by launcher shims.
+
+        JSON cannot carry the BEGIN/END AUTOCONDUCK marker block required for
+        managed agent configuration, so Claude Code's environment is supplied
+        exclusively by the AutoConduck launcher shims.
+        """
 
     def revert(self) -> None:
-        super().revert()
-        # also remove autoconduck key from json if stripping not enough
+        """Remove only the legacy top-level AutoConduck namespace."""
         for p in self.config_paths():
             if p.exists():
                 try:
-                    import json
                     data = json.loads(p.read_text(encoding="utf-8"))
                     if "autoconduck" in data:
                         data.pop("autoconduck", None)

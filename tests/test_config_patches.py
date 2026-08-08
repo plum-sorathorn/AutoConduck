@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from autoconduck.agents.base import BaseAdapter, BEGIN_MARKER, END_MARKER
+from autoconduck.config import Config, get_config, save_config
 
 
 class _Adapter(BaseAdapter):
@@ -83,3 +84,28 @@ def test_strip_block_removes_only_delimited_block(monkeypatch):
         adapter._strip_block(path)
 
         assert path.read_text(encoding="utf-8") == "keep-before\nkeep-after\n"
+
+
+def test_get_config_reloads_only_when_config_file_changes(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOCONDUCK_HOME", str(tmp_path))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("host: first\n", encoding="utf-8")
+
+    first = get_config()
+    assert get_config() is first
+
+    config_path.write_text("host: second\n", encoding="utf-8")
+    second = get_config()
+    assert second.host == "second"
+    assert second is not first
+
+
+def test_save_config_invalidates_get_config_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOCONDUCK_HOME", str(tmp_path))
+    initial = get_config()
+    initial.host = "saved"
+    save_config(initial)
+
+    refreshed = get_config()
+    assert refreshed.host == "saved"
+    assert refreshed is not initial

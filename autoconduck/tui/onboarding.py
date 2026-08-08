@@ -5,7 +5,7 @@ from pathlib import Path
 from .onboarding_models import models_for_provider, overrides_for_toggle, upsert_custom_models, remove_custom_provider
 from autoconduck.config import get_config, save_config
 from autoconduck.model_presets import PRESETS
-from autoconduck.providers import DEVPASS_PRESET
+from autoconduck.model_presets import resolve_models
 try:
     from autoconduck import launcher
 except ImportError:
@@ -21,7 +21,14 @@ def render_source_rows(sources, selected, cursor, models=None):
 def render_model_rows(models, enabled, cursor):
     return "\n".join((f"[reverse]› {'✓' if m['id'] in enabled else ' '} {m['id']} ({m.get('tier','balanced')})[/reverse]" if i == cursor else f"  {'✓' if m['id'] in enabled else ' '} {m['id']} ({m.get('tier','balanced')})") for i, m in enumerate(models)) or "No models available for this provider."
 def render_provider_rows(providers, cursor):
-    return "\n".join((f"[reverse]› {p}[/reverse]" if i == cursor else f"  {p}") for i, p in enumerate(providers)) or "No custom providers. Press n to add one."
+    def _name(p):
+        return p.get("provider", "") if isinstance(p, dict) else str(p)
+    def _on(p):
+        return bool(p.get("enabled", True)) if isinstance(p, dict) else True
+    return "\n".join(
+        (f"[reverse]› {'✓' if _on(p) else ' '} {_name(p)}[/reverse]" if i == cursor else f"  {'✓' if _on(p) else ' '} {_name(p)}")
+        for i, p in enumerate(providers)
+    ) or "No custom providers. Press n to add one."
 def render_check_rows(agents, checked, cursor):
     return "\n".join((f"[reverse]› {'✓' if a in checked else ' '} {a}[/reverse]" if i == cursor else f"  {'✓' if a in checked else ' '} {a}") for i, a in enumerate(agents)) or "No eligible agents selected."
 def _models_value(widget):
@@ -31,6 +38,7 @@ try:
     from textual.app import ComposeResult
     from textual.containers import Vertical
     from textual.screen import Screen
+    from textual.binding import Binding
     from textual.widgets import Static, Input
     try:
         from textual.widgets import TextArea
@@ -41,6 +49,7 @@ except ImportError:
     _TEXTUAL = False
     class Screen: pass
     ComposeResult = object
+    Binding = None
 def _require_textual():
     if not _TEXTUAL: raise RuntimeError("Textual is required to use the AutoConduck TUI")
 
@@ -53,30 +62,30 @@ def detect_agents():
 if _TEXTUAL:
     class OnboardingScreen(Screen):
         def __init__(self, app_controller=None): super().__init__(); self.controller=app_controller; self.selected=set(); self.detected=detect_agents(); self.cursor=0
-        def compose(self): yield Vertical(Static("┌─ AutoConduck · Detected agents ─┐"), Static(render_agent_rows(list(AGENTS), self.detected, self.selected, self.cursor), id="agents", markup=True), Static("[j/k] move  [space] toggle  [→] continue  [ctrl+c] quit"))
+        def compose(self): yield Vertical(Static("┌─ AutoConduck · Detected agents ─┐"), Static(render_agent_rows(list(AGENTS), self.detected, self.selected, self.cursor), id="agents", markup=True), Static("[↑/↓] move  [space] toggle  [→] continue  [ctrl+c] quit"))
         def on_key(self,e):
-            if e.key in ("j","down"): self.cursor=move_cursor(self.cursor,1,len(AGENTS))
-            elif e.key in ("k","up"): self.cursor=move_cursor(self.cursor,-1,len(AGENTS))
+            if e.key == "down": self.cursor=move_cursor(self.cursor,1,len(AGENTS))
+            elif e.key == "up": self.cursor=move_cursor(self.cursor,-1,len(AGENTS))
             elif e.key in ("space","enter"): self.selected.symmetric_difference_update({AGENTS[self.cursor]})
             elif e.key in ("right","tab") and self.controller: self.controller.push_screen(ModelSourceScreen(self.controller,self.selected))
             self.query_one("#agents").update(render_agent_rows(list(AGENTS),self.detected,self.selected,self.cursor))
     class ModelSourceScreen(Screen):
-        SOURCES=["Anthropic","OpenAI","Google","DevPass (LLM Gateway)","Custom endpoint…"]
+        SOURCES=["Anthropic","OpenAI","Google","Custom endpoint…"]
         def __init__(self, app_controller=None, selected=None): super().__init__(); self.controller=app_controller; self.agent_selected=set(selected or ()); self.cursor=0; self.selected=set()
-        def compose(self): yield Vertical(Static(render_source_rows(self.SOURCES,self.selected,self.cursor),id="sources",markup=True),Static("[j/k] move · enter/right select · [left] back · [ctrl+c] quit"))
+        def compose(self): yield Vertical(Static(render_source_rows(self.SOURCES,self.selected,self.cursor),id="sources",markup=True),Static("[↑/↓] move · enter/right select · [left] back · [ctrl+c] quit"))
         def _choose(self):
-            key=("devpass" if self.cursor==3 else "custom" if self.cursor==4 else self.SOURCES[self.cursor].lower())
+            key=("custom" if self.cursor==3 else self.SOURCES[self.cursor].lower())
             if key=="custom": self.controller.push_screen(CustomProvidersScreen(self.controller,self.agent_selected))
             else: self.controller.push_screen(ModelSelectionScreen(self.controller,self.agent_selected,key))
         def on_key(self,e):
-            if e.key in ("j","down"): self.cursor=move_cursor(self.cursor,1,len(self.SOURCES))
-            elif e.key in ("k","up"): self.cursor=move_cursor(self.cursor,-1,len(self.SOURCES))
+            if e.key == "down": self.cursor=move_cursor(self.cursor,1,len(self.SOURCES))
+            elif e.key == "up": self.cursor=move_cursor(self.cursor,-1,len(self.SOURCES))
             elif e.key in ("space","enter","right"): self._choose()
             elif e.key in ("left","esc"): self.controller.pop_screen()
             self.query_one("#sources").update(render_source_rows(self.SOURCES,self.selected,self.cursor))
     class ModelSelectionScreen(Screen):
         def __init__(self, controller, agents, key):
-            super().__init__(); self.controller=controller; self.agents=set(agents); self.key=key; self.models=models_for_provider(key,PRESETS,DEVPASS_PRESET); self.enabled={m["id"] for m in self.models}; self.cursor=0
+            super().__init__(); self.controller=controller; self.agents=set(agents); self.key=key; self.models=models_for_provider(key,PRESETS); self.enabled={m["id"] for m in self.models}; self.cursor=0
         def compose(self): yield Vertical(Static(render_model_rows(self.models,self.enabled,self.cursor),id="models",markup=True),Static("space: toggle · enter/right: confirm · esc/left: back · [ctrl+c] quit"))
         def _confirm(self):
             cfg=get_config(); cfg.selected_presets=list(dict.fromkeys(cfg.selected_presets+[self.key])); cfg.preset_overrides[self.key]=overrides_for_toggle(self.key,self.models,self.enabled); _persist(cfg)
@@ -86,16 +95,19 @@ if _TEXTUAL:
             from .dashboard import DashboardScreen
             self.controller.switch_screen(DashboardScreen())
         def on_key(self,e):
-            if e.key in ("j","down"): self.cursor=move_cursor(self.cursor,1,len(self.models))
-            elif e.key in ("k","up"): self.cursor=move_cursor(self.cursor,-1,len(self.models))
+            if e.key == "down": self.cursor=move_cursor(self.cursor,1,len(self.models))
+            elif e.key == "up": self.cursor=move_cursor(self.cursor,-1,len(self.models))
             elif e.key=="space" and self.models: self.enabled.symmetric_difference_update({self.models[self.cursor]["id"]})
             elif e.key in ("enter","right"): self._confirm()
             elif e.key in ("esc","left"): self.controller.pop_screen()
             self.query_one("#models").update(render_model_rows(self.models,self.enabled,self.cursor))
     class CustomProvidersScreen(Screen):
         def __init__(self,controller,agents): super().__init__(); self.controller=controller; self.agents=set(agents); self.cursor=0; self.confirm_delete=None
-        def _providers(self): return list(dict.fromkeys(x.get("provider","") for x in get_config().custom_models if x.get("provider")))
-        def compose(self): yield Vertical(Static(render_provider_rows(self._providers(),self.cursor),id="custom",markup=True),Static("n: add · e: edit · d: delete · enter/right: continue · esc/left: back"))
+        def _providers(self):
+             cfg=get_config(); names=list(dict.fromkeys(x.get("provider","") for x in cfg.custom_models if x.get("provider")))
+             return [{"provider":n,"enabled":any(x.get("provider")==n and x.get("enabled",True) for x in cfg.custom_models)} for n in names]
+        def on_screen_resume(self): self.query_one("#custom").update(render_provider_rows(self._providers(),self.cursor))
+        def compose(self): yield Vertical(Static(render_provider_rows(self._providers(),self.cursor),id="custom",markup=True),Static("n: add · e: edit · d: delete · space: toggle · enter/right: continue · esc/left: back"))
         def on_key(self,e):
             providers=self._providers()
             if self.confirm_delete:
@@ -103,11 +115,17 @@ if _TEXTUAL:
                     _delete_provider(self.confirm_delete); self.confirm_delete=None; self.cursor=0
                 elif e.key in ("n", "esc"): self.confirm_delete=None
                 self.query_one("#custom").update(render_provider_rows(self._providers(),self.cursor)); return
-            if e.key in ("j","down"): self.cursor=move_cursor(self.cursor,1,len(providers))
-            elif e.key in ("k","up"): self.cursor=move_cursor(self.cursor,-1,len(providers))
+            if e.key == "down": self.cursor=move_cursor(self.cursor,1,len(providers))
+            elif e.key == "up": self.cursor=move_cursor(self.cursor,-1,len(providers))
+            elif e.key in ("space","t") and providers:
+                name=providers[self.cursor]["provider"]; cfg=get_config()
+                cur=any(x.get("provider")==name and x.get("enabled",True) for x in cfg.custom_models)
+                for x in cfg.custom_models:
+                    if x.get("provider")==name: x["enabled"]=not cur
+                save_config(cfg)
             elif e.key=="n": self.controller.push_screen(ProviderFormScreen(self.controller,self.agents))
-            elif e.key=="e" and providers: self.controller.push_screen(ProviderFormScreen(self.controller,self.agents,providers[self.cursor]))
-            elif e.key=="d" and providers: self.confirm_delete=providers[self.cursor]; self.query_one("#custom").update(f"Delete {self.confirm_delete}? [y/n]")
+            elif e.key=="e" and providers: self.controller.push_screen(ProviderFormScreen(self.controller,self.agents,providers[self.cursor]["provider"]))
+            elif e.key=="d" and providers: self.confirm_delete=providers[self.cursor]["provider"]; self.query_one("#custom").update(f"Delete {self.confirm_delete}? [y/n]")
             elif e.key in ("enter","right"):
                 if providers: self._continue()
             elif e.key in ("esc","left"): self.controller.pop_screen()
@@ -119,23 +137,35 @@ if _TEXTUAL:
                 from .dashboard import DashboardScreen
                 self.controller.switch_screen(DashboardScreen())
     class ProviderFormScreen(Screen):
+        BINDINGS = [Binding("ctrl+enter", "save", "Save", priority=True), ("ctrl+s", "save", "Save"), ("esc", "cancel", "Cancel")]
         def __init__(self,controller,agents,provider=None):
             super().__init__(); self.controller=controller; self.agents=agents; self.provider=provider
         def compose(self):
             old=next((x for x in get_config().custom_models if x.get("provider")==self.provider),{})
-            yield Vertical(Static("Custom provider"),Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"),Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"),Input(value=old.get("api_key_env",""),placeholder="api_key_env",id="api_key"),TextArea("\n".join(x["id"] for x in get_config().custom_models if x.get("provider")==self.provider),id="models"),Static("enter: save · esc: cancel"))
-        def on_key(self,e):
-            if e.key=="enter":
-                cfg=get_config(); name=self.query_one("#provider").value.strip(); old=self.provider
-                cfg.custom_models=upsert_custom_models([x for x in cfg.custom_models if x.get("provider")!=old or not old],name,self.query_one("#base_url").value.strip(),self.query_one("#api_key").value.strip(),_models_value(self.query_one("#models")).splitlines()); save_config(cfg); self.controller.pop_screen()
-            elif e.key=="esc": self.controller.pop_screen()
+            yield Vertical(Static("Custom provider"),Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"),Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"),Input(value=old.get("api_key_env",""),placeholder="api_key_env",id="api_key"),TextArea("\n".join(x["id"] for x in get_config().custom_models if x.get("provider")==self.provider),id="models"),Static("enter: save · ctrl+s: save · esc: cancel", id="error"))
+        def on_input_submitted(self, event): self.action_save()
+        def action_cancel(self): self.controller.pop_screen()
+        def action_save(self):
+            try:
+                name=self.query_one("#provider").value.strip()
+                model_ids=[line.strip() for line in _models_value(self.query_one("#models")).splitlines() if line.strip()]
+                if not name:
+                    raise ValueError("add a provider name")
+                if not model_ids:
+                    raise ValueError("add at least one model id")
+                cfg=get_config(); old=self.provider
+                cfg.custom_models=upsert_custom_models([x for x in cfg.custom_models if x.get("provider")!=old or not old],name,self.query_one("#base_url").value.strip(),self.query_one("#api_key").value.strip(),model_ids)
+                resolve_models(cfg); save_config(cfg); self.controller.pop_screen()
+            except Exception as exc:
+                self.query_one("#error").update(str(exc))
+
     class LauncherIntegrationScreen(Screen):
         ELIGIBLE={"claude_code","opencode","aider","kilocode"}
         def __init__(self,controller,selected=None): super().__init__(); self.controller=controller; self.agents=sorted(set(selected or ())&self.ELIGIBLE); self.checked=set(self.agents); self.cursor=0; self.result=""
         def compose(self): yield Vertical(Static("Launcher integration"),Static(render_check_rows(self.agents,self.checked,self.cursor),id="agents",markup=True),Static("space: toggle · enter: install · esc: skip · [ctrl+c] quit"))
         def on_key(self,e):
-            if e.key in ("j","down"): self.cursor=move_cursor(self.cursor,1,len(self.agents))
-            elif e.key in ("k","up"): self.cursor=move_cursor(self.cursor,-1,len(self.agents))
+            if e.key == "down": self.cursor=move_cursor(self.cursor,1,len(self.agents))
+            elif e.key == "up": self.cursor=move_cursor(self.cursor,-1,len(self.agents))
             elif e.key=="space" and self.agents: self.checked.symmetric_difference_update({self.agents[self.cursor]})
             elif e.key=="enter": self._install()
             elif e.key=="esc": self._finish()
@@ -156,3 +186,8 @@ def _persist(cfg):
     models=resolve_models(cfg); cfg.model_list=[m.model_dump() for m in models]; save_config(cfg)
 def _delete_provider(provider):
     cfg=get_config(); cfg.custom_models=remove_custom_provider(cfg.custom_models,provider); save_config(cfg)
+
+
+
+
+

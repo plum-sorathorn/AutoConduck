@@ -8,9 +8,7 @@ def test_toggle_overrides_and_custom_crud():
     assert [x["id"] for x in overrides_for_toggle("x", models, {"b"})] == ["b"]
     rows = upsert_custom_models([], "local", "http://localhost", "KEY", ["one", "one", "two"])
     assert [x["id"] for x in rows] == ["one", "two"]
+    assert all(x.get("enabled") is True for x in rows)
     assert remove_custom_provider(rows, "local") == []
 
-def test_devpass_models_are_normalized():
-    rows = models_for_provider("devpass", {}, {"api_key_env": "KEY", "models": ["gateway-model"]})
-    assert rows[0]["id"] == "gateway-model"
-    assert rows[0]["api_key_env"] == "KEY"
+
