@@ -6,12 +6,25 @@ from .planner import SubTask
 
 
 def build_subagent_prompt(task: SubTask, upstream_summaries: str = "") -> str:
-    return (f"ROLE: You are a read-only file analyst. You do not propose fixes or write code.\n"
-            f"TASK: {task.goal}\n"
-            f"FILES IN SCOPE (only these): {', '.join(task.scope)}\n"
-            f"REQUIRED OUTPUT FORMAT: {task.output_contract}\n"
-            f"DO NOT: {', '.join(task.constraints)}\n"
-            f"CONTEXT FROM SIBLING TASKS: {upstream_summaries}")
+    parts = [
+        "ROLE: You are a read-only file analyst. You do not propose fixes or write code.",
+        f"TASK: {task.goal}",
+        f"FILES IN SCOPE (only these): {', '.join(task.scope)}",
+        f"REQUIRED OUTPUT FORMAT: {task.output_contract}",
+        f"DO NOT: {', '.join(task.constraints)}",
+        f"CONTEXT FROM SIBLING TASKS: {upstream_summaries}",
+    ]
+    if task.verified_context:
+        bullets = "\n".join(f"- {item}" for item in task.verified_context)
+        parts.append(f"VERIFIED CONTEXT (do not re-investigate):\n{bullets}")
+    parts.append(
+        f"TOOL BUDGET: You may make at most {task.read_budget} additional file reads/tool calls "
+        f"beyond what's given above. Work with what you have first."
+    )
+    verify = getattr(task.output_contract, "verify", None) or []
+    if verify:
+        parts.append(f"VERIFY BEFORE RETURNING: {', '.join(verify)}")
+    return "\n".join(parts)
 
 
 def _text(response: Any) -> str:

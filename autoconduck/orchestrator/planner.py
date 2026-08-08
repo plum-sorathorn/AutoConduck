@@ -1,18 +1,37 @@
 """Structured task planning prompts and validation."""
 
 import json
+import re
+from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+class OutputContract(BaseModel):
+    description: str = ""
+    verify: list[str] = Field(default_factory=list)
+
+    def __str__(self) -> str:
+        return self.description
 
 
 class SubTask(BaseModel):
     id: str
     goal: str
     scope: list[str]
-    output_contract: str
+    output_contract: OutputContract = Field(default_factory=OutputContract)
     constraints: list[str]
     depends_on: list[str] = Field(default_factory=list)
+    verified_context: list[str] = Field(default_factory=list)
+    read_budget: int = 5
+
+    @field_validator("output_contract", mode="before")
+    @classmethod
+    def _coerce_output_contract(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return OutputContract(description=value)
+        return value
 
 
 class TaskPlan(BaseModel):
@@ -24,12 +43,86 @@ PLANNER_SYSTEM_PROMPT = """You are a coding-task planner. Return only JSON match
 Create a realistic DAG of read-only analysis tasks. Goals are single imperative sentences; scope contains
 resolved file paths, never vague descriptions; constraints explicitly say what the analyst must not do.
 
+When FILE CONTENTS are provided below, base each subtask's scope paths on those files and the request.
+For every subtask, populate verified_context with up to 8 short factual bullet strings (<15 words each)
+extracted directly from the FILE CONTENTS block (e.g. "line 96: SOURCES list is hardcoded, must extend not replace").
+For implementation-flavored subtasks, put literal shell commands in output_contract.verify
+(e.g. "pytest", "python -m compileall autoconduck"); leave verify empty for pure read/analysis subtasks.
+output_contract is an object with description (string) and verify (list of strings).
+
 Worked example — request: refactor auth flow to support refresh tokens
-{"subtasks":[{"id":"auth-model","goal":"Inspect the authentication models and token persistence interfaces.","scope":["autoconduck/auth/models.py","autoconduck/auth/tokens.py"],"output_contract":"List relevant classes, fields, and current token lifecycle with file:line references.","constraints":["Do not propose code changes.","Do not inspect files outside the listed scope."],"depends_on":[]},{"id":"auth-api","goal":"Trace login and refresh request handling through the HTTP boundary.","scope":["autoconduck/api/auth.py","tests/test_auth.py"],"output_contract":"Summarize endpoints, validation, and test coverage as evidence bullets.","constraints":["Do not modify files.","Do not infer behavior without a file:line reference."],"depends_on":["auth-model"]}],"summary":"Inspect token state before API behavior."}
+{"subtasks":[{"id":"auth-model","goal":"Inspect the authentication models and token persistence interfaces.","scope":["autoconduck/auth/models.py","autoconduck/auth/tokens.py"],"output_contract":{"description":"List relevant classes, fields, and current token lifecycle with file:line references.","verify":[]},"constraints":["Do not propose code changes.","Do not inspect files outside the listed scope."],"depends_on":[],"verified_context":[],"read_budget":5},{"id":"auth-api","goal":"Trace login and refresh request handling through the HTTP boundary.","scope":["autoconduck/api/auth.py","tests/test_auth.py"],"output_contract":{"description":"Summarize endpoints, validation, and test coverage as evidence bullets.","verify":[]},"constraints":["Do not modify files.","Do not infer behavior without a file:line reference."],"depends_on":["auth-model"],"verified_context":[],"read_budget":5}],"summary":"Inspect token state before API behavior."}
 
 Worked example — request: review payment retry behavior
-{"subtasks":[{"id":"retry-code","goal":"Map payment retry and backoff control flow.","scope":["src/payments/retry.py","src/payments/client.py"],"output_contract":"Provide a numbered control-flow summary and risks with file:line references.","constraints":["Do not write a patch.","Do not include unrelated modules."],"depends_on":[]}]}
+{"subtasks":[{"id":"retry-code","goal":"Map payment retry and backoff control flow.","scope":["src/payments/retry.py","src/payments/client.py"],"output_contract":{"description":"Provide a numbered control-flow summary and risks with file:line references.","verify":[]},"constraints":["Do not write a patch.","Do not include unrelated modules."],"depends_on":[],"verified_context":[],"read_budget":5}]}
 """
+
+_PATH_RE = re.compile(
+    r"""(?x)
+    (?P<q>["'`])(?P<pquoted>[^"'`\s]+?\.(?:py|md|json|toml|txt))(?P=q)
+    |
+    (?P<pplain>(?:[\w.-]+/)+[\w.-]+\.(?:py|md|json|toml|txt))
+    """
+)
+
+
+def _extract_file_paths(messages: list[dict]) -> list[str]:
+    """Regex-scan message texts for plausible relative paths that exist on disk."""
+    texts: list[str] = []
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    texts.append(part["text"])
+                elif isinstance(part, str):
+                    texts.append(part)
+    found: list[str] = []
+    seen: set[str] = set()
+    root = Path.cwd()
+    for text in texts:
+        for m in _PATH_RE.finditer(text):
+            path = m.group("pquoted") or m.group("pplain")
+            if not path or path in seen:
+                continue
+            candidate = Path(path)
+            if candidate.is_absolute():
+                continue
+            full = root / candidate
+            try:
+                if full.is_file():
+                    found.append(path.replace("\\", "/"))
+                    seen.add(path)
+            except OSError:
+                continue
+    return found
+
+
+def _read_files(paths: list[str]) -> dict[str, str]:
+    """Plain file I/O; skip unreadable paths. Keys are the original path strings."""
+    out: dict[str, str] = {}
+    root = Path.cwd()
+    for path in paths:
+        try:
+            full = root / path
+            if full.is_file():
+                out[path] = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+    return out
+
+
+def _format_file_contents(files: dict[str, str]) -> str:
+    if not files:
+        return ""
+    parts = ["\n\nFILE CONTENTS (ground truth for planning):"]
+    for path, content in files.items():
+        parts.append(f"{path}:\n{content}")
+    return "\n".join(parts)
 
 
 def _model_name() -> str:
@@ -66,7 +159,10 @@ def build_task_plan(messages: list, client=None) -> TaskPlan | None:
     """Ask the fast model for a plan; tolerate unavailable dependencies and bad models."""
     try:
         schema = TaskPlan.model_json_schema()
-        prompt_messages = [{"role": "system", "content": PLANNER_SYSTEM_PROMPT}, *messages]
+        paths = _extract_file_paths(messages if isinstance(messages, list) else [])
+        file_block = _format_file_contents(_read_files(paths))
+        system_content = PLANNER_SYSTEM_PROMPT + file_block
+        prompt_messages = [{"role": "system", "content": system_content}, *messages]
         for _ in range(2):
             try:
                 response = _completion(client, prompt_messages, response_format={

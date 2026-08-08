@@ -138,5 +138,6 @@ def normalize_entries(raw_list: list[dict[str, Any]]) -> list[ModelEntry]:
     return [ModelEntry.model_validate(r) for r in raw_list]
 
 def resolve_models(cfg: Any) -> list[ModelEntry]:
-    cfg.models = discover_models(cfg.selected_presets, cfg.custom_models, overrides=cfg.preset_overrides)
-    return cfg.models
+    models = discover_models(getattr(cfg, "selected_presets", []), getattr(cfg, "custom_models", []), overrides=getattr(cfg, "preset_overrides", {}))
+    cfg.model_list = [model.model_dump() for model in models]
+    return models

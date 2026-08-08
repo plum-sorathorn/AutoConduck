@@ -3,11 +3,23 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 import yaml
 
+class ModelEntry(BaseModel):
+    id: str
+    provider: str = "openai"
+    api_key_env: str = "OPENAI_API_KEY"
+    tier: str = "balanced"
+    price_in: float = 0.0
+    price_out: float = 0.0
+    enabled: bool = True
+
 class Config(BaseModel):
     host: str = "127.0.0.1"; port: int = 11434; log_level: str = "INFO"
     ambiguous_low: float = 0.55; ambiguous_high: float = 0.70; hysteresis_floor: float = 0.50; escalation_threshold: float = 0.80; stack_trace_boost: float = 0.25
     ema_alpha: float = 0.1; degraded_error_rate: float = 0.20; degraded_window_s: int = 300; pseudo_model: str = "autoconduck"
     model_list: list[dict] = Field(default_factory=list); routing_log: bool = True
+    selected_presets: list[str] = Field(default_factory=list)
+    custom_models: list[dict] = Field(default_factory=list)
+    preset_overrides: dict[str, list[dict]] = Field(default_factory=dict)
     shims: dict[str, str] = Field(default_factory=dict)
     managed_server: bool = False
 def home_dir() -> Path: return Path(os.environ.get("AUTOCONDUCK_HOME", Path.home() / ".autoconduck"))

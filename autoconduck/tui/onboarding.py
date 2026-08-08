@@ -1,161 +1,158 @@
-"""Onboarding screens.  Textual remains an optional dependency."""
+"""Textual onboarding screens and small rendering helpers."""
 from __future__ import annotations
-import os
 import shutil
 from pathlib import Path
-from .keymap import FOOTER_HINT
-try:
-    from autoconduck.pricing import is_subscription
-except ImportError:
-    def is_subscription(model: str) -> bool:
-        return False
-
-def move_cursor(cursor: int, delta: int, length: int) -> int:
-    return 0 if length <= 0 else max(0, min(length - 1, cursor + delta))
-
-def render_agent_rows(names: list[str], detected: dict, selected: set[str], cursor: int) -> str:
-    rows = []
-    for index, name in enumerate(names):
-        check = "✓" if name in selected else " "
-        row = f"› {check} {name:16} {detected.get(name) or 'not found'}" if index == cursor else f"  {check} {name:16} {detected.get(name) or 'not found'}"
-        rows.append(f"[reverse]{row}[/reverse]" if index == cursor else row)
-    return "\n".join(rows)
-
-def render_source_rows(sources: list[str], selected: set[int], cursor: int, models: list[str] | None = None) -> str:
-    rows = ["┌─ Model Sources ─┐"]
-    for index, source in enumerate(sources):
-        check = "✓" if index in selected else " "
-        row = f"› {check} {source}" if index == cursor else f"  {check} {source}"
-        rows.append(f"[reverse]{row}[/reverse]" if index == cursor else row)
-    rows.extend(["", "Selected models for routing pool:"])
-    chosen = models or [sources[index] for index in sorted(selected) if 0 <= index < len(sources)]
-    if chosen:
-        for model in chosen:
-            glyph = "~" if is_subscription(model) else "$"
-            rows.append(f"  {glyph} {model}")
-    else:
-        rows.append("  none")
-    return "\n".join(rows)
-
+from .onboarding_models import models_for_provider, overrides_for_toggle, upsert_custom_models, remove_custom_provider
+from autoconduck.config import get_config, save_config
+from autoconduck.model_presets import PRESETS
+from autoconduck.providers import DEVPASS_PRESET
 try:
     from autoconduck import launcher
 except ImportError:
     launcher = None
 
+def move_cursor(cursor: int, delta: int, length: int) -> int:
+    return 0 if length <= 0 else max(0, min(length - 1, cursor + delta))
+def render_agent_rows(names, detected, selected, cursor):
+    return "\n".join(("[reverse]" if i == cursor else "") + f"{'›' if i == cursor else ' '} {'✓' if n in selected else ' '} {n:16} {detected.get(n) or 'not found'}" + ("[/reverse]" if i == cursor else "") for i, n in enumerate(names))
+def render_source_rows(sources, selected, cursor, models=None):
+    rows = ["┌─ Model Sources ─┐"] + [(f"[reverse]› {'✓' if i in selected else ' '} {s}[/reverse]" if i == cursor else f"  {'✓' if i in selected else ' '} {s}") for i, s in enumerate(sources)]
+    return "\n".join(rows + ["", "Selected models for routing pool:"] + [f"  {m}" for m in (models or [sources[i] for i in sorted(selected)])] or ["  none"])
+def render_model_rows(models, enabled, cursor):
+    return "\n".join((f"[reverse]› {'✓' if m['id'] in enabled else ' '} {m['id']} ({m.get('tier','balanced')})[/reverse]" if i == cursor else f"  {'✓' if m['id'] in enabled else ' '} {m['id']} ({m.get('tier','balanced')})") for i, m in enumerate(models)) or "No models available for this provider."
+def render_provider_rows(providers, cursor):
+    return "\n".join((f"[reverse]› {p}[/reverse]" if i == cursor else f"  {p}") for i, p in enumerate(providers)) or "No custom providers. Press n to add one."
+def render_check_rows(agents, checked, cursor):
+    return "\n".join((f"[reverse]› {'✓' if a in checked else ' '} {a}[/reverse]" if i == cursor else f"  {'✓' if a in checked else ' '} {a}") for i, a in enumerate(agents)) or "No eligible agents selected."
+def _models_value(widget):
+    return getattr(widget, "text", None) or getattr(widget, "value", "")
+
 try:
     from textual.app import ComposeResult
-    from textual.containers import Vertical, Horizontal
+    from textual.containers import Vertical
     from textual.screen import Screen
     from textual.widgets import Static, Input
+    try:
+        from textual.widgets import TextArea
+    except ImportError:
+        TextArea = Input
     _TEXTUAL = True
 except ImportError:
     _TEXTUAL = False
     class Screen: pass
     ComposeResult = object
-
-def _require_textual() -> None:
-    if not _TEXTUAL:
-        raise RuntimeError("Textual is required to use the AutoConduck TUI")
+def _require_textual():
+    if not _TEXTUAL: raise RuntimeError("Textual is required to use the AutoConduck TUI")
 
 AGENTS = ("claude_code", "opencode", "aider", "continue_dev", "kilocode", "cursor", "generic_openai")
-def detect_agents() -> dict[str, str | None]:
-    home = Path.home()
-    locations = {
-        "claude_code": [home / ".claude" / "settings.json"],
-        "opencode": [home / ".config" / "opencode" / "config.json"],
-        "aider": [home / ".aider.conf.yml"], "continue_dev": [home / ".continue"],
-        "kilocode": [home / ".kilocode"], "cursor": [home / ".cursor"],
-        "generic_openai": [],
-    }
-    commands = {"claude_code": "claude", "opencode": "opencode", "aider": "aider", "kilocode": "kilocode"}
-    return {name: next((str(p) for p in locations[name] if p.exists()), shutil.which(commands[name]) if name in commands else None) for name in AGENTS}
+def detect_agents():
+    home = Path.home(); locations = {"claude_code": [home/".claude"/"settings.json"], "opencode": [home/".config"/"opencode"/"config.json"], "aider": [home/".aider.conf.yml"], "continue_dev": [home/".continue"], "kilocode": [home/".kilocode"], "cursor": [home/".cursor"], "generic_openai": []}
+    commands = {"claude_code":"claude", "opencode":"opencode", "aider":"aider", "kilocode":"kilocode"}
+    return {n: next((str(p) for p in locations[n] if p.exists()), shutil.which(commands[n]) if n in commands else None) for n in AGENTS}
 
 if _TEXTUAL:
     class OnboardingScreen(Screen):
-        BINDINGS = [("a", "all", "select all"), ("tab", "next", "continue"), ("right", "next", "continue"), ("left", "back", "back")]
-        def __init__(self, app_controller=None):
-            super().__init__(); self.selected: set[str] = set(); self.detected = detect_agents(); self.controller = app_controller; self.cursor = 0
-        def compose(self) -> ComposeResult:
-            yield Vertical(Static("┌─ AutoConduck · Detected agents ─┐", id="title"), Static(render_agent_rows(list(AGENTS), self.detected, self.selected, self.cursor), id="agents", markup=True), Static("[j/k] move  [space] toggle  [a] select all  [→] continue  [ctrl+c] quit", id="footer"))
-        def _text(self):
-            return render_agent_rows(list(AGENTS), self.detected, self.selected, self.cursor)
-        def _update(self): self.query_one("#agents").update(self._text())
-        def action_all(self): self.selected = set(AGENTS); self._update()
-        def on_key(self, event):
-            if event.key in ("j", "down"): self.cursor = move_cursor(self.cursor, 1, len(AGENTS)); self._update()
-            elif event.key in ("k", "up"): self.cursor = move_cursor(self.cursor, -1, len(AGENTS)); self._update()
-            elif event.key in ("space", "enter"):
-                self.selected.symmetric_difference_update({list(AGENTS)[self.cursor]}); self._update()
-            elif event.key in ("right", "tab") and self.controller: self.controller.push_screen(ModelSourceScreen(self.controller, self.selected))
-else:
-    class OnboardingScreen(Screen):
-        def __init__(self, *args, **kwargs): _require_textual()
-
-if _TEXTUAL:
+        def __init__(self, app_controller=None): super().__init__(); self.controller=app_controller; self.selected=set(); self.detected=detect_agents(); self.cursor=0
+        def compose(self): yield Vertical(Static("┌─ AutoConduck · Detected agents ─┐"), Static(render_agent_rows(list(AGENTS), self.detected, self.selected, self.cursor), id="agents", markup=True), Static("[j/k] move  [space] toggle  [→] continue  [ctrl+c] quit"))
+        def on_key(self,e):
+            if e.key in ("j","down"): self.cursor=move_cursor(self.cursor,1,len(AGENTS))
+            elif e.key in ("k","up"): self.cursor=move_cursor(self.cursor,-1,len(AGENTS))
+            elif e.key in ("space","enter"): self.selected.symmetric_difference_update({AGENTS[self.cursor]})
+            elif e.key in ("right","tab") and self.controller: self.controller.push_screen(ModelSourceScreen(self.controller,self.selected))
+            self.query_one("#agents").update(render_agent_rows(list(AGENTS),self.detected,self.selected,self.cursor))
     class ModelSourceScreen(Screen):
-        SOURCES = ["Anthropic", "OpenAI", "Google", "DevPass (LLM Gateway)", "Custom endpoint…"]
-        def __init__(self, app_controller=None, selected=None):
-            super().__init__(); self.controller = app_controller; self.agent_selected = set(selected or ()); self.selected: set[int] = set(); self.cursor = 0; self.models: list[str] = []
-        def compose(self) -> ComposeResult:
-            yield Vertical(Static(render_source_rows(self.SOURCES, self.selected, self.cursor, self.models), id="sources", markup=True), Static("[j/k] move  [space/enter/→] select  [←] back  [ctrl+c] quit", id="footer"))
-        def _update(self): self.query_one("#sources").update(render_source_rows(self.SOURCES, self.selected, self.cursor, self.models))
+        SOURCES=["Anthropic","OpenAI","Google","DevPass (LLM Gateway)","Custom endpoint…"]
+        def __init__(self, app_controller=None, selected=None): super().__init__(); self.controller=app_controller; self.agent_selected=set(selected or ()); self.cursor=0; self.selected=set()
+        def compose(self): yield Vertical(Static(render_source_rows(self.SOURCES,self.selected,self.cursor),id="sources",markup=True),Static("[j/k] move · enter/right select · [left] back · [ctrl+c] quit"))
         def _choose(self):
-            self.selected.add(self.cursor)
-            if self.SOURCES[self.cursor] not in self.models: self.models.append(self.SOURCES[self.cursor])
-            self._update()
-        def on_key(self, event):
-            if event.key in ("j", "down"): self.cursor = move_cursor(self.cursor, 1, len(self.SOURCES)); self._update()
-            elif event.key in ("k", "up"): self.cursor = move_cursor(self.cursor, -1, len(self.SOURCES)); self._update()
-            elif event.key in ("space", "enter"): self._choose()
-            elif event.key == "right" and self.controller:
-                self._choose()
-                eligible = self.agent_selected & {"claude_code", "opencode", "aider", "kilocode"}
-                if eligible:
-                    self.controller.push_screen(LauncherIntegrationScreen(self.controller, self.agent_selected))
-                else:
-                    self._finish()
-            elif event.key == "left" and self.controller: self.controller.pop_screen()
+            key=("devpass" if self.cursor==3 else "custom" if self.cursor==4 else self.SOURCES[self.cursor].lower())
+            if key=="custom": self.controller.push_screen(CustomProvidersScreen(self.controller,self.agent_selected))
+            else: self.controller.push_screen(ModelSelectionScreen(self.controller,self.agent_selected,key))
+        def on_key(self,e):
+            if e.key in ("j","down"): self.cursor=move_cursor(self.cursor,1,len(self.SOURCES))
+            elif e.key in ("k","up"): self.cursor=move_cursor(self.cursor,-1,len(self.SOURCES))
+            elif e.key in ("space","enter","right"): self._choose()
+            elif e.key in ("left","esc"): self.controller.pop_screen()
+            self.query_one("#sources").update(render_source_rows(self.SOURCES,self.selected,self.cursor))
+    class ModelSelectionScreen(Screen):
+        def __init__(self, controller, agents, key):
+            super().__init__(); self.controller=controller; self.agents=set(agents); self.key=key; self.models=models_for_provider(key,PRESETS,DEVPASS_PRESET); self.enabled={m["id"] for m in self.models}; self.cursor=0
+        def compose(self): yield Vertical(Static(render_model_rows(self.models,self.enabled,self.cursor),id="models",markup=True),Static("space: toggle · enter/right: confirm · esc/left: back · [ctrl+c] quit"))
+        def _confirm(self):
+            cfg=get_config(); cfg.selected_presets=list(dict.fromkeys(cfg.selected_presets+[self.key])); cfg.preset_overrides[self.key]=overrides_for_toggle(self.key,self.models,self.enabled); _persist(cfg)
+            if self.agents & LauncherIntegrationScreen.ELIGIBLE: self.controller.push_screen(LauncherIntegrationScreen(self.controller,self.agents))
+            else: self._finish()
         def _finish(self):
-            if self.controller:
+            from .dashboard import DashboardScreen
+            self.controller.switch_screen(DashboardScreen())
+        def on_key(self,e):
+            if e.key in ("j","down"): self.cursor=move_cursor(self.cursor,1,len(self.models))
+            elif e.key in ("k","up"): self.cursor=move_cursor(self.cursor,-1,len(self.models))
+            elif e.key=="space" and self.models: self.enabled.symmetric_difference_update({self.models[self.cursor]["id"]})
+            elif e.key in ("enter","right"): self._confirm()
+            elif e.key in ("esc","left"): self.controller.pop_screen()
+            self.query_one("#models").update(render_model_rows(self.models,self.enabled,self.cursor))
+    class CustomProvidersScreen(Screen):
+        def __init__(self,controller,agents): super().__init__(); self.controller=controller; self.agents=set(agents); self.cursor=0; self.confirm_delete=None
+        def _providers(self): return list(dict.fromkeys(x.get("provider","") for x in get_config().custom_models if x.get("provider")))
+        def compose(self): yield Vertical(Static(render_provider_rows(self._providers(),self.cursor),id="custom",markup=True),Static("n: add · e: edit · d: delete · enter/right: continue · esc/left: back"))
+        def on_key(self,e):
+            providers=self._providers()
+            if self.confirm_delete:
+                if e.key in ("y", "enter"):
+                    _delete_provider(self.confirm_delete); self.confirm_delete=None; self.cursor=0
+                elif e.key in ("n", "esc"): self.confirm_delete=None
+                self.query_one("#custom").update(render_provider_rows(self._providers(),self.cursor)); return
+            if e.key in ("j","down"): self.cursor=move_cursor(self.cursor,1,len(providers))
+            elif e.key in ("k","up"): self.cursor=move_cursor(self.cursor,-1,len(providers))
+            elif e.key=="n": self.controller.push_screen(ProviderFormScreen(self.controller,self.agents))
+            elif e.key=="e" and providers: self.controller.push_screen(ProviderFormScreen(self.controller,self.agents,providers[self.cursor]))
+            elif e.key=="d" and providers: self.confirm_delete=providers[self.cursor]; self.query_one("#custom").update(f"Delete {self.confirm_delete}? [y/n]")
+            elif e.key in ("enter","right"):
+                if providers: self._continue()
+            elif e.key in ("esc","left"): self.controller.pop_screen()
+            self.query_one("#custom").update(render_provider_rows(self._providers(),self.cursor))
+        def _continue(self):
+            cfg=get_config(); cfg.selected_presets=list(dict.fromkeys(cfg.selected_presets+["custom"])); _persist(cfg)
+            if self.agents & LauncherIntegrationScreen.ELIGIBLE: self.controller.push_screen(LauncherIntegrationScreen(self.controller,self.agents))
+            else:
                 from .dashboard import DashboardScreen
                 self.controller.switch_screen(DashboardScreen())
-else:
-    class ModelSourceScreen(Screen):
-        def __init__(self, *args, **kwargs): _require_textual()
-
-if _TEXTUAL:
+    class ProviderFormScreen(Screen):
+        def __init__(self,controller,agents,provider=None):
+            super().__init__(); self.controller=controller; self.agents=agents; self.provider=provider
+        def compose(self):
+            old=next((x for x in get_config().custom_models if x.get("provider")==self.provider),{})
+            yield Vertical(Static("Custom provider"),Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"),Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"),Input(value=old.get("api_key_env",""),placeholder="api_key_env",id="api_key"),TextArea("\n".join(x["id"] for x in get_config().custom_models if x.get("provider")==self.provider),id="models"),Static("enter: save · esc: cancel"))
+        def on_key(self,e):
+            if e.key=="enter":
+                cfg=get_config(); name=self.query_one("#provider").value.strip(); old=self.provider
+                cfg.custom_models=upsert_custom_models([x for x in cfg.custom_models if x.get("provider")!=old or not old],name,self.query_one("#base_url").value.strip(),self.query_one("#api_key").value.strip(),_models_value(self.query_one("#models")).splitlines()); save_config(cfg); self.controller.pop_screen()
+            elif e.key=="esc": self.controller.pop_screen()
     class LauncherIntegrationScreen(Screen):
-        ELIGIBLE = {"claude_code", "opencode", "aider", "kilocode"}
-        def __init__(self, app_controller=None, selected=None):
-            super().__init__(); self.controller = app_controller; self.selected = set(selected or ())
-            self.result = ""
-        def compose(self) -> ComposeResult:
-            gui = self.selected & {"cursor", "continue_dev"}
-            body = ("Start/stop the AutoConduck server automatically whenever you launch your coding agents? "
-                    "This installs launcher shims into ~/.autoconduck/bin and adds that dir to your PATH.\n\n"
-                    "Installable: " + ", ".join(sorted(self.selected & self.ELIGIBLE)) )
-            if gui:
-                body += "\n\nCursor/Continue are GUI apps — they can't be wrapped; start the server manually (`autoconduck start --headless`) or keep it running."
-            if self.result:
-                body += "\n\n" + self.result
-            yield Vertical(Static("Launcher integration", id="title"), Static(body, id="body"), Static(FOOTER_HINT("enter", "esc", "ctrl+c"), id="footer"))
-        def on_key(self, event):
-            if event.key == "enter": self._install()
-            elif event.key == "esc": self._finish()
+        ELIGIBLE={"claude_code","opencode","aider","kilocode"}
+        def __init__(self,controller,selected=None): super().__init__(); self.controller=controller; self.agents=sorted(set(selected or ())&self.ELIGIBLE); self.checked=set(self.agents); self.cursor=0; self.result=""
+        def compose(self): yield Vertical(Static("Launcher integration"),Static(render_check_rows(self.agents,self.checked,self.cursor),id="agents",markup=True),Static("space: toggle · enter: install · esc: skip · [ctrl+c] quit"))
+        def on_key(self,e):
+            if e.key in ("j","down"): self.cursor=move_cursor(self.cursor,1,len(self.agents))
+            elif e.key in ("k","up"): self.cursor=move_cursor(self.cursor,-1,len(self.agents))
+            elif e.key=="space" and self.agents: self.checked.symmetric_difference_update({self.agents[self.cursor]})
+            elif e.key=="enter": self._install()
+            elif e.key=="esc": self._finish()
+            self.query_one("#agents").update(render_check_rows(self.agents,self.checked,self.cursor))
         def _install(self):
-            try:
-                if launcher is None: raise ImportError("launcher integration is unavailable")
-                shims = launcher.install_shims(sorted(self.selected & self.ELIGIBLE))
-                path_file = launcher.ensure_path_entry()
-                paths = ", ".join(str(path) for path in shims.values()) or "none"
-                self.result = f"Installed shims: {paths}. PATH updated: {path_file or 'unchanged'}."
-            except Exception as exc:
-                self.result = f"Launcher integration could not be installed: {exc}"
-            self.refresh()
+            if launcher is None: self._finish(); return
+            launcher.install_shims(sorted(self.checked)); self._finish()
         def _finish(self):
-            if self.controller:
-                from .dashboard import DashboardScreen
-                self.controller.switch_screen(DashboardScreen())
+            from .dashboard import DashboardScreen
+            self.controller.switch_screen(DashboardScreen())
 else:
-    class LauncherIntegrationScreen(Screen):
-        def __init__(self, *args, **kwargs): _require_textual()
+    class OnboardingScreen(Screen):
+        def __init__(self,*a,**k): _require_textual()
+    ModelSourceScreen=OnboardingScreen; ModelSelectionScreen=OnboardingScreen; CustomProvidersScreen=OnboardingScreen; ProviderFormScreen=OnboardingScreen; LauncherIntegrationScreen=OnboardingScreen
+
+def _persist(cfg):
+    from autoconduck.model_presets import resolve_models
+    models=resolve_models(cfg); cfg.model_list=[m.model_dump() for m in models]; save_config(cfg)
+def _delete_provider(provider):
+    cfg=get_config(); cfg.custom_models=remove_custom_provider(cfg.custom_models,provider); save_config(cfg)
