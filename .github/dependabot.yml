@@ -1,0 +1,9 @@
+version: 2
+updates:
+  # Keeping litellm current is what keeps the catalog current.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5

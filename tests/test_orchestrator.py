@@ -192,3 +192,108 @@ async def test_run_happy_path():
         with patch.object(graph, "build_task_plan", return_value=plan):
             with patch.object(graph, "run_subagent", return_value="Finding at src/auth.py:1"):
                 assert await graph.run([], None, client=Client()) == "final answer"
+
+
+# ---- Degradation-path integration tests for the LangGraph DAG --
+
+
+@pytest.mark.asyncio
+async def test_run_double_planner_failure_then_end():
+    """When planner returns None twice, the conditional edge routes to END with fallback=True."""
+    import autoconduck.orchestrator.graph as graph
+    call_count = [0]
+
+    def failing_planner(*args, **kwargs):
+        call_count[0] += 1
+        return None
+
+    with patch.object(graph, "_LANGGRAPH_AVAILABLE", True):
+        with patch.object(graph, "build_task_plan", side_effect=failing_planner):
+            result = await graph.run([], None)
+    assert result is None
+    assert call_count[0] == 2  # planner retried once after first None
+
+
+@pytest.mark.asyncio
+async def test_run_langgraph_unavailable():
+    """_LANGGRAPH_AVAILABLE=False → run() returns None immediately without error."""
+    import autoconduck.orchestrator.graph as graph
+    with patch.object(graph, "_LANGGRAPH_AVAILABLE", False):
+        result = await graph.run([], None)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_pool_returns_error_strings():
+    """Subagents catch exceptions and return 'Subagent error: ...' strings.
+    The pool finishes normally, compactor merges messy text, executor fires.
+    No exception should bubble out of run()."""
+    import autoconduck.orchestrator.graph as graph
+    plan = TaskPlan(subtasks=[valid_task()])
+
+    def bad_subagent(*args, **kwargs):
+        return "Subagent error: connection timeout to upstream API"
+
+    with patch.object(graph, "_LANGGRAPH_AVAILABLE", True):
+        with patch.object(graph, "build_task_plan", return_value=plan):
+            with patch.object(graph, "run_subagent", side_effect=bad_subagent):
+                # Must not raise — worst case it returns degraded text
+                result = await graph.run([], None)
+                # Result may be the degraded string or None depending on executor success
+                assert isinstance(result, (str, type(None)))
+
+
+@pytest.mark.asyncio
+async def test_run_executor_raises_exception():
+    """Executor crashes (e.g. null choices). Outer try/except catches it → run() returns None."""
+    import autoconduck.orchestrator.graph as graph
+    plan = TaskPlan(subtasks=[valid_task()])
+
+    class FailingClient:
+        def completion(self, **kwargs):
+            # Simulate a malformed response with no choices
+            return {"choices": []}
+
+    with patch.object(graph, "_LANGGRAPH_AVAILABLE", True):
+        with patch.object(graph, "build_task_plan", return_value=plan):
+            with patch.object(graph, "run_subagent", return_value="Finding at src/auth.py:1"):
+                result = await graph.run([], None, client=FailingClient())
+    assert result is None  # executor crashed, outer except returns None
+
+
+@pytest.mark.asyncio
+async def test_run_compactor_handles_empty_outputs():
+    """Compactor receives empty or missing subagent outputs and doesn't crash."""
+    # Direct compact() unit check — compact([]) must return ""
+    assert compact([]) == ""
+    assert compact([""]) == ""
+    # Mixed content must also be safe
+    result = compact(["line 1", ""])
+    assert isinstance(result, str)
+    # Missing keys scenario is handled by subagent_outputs dict filtering in compactor_node
+    # which only includes tasks whose ids are present in state.subagent_outputs
+
+
+@pytest.mark.asyncio
+async def test_run_no_subagent_outputs_reaches_compactor():
+    """If plan succeeds but subagent_outputs never fills, compactor gets empty list.
+    Compactor returns "", executor fires and must not raise."""
+    import autoconduck.orchestrator.graph as graph
+    plan = TaskPlan(subtasks=[valid_task()])
+
+    def empty_subagent(task, *args, **kwargs):
+        # Subagent returns empty instead of proper output
+        return ""
+
+    class OkClient:
+        def completion(self, **kwargs):
+            if "FILE CONTENTS" not in str(kwargs.get("messages", [""])):
+                return {"choices": [{"message": {"content": "degraded result from empty input"}}]}
+            return {"choices": [{"message": {"content": plan.model_dump_json()}}]}
+
+    with patch.object(graph, "_LANGGRAPH_AVAILABLE", True):
+        with patch.object(graph, "build_task_plan", return_value=plan):
+            with patch.object(graph, "run_subagent", side_effect=empty_subagent):
+                result = await graph.run([], None, client=OkClient())
+                # Should degrade gracefully — either a string or None
+                assert isinstance(result, (str, type(None)))

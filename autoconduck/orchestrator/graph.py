@@ -42,6 +42,8 @@ async def _call(client: Any, model: str, messages: list[dict[str, str]]) -> str:
     from autoconduck.config import orchestrator_litellm_params, get_config, qualify_model
     params = orchestrator_litellm_params(get_config())
     params["model"] = qualify_model(model)
+    params["_path"] = "orchestrator-executor"
+    params["_pseudo"] = "autoconduck"
     if client is not None and hasattr(client, "completion"):
         return _response_text(await asyncio.to_thread(client.completion, messages=messages, **params))
     if client is not None and hasattr(client, "chat"):

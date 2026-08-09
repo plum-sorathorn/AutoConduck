@@ -15,6 +15,11 @@ class RouteMatch:
 def _tokens(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9_]+", text.lower()))
 
+
+# Pre-tokenize all static examples once at import (~zero per-request cost, eliminates 16 regex calls/example batch).
+_TOKENIZED_EXAMPLES = {e: _tokens(e) for e in FAST_EXAMPLES + SLOW_EXAMPLES}
+
+
 class SemanticRouter:
     def __init__(self) -> None:
         self._layer = None
@@ -42,7 +47,8 @@ class SemanticRouter:
                 pass
         words = _tokens(text)
         def best(examples: list[str]) -> float:
-            return max((len(words & _tokens(e)) / max(1, len(words | _tokens(e))) for e in examples), default=0.0)
+            # Use pre-tokenized sets so we never re-run regex on example strings.
+            return max((len(words & _TOKENIZED_EXAMPLES[e]) / max(1, len(words | _TOKENIZED_EXAMPLES[e])) for e in examples), default=0.0)
         fast, slow = best(FAST_EXAMPLES), best(SLOW_EXAMPLES)
         if fast == slow == 0:
             return RouteMatch("fast_path", 0.0)

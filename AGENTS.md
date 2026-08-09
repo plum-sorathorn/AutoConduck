@@ -43,3 +43,10 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
 - Gitignored: `.autoconduck/`, `backups/`, `graphify-out/`, `build/`, and `*.egg-info/`.
 - LiteLLM owns caching and native cost logging; `/stats` is the audit surface.
 - Do not add legacy routing, state, caching, or telemetry layers. The LiteLLM Proxy is the API surface; dispatcher placement relative to LangGraph follows the blueprint's open integration verification item.
+
+## Keeping the model catalog fresh
+
+- The runtime catalog is derived from the installed `litellm` model registry, so upgrading LiteLLM keeps the dropdown and TUI catalog current.
+- A weekly GitHub Actions workflow refreshes the static `docs/model_catalog.md` snapshot and opens a pull request when it changes.
+- Check the snapshot locally with `python scripts/refresh_catalog.py --check`.
+- Run `python scripts/refresh_catalog.py` before npm publish.

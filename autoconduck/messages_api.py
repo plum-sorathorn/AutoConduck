@@ -173,9 +173,16 @@ def serve_model_ids(cfg) -> list[str]:
 
 
 def custom_entry(cfg, model_id: str) -> dict | None:
-    for m in getattr(cfg, "custom_models", None) or []:
-        if m.get("id") == model_id:
-            return m
+    def matches(entry: dict) -> bool:
+        candidate = entry.get("id") or entry.get("model_name") or entry.get("model")
+        return bool(candidate) and str(candidate).removeprefix("openai/") == model_id.removeprefix("openai/")
+
+    for entry in getattr(cfg, "model_list", None) or []:
+        if isinstance(entry, dict) and entry.get("enabled", True) and matches(entry):
+            return entry
+    for entry in getattr(cfg, "custom_models", None) or []:
+        if isinstance(entry, dict) and matches(entry):
+            return entry
     return None
 
 

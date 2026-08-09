@@ -1,6 +1,6 @@
 """AutoConduck CLI and pragmatic FastAPI/LiteLLM hybrid surface."""
-from __future__ import annotations
 import argparse, asyncio, json, logging, os, sys, time, subprocess, shutil
+from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Any
@@ -57,6 +57,9 @@ def _build():
     from fastapi import FastAPI, Request
     from fastapi.responses import JSONResponse, StreamingResponse
     from pydantic import BaseModel, Field
+    import litellm
+    from .stats import install_recorder
+    install_recorder(litellm)
     from .messages_api import (
         openai_messages_from_anthropic,
         openai_tools_from_anthropic,
@@ -108,13 +111,15 @@ def _build():
     app = FastAPI(title="AutoConduck", lifespan=lifespan)
     PSEUDO = PSEUDO_MODELS
 
-    async def _call(model, body):
+    async def _call(model, body, path=None, pseudo=None):
         llm = _litellm()
         if llm is None: raise RuntimeError("litellm unavailable")
         kwargs = body.model_dump(exclude_none=True)
         kwargs["model"] = model
         kwargs.pop("stream", None)
         kwargs.update(litellm_params_for(model, get_config()))
+        kwargs["_path"] = path if path is not None else "unknown"
+        kwargs["_pseudo"] = pseudo if pseudo is not None else "unknown"
         result = await llm.acompletion(**kwargs)
         return result.model_dump() if hasattr(result, "model_dump") else result
 
@@ -123,6 +128,7 @@ def _build():
         started = time.perf_counter()
         cfg = get_config()
         target = body_model
+        path = "direct"
         if body_model in PSEUDO:
             try:
                 from .dispatcher import route
@@ -143,7 +149,7 @@ def _build():
                     from .orchestrator import run
                     result = await run(messages, [], pseudo_model=body_model)
                     if result is not None:
-                        return None, {"__answer__": result}
+                        return None, {"__answer__": result, "_path": path, "_pseudo": body_model}
                 except Exception:
                     pass
             if not model:
@@ -154,7 +160,10 @@ def _build():
                     from .config import resolve_orchestrator_model
                     model = resolve_orchestrator_model(cfg)
             target = model
-        return target, litellm_params_for(target, cfg)
+        extra = litellm_params_for(target, cfg)
+        extra["_path"] = path if body_model in PSEUDO else "direct"
+        extra["_pseudo"] = body_model
+        return target, extra
 
     def healthz():
         return {"status": "ok"}
@@ -166,16 +175,22 @@ def _build():
         }
 
     async def get_stats():
+        from .stats import aggregate, load_records
+        usage = aggregate(load_records())
         return {
             "counts": stats.decisions,
             "cost_saved_metered": 0.0,
             "cost_saved_subscription": 0.0,
             "cache_hit_ratio": 0.0,
+            "usage": usage["totals"], "models": usage["models"],
+            "path_counts": usage["paths"], "pseudo_counts": usage["pseudos"],
         }
 
     async def completions(body: CompletionRequest, request: Request):
         target, extra = await _route_target(body.model, body.messages)
         if extra.get("__answer__") is not None:
+            from .stats import record
+            record(extra.get("_path", "SLOW"), extra.get("_pseudo", body.model), "orchestrator-answer", 0, 0)
             return {
                 "id": "autoconduck", "object": "chat.completion",
                 "choices": [{"message": {"role": "assistant", "content": extra["__answer__"]}}],
@@ -198,7 +213,7 @@ def _build():
                 yield "data: [DONE]\n\n"
             return StreamingResponse(relay(), media_type="text/event-stream")
         body.model = target
-        return JSONResponse(await _call(target, body))
+        return JSONResponse(await _call(target, body, path=extra.get("_path"), pseudo=extra.get("_pseudo")))
 
     async def messages_endpoint(body: MessagesRequest, request: Request):
         cfg = get_config()
@@ -222,6 +237,8 @@ def _build():
             return JSONResponse(anthropic_response_text(coerce_content_text(answer), target or body.model, input_text=json.dumps(oai_messages)))
         from .messages_api import messages_litellm_kwargs
         kwargs = messages_litellm_kwargs(target, extra)
+        kwargs["_path"] = extra.get("_path", "unknown")
+        kwargs["_pseudo"] = extra.get("_pseudo", body.model)
         for name, value in (
             ("tools", openai_tools_from_anthropic(body.tools)),
             ("tool_choice", openai_tool_choice_from_anthropic(body.tool_choice)),
@@ -285,6 +302,9 @@ def _build():
     app.get("/healthz")(healthz)
     app.get("/v1/models")(models)
     app.get("/stats")(get_stats)
+    # Keep postponed annotations from turning nested Pydantic models into query params.
+    completions.__annotations__.update({"body": CompletionRequest, "request": Request})
+    messages_endpoint.__annotations__.update({"body": MessagesRequest, "request": Request})
     app.post("/v1/chat/completions")(completions)
     app.post("/v1/messages")(messages_endpoint)
     @app.post("/v1/messages/count_tokens")
@@ -470,6 +490,32 @@ def cmd_stop(args):
     launcher.stop_server(args.port)
 
 
+def cmd_stats(args):
+    from . import stats
+    records = stats.load_records()
+    if args.days is not None:
+        cutoff = time.time() - args.days * 86400
+        records = [r for r in records if _timestamp(r.get("ts")) >= cutoff]
+    if args.reset:
+        if not args.force:
+            print("Refusing to reset stats without --force")
+            return
+        try: stats.stats_path().unlink()
+        except FileNotFoundError: pass
+        return
+    agg = stats.aggregate(records)
+    if args.json:
+        print(stats.render_json(agg)); return
+    first, last = (records[0].get("ts"), records[-1].get("ts")) if records else ("n/a", "n/a")
+    print(f"Usage stats: {first} to {last} ({agg['totals']['calls']} calls)")
+    print(stats.render_table(agg))
+
+
+def _timestamp(value):
+    try: return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError, OverflowError): return 0
+
+
 def cmd_install(args):
     from . import launcher
     from .agents import all_adapters
@@ -576,6 +622,12 @@ def main(argv: list[str] | None = None):
         p = sub.add_parser(name)
         p.add_argument("--port", type=int)
         p.set_defaults(handler=func)
+    stats_parser = sub.add_parser("stats")
+    stats_parser.add_argument("--json", action="store_true")
+    stats_parser.add_argument("--days", type=int)
+    stats_parser.add_argument("--reset", action="store_true")
+    stats_parser.add_argument("--force", action="store_true")
+    stats_parser.set_defaults(handler=cmd_stats)
     install = sub.add_parser("install")
     install.add_argument("agents", nargs="*")
     install.set_defaults(handler=cmd_install)

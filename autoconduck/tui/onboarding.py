@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from .onboarding_models import models_for_provider, overrides_for_toggle, upsert_custom_models, remove_custom_provider
 from autoconduck.config import get_config, save_config
-from autoconduck.model_presets import PRESETS
+from autoconduck.model_presets import PRESETS, curated_model_catalog
 from autoconduck.model_presets import resolve_models
 try:
     from autoconduck import launcher
@@ -19,7 +19,15 @@ def render_source_rows(sources, selected, cursor, models=None):
     rows = ["┌─ Model Sources ─┐"] + [(f"[reverse]› {'✓' if i in selected else ' '} {s}[/reverse]" if i == cursor else f"  {'✓' if i in selected else ' '} {s}") for i, s in enumerate(sources)]
     return "\n".join(rows + ["", "Selected models for routing pool:"] + [f"  {m}" for m in (models or [sources[i] for i in sorted(selected)])] or ["  none"])
 def render_model_rows(models, enabled, cursor):
-    return "\n".join((f"[reverse]› {'✓' if m['id'] in enabled else ' '} {m['id']} ({m.get('tier','balanced')})[/reverse]" if i == cursor else f"  {'✓' if m['id'] in enabled else ' '} {m['id']} ({m.get('tier','balanced')})") for i, m in enumerate(models)) or "No models available for this provider."
+    def price(m):
+        return f" · in ${format_price(m.get('price_in', 0))} · out ${format_price(m.get('price_out', 0))} /1M"
+    return "\n".join((f"[reverse]› {'✓' if m['id'] in enabled else ' '} {m['id']} ({m.get('tier','balanced')}){price(m)}[/reverse]" if i == cursor else f"  {'✓' if m['id'] in enabled else ' '} {m['id']} ({m.get('tier','balanced')}){price(m)}") for i, m in enumerate(models)) or "No models available for this provider."
+
+def format_price(value) -> str:
+    value = float(value or 0)
+    return f"{value:.3f}" if 0 < value < 1 else f"{value:.2f}"
+def model_option_label(row) -> str:
+    return f"{row['id']} (${format_price(row['price_in'])} / ${format_price(row['price_out'])} per 1M)"
 def render_provider_rows(providers, cursor):
     def _name(p):
         return p.get("provider", "") if isinstance(p, dict) else str(p)
@@ -43,7 +51,7 @@ try:
     from textual.containers import Vertical
     from textual.screen import Screen
     from textual.binding import Binding
-    from textual.widgets import Static, Input, Label
+    from textual.widgets import Static, Input, Label, Select
     try:
         from textual.widgets import TextArea
     except ImportError:
@@ -74,11 +82,11 @@ if _TEXTUAL:
             elif e.key in ("right","tab") and self.controller: self.controller.push_screen(ModelSourceScreen(self.controller,self.selected))
             self.query_one("#agents").update(render_agent_rows(list(AGENTS),self.detected,self.selected,self.cursor))
     class ModelSourceScreen(Screen):
-        SOURCES=["Anthropic","OpenAI","Google","Custom endpoint…"]
+        SOURCES=["Anthropic","OpenAI","Google","LLM Gateway","Custom endpoint…"]
         def __init__(self, app_controller=None, selected=None): super().__init__(); self.controller=app_controller; self.agent_selected=set(selected or ()); self.cursor=0; self.selected=set()
         def compose(self): yield Vertical(Static(render_source_rows(self.SOURCES,self.selected,self.cursor),id="sources",markup=True),Static("[↑/↓] move · enter/right select · [left] back · [ctrl+c] quit"))
         def _choose(self):
-            key=("custom" if self.cursor==3 else self.SOURCES[self.cursor].lower())
+            key=("custom" if self.cursor==4 else ("llmgateway" if self.cursor==3 else self.SOURCES[self.cursor].lower()))
             if key=="custom": self.controller.push_screen(CustomProvidersScreen(self.controller,self.agent_selected))
             else: self.controller.push_screen(ModelSelectionScreen(self.controller,self.agent_selected,key))
         def on_key(self,e):
@@ -147,7 +155,21 @@ if _TEXTUAL:
         def compose(self):
             old=next((x for x in get_config().custom_models if x.get("provider")==self.provider),{})
             models = "\n".join(x["id"] for x in get_config().custom_models if x.get("provider")==self.provider)
-            yield Vertical(Static("Custom provider"),Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"),Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"),Input(value=old.get("api_key",old.get("api_key_env","")),placeholder="API key or environment variable name",id="api_key"),Label("One model ID per line (newline-separated)", classes="label"),TextArea(models,id="models"),*([Static(render_models_placeholder(False),id="placeholder",markup=True)] if not models else []),Static("enter: save · ctrl+s: save · esc: cancel", id="error"))
+            catalog = curated_model_catalog()
+            options = [(model_option_label(row), row['id']) for row in catalog]
+            widgets = [Static("Custom provider"), Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"), Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"), Input(value=old.get("api_key",old.get("api_key_env","")),placeholder="API key or environment variable name",id="api_key")]
+            if options:
+                widgets.append(Select(options, prompt="Add a model…", id="model_catalog"))
+            widgets.extend([Label("One model ID per line (newline-separated)", classes="label"),TextArea(models,id="models"),*([Static(render_models_placeholder(False),id="placeholder",markup=True)] if not models else []),Static("enter: save · ctrl+s: save · esc: cancel", id="error")])
+            yield Vertical(*widgets)
+        def on_select_changed(self, event):
+            if getattr(event, "select", None) and event.select.id == "model_catalog" and event.value:
+                area = self.query_one("#models")
+                current = _models_value(area)
+                ids = [line.strip() for line in current.splitlines() if line.strip()]
+                if event.value not in ids:
+                    area.text = (current.rstrip() + "\n" if current.strip() else "") + str(event.value)
+                event.select.value = Select.BLANK
         def on_input_submitted(self, event): self.action_save()
         def action_cancel(self): self.controller.pop_screen()
         def action_save(self):

@@ -26,36 +26,46 @@ def has_stack_trace(text: str) -> bool:
     return any(re.search(p, text, re.I) for p in patterns)
 
 def complexity_of(text: str) -> float:
-    text = str(text or "")
-    length = min(len(text) / 500.0, 1.0)
-    identifiers = len(set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", text)))
+    # All regex calls here operate on the same text string; caller should dedup/shared-cache
+    # where possible (e.g., dispatcher.clean_routing_text already strips reminders before score).
+    t = str(text or "")
+    length = min(len(t) / 500.0, 1.0)
+    identifiers = len(set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", t)))
     refs = min(identifiers / 25.0, 1.0)
-    structural = len(re.findall(r"refactor|migrate|redesign|architecture|feature|entire|whole|all files|multiple files|integration|codebase", text, re.I))
-    files = len(re.findall(r"\b\S+\.(?:py|js|ts|go|rs|java|sql|yaml|json)\b", text, re.I))
-    value = 0.20 * length + 0.15 * refs + 0.50 * min(structural / 3, 1) + 0.15 * min(files / 3, 1)
-    return min(1.0, value)
+    structural = len(re.findall(r"refactor|migrate|redesign|architecture|feature|entire|whole|all files|multiple files|integration|codebase", t, re.I))
+    files = len(re.findall(r"\b\S+\.(?:py|js|ts|go|rs|java|sql|yaml|json)\b", t, re.I))
+    return min(1.0, 0.20 * length + 0.15 * refs + 0.50 * min(structural / 3, 1) + 0.15 * min(files / 3, 1))
 
 def _last(messages: list) -> str:
     if not messages: return ""
     item = messages[-1]
     content = item.get("content", "") if isinstance(item, dict) else getattr(item, "content", item)
+    # Dispatcher already calls clean_routing_text on the text before scoring; skip re-clean unless present.
+    if "<system-reminder>" not in content:
+        return str(content or "")
     return clean_routing_text(content)
 
 def score(messages: list, history, match: RouteMatch, pseudo_model: str = "autoconduck", config=None) -> Score:
-    text = _last(messages)
+    # Hoist all getattr(cfg, ...) calls to top — avoids repeated attr lookups inside conditionals.
     cfg = config
     low = float(getattr(cfg, "ambiguous_low", 0.55) if cfg else 0.55)
     high = float(getattr(cfg, "ambiguous_high", 0.70) if cfg else 0.70)
+    stack_trace_boost = float(getattr(cfg, "stack_trace_boost", STACK_TRACE_BOOST) if cfg else STACK_TRACE_BOOST)
+    hysteresis_floor = float(getattr(cfg, "hysteresis_floor", HYSTERESIS_FLOOR) if cfg else HYSTERESIS_FLOOR)
+
+    text = _last(messages)
     complexity = complexity_of(text)
     trace = has_stack_trace(text)
-    confidence = min(1.0, max(float(match.confidence), complexity * 0.75) + (float(getattr(cfg, "stack_trace_boost", STACK_TRACE_BOOST) if cfg else STACK_TRACE_BOOST) if trace else 0))
+    confidence = min(1.0, max(float(match.confidence), complexity * 0.75) + (stack_trace_boost if trace else 0))
     previous = history[-1] if isinstance(history, list) and history else history
     escalated = bool(getattr(previous, "complexity", 0) >= ESCALATION_THRESHOLD or (isinstance(previous, dict) and (previous.get("complexity", 0) >= ESCALATION_THRESHOLD or previous.get("confidence", 0) >= ESCALATION_THRESHOLD)))
     if escalated and not trace:
-        complexity = min(complexity, float(getattr(cfg, "hysteresis_floor", HYSTERESIS_FLOOR) if cfg else HYSTERESIS_FLOOR))
+        complexity = min(complexity, hysteresis_floor)
     multiplier = 1.0
-    if pseudo_model.endswith("budget"): multiplier = 1.15
-    elif pseudo_model.endswith("expensive"): multiplier = 0.85
+    if pseudo_model.endswith("budget"):
+        multiplier = 1.15
+    elif pseudo_model.endswith("expensive"):
+        multiplier = 0.85
     boundary_low, boundary_high = min(1.0, low * multiplier), min(1.0, high * multiplier)
     if confidence < boundary_low or (boundary_low <= confidence <= boundary_high):
         return Score("ambiguous", "fast", confidence, complexity, "confidence is in the ambiguous zone")

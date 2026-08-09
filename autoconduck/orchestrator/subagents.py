@@ -43,6 +43,8 @@ async def run_subagent(task: SubTask, upstream_summaries: str, client=None, cfg=
         from autoconduck.config import orchestrator_litellm_params
         params = orchestrator_litellm_params(cfg)
         params["model"] = qualify_model(select_model_by_tier("cheap", cfg))
+        params["_path"] = "orchestrator-subagent"
+        params["_pseudo"] = "autoconduck"
         prompt = build_subagent_prompt(task, upstream_summaries)
         logging.getLogger("autoconduck.orchestrator").debug(
             "SUBAGENT PROMPT [%s]:\n%s", task.id, prompt
