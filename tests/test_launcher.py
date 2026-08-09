@@ -1,7 +1,9 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from autoconduck import launcher
+from autoconduck import main
 
 
 def test_scripts_contain_lifecycle_commands():
@@ -16,6 +18,11 @@ def test_scripts_contain_lifecycle_commands():
 def test_server_alive_handles_failure():
     with patch("autoconduck.launcher.urlopen", side_effect=OSError):
         assert launcher.server_alive() is False
+
+
+def test_get_app_builds_and_returns_app():
+    built_app = main._get_app()
+    assert built_app is main.app
 
 
 def test_parse_netstat_output():
@@ -133,6 +140,7 @@ def test_start_daemon_passes_create_no_window_on_windows(tmp_path, monkeypatch):
         pid = 12345
 
     def popen(command, **kwargs):
+        captured["command"] = command
         captured.update(kwargs)
         return Child()
 
@@ -141,5 +149,37 @@ def test_start_daemon_passes_create_no_window_on_windows(tmp_path, monkeypatch):
     monkeypatch.setattr(launcher.subprocess, "Popen", popen)
     launcher._start_daemon(11434)
 
+    assert "--headless" in captured["command"]
+    assert "--daemon" not in captured["command"]
     assert captured["creationflags"] & launcher.subprocess.CREATE_NO_WINDOW
     assert pidfile.read_text() == "12345"
+
+
+def test_cmd_start_daemon_spawns_detached_server_without_daemon_flag(tmp_path, monkeypatch):
+    captured = {}
+
+    class Child:
+        pid = 12345
+
+    def popen(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return Child()
+
+    monkeypatch.setattr(main, "load_config", lambda: SimpleNamespace(port=None, log_level="INFO"))
+    monkeypatch.setattr(main, "home_dir", lambda: tmp_path)
+    monkeypatch.setattr(main, "_check_port_available", lambda port: None)
+    monkeypatch.setattr(launcher, "daemon_python", lambda: "pythonw.exe")
+    monkeypatch.setattr(main.subprocess, "Popen", popen)
+    monkeypatch.setattr(main.sys, "platform", "win32")
+
+    main.cmd_start(SimpleNamespace(
+        port=11434,
+        host="127.0.0.1",
+        headless=True,
+        daemon=True,
+    ))
+
+    assert "--headless" in captured["command"]
+    assert "--daemon" not in captured["command"]
+    assert captured["creationflags"] & main.subprocess.DETACHED_PROCESS

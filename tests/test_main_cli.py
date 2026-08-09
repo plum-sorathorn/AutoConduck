@@ -156,6 +156,36 @@ def test_cmd_launch_agent_uses_real_binary_env_and_releases_in_order():
     assert env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] == "1"
 
 
+def test_cmd_launch_agent_passes_file_object_streams_to_popen(tmp_path):
+    cfg = Config(port=11434)
+    captured = {}
+    adapter_instance = SimpleNamespace(id="claude_code", binary_name="claude", patch=lambda cfg: None)
+
+    def popen(command, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(pid=1234)
+
+    with patch.object(cli, "load_config", return_value=cfg), \
+         patch.object(cli, "home_dir", return_value=tmp_path), \
+         patch("autoconduck.launcher.kill_existing_on_port"), \
+         patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe"), \
+         patch("autoconduck.launcher.real_binary_path", return_value=None), \
+         patch.object(cli.shutil, "which", return_value=None), \
+         patch("autoconduck.launcher.release_server"), \
+         patch.object(cli.subprocess, "Popen", side_effect=popen), \
+         patch("urllib.request.urlopen"), \
+         patch("autoconduck.agents.claude_code.ClaudeCodeAdapter", return_value=adapter_instance):
+        assert cli.cmd_launch_agent("claude_code") == 1
+
+    log_path = tmp_path / "run" / "server.log"
+    assert captured["stdout"].name == str(log_path)
+    assert captured["stderr"].name == str(log_path)
+    assert hasattr(captured["stdout"], "fileno")
+    assert hasattr(captured["stderr"], "fileno")
+    assert not isinstance(captured["stdout"], type(log_path))
+    assert not isinstance(captured["stderr"], type(log_path))
+
+
 def test_cmd_launch_agent_nonzero_exit_still_releases():
     cfg = Config(port=11434)
     events = []

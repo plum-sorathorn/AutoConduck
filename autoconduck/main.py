@@ -309,6 +309,11 @@ def _build():
     _cached["messages_endpoint"] = messages_endpoint
 
 
+def _get_app():
+    _build()
+    return app
+
+
 # ---------- Public helpers ------------------------------------------------------------------
 
 def _run_proxy(port: int, log_level: str = "info", host: str = "127.0.0.1"):
@@ -357,7 +362,7 @@ def cmd_start(args):
             from .launcher import daemon_python
             cmd = [
                 daemon_python(), "-m", "autoconduck", "start",
-                "--headless", "--daemon", "--port", str(port), "--host", args.host,
+                "--headless", "--port", str(port), "--host", args.host,
             ]
             with log.open("ab") as stream:
                 flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if sys.platform == "win32" else 0
@@ -509,11 +514,12 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
     log.parent.mkdir(parents=True, exist_ok=True)
 
     python_bin = launcher.daemon_python()
-    cmd = [python_bin, "-m", "autoconduck", "start", "--headless", "--daemon", "--port", str(port)]
+    cmd = [python_bin, "-m", "autoconduck", "start", "--headless", "--port", str(port)]
 
     import subprocess as _sp
     flags = (_sp.DETACHED_PROCESS | _sp.CREATE_NEW_PROCESS_GROUP | _sp.CREATE_NO_WINDOW) if sys.platform == "win32" else 0
-    proc = _sp.Popen(cmd, stdout=log, stderr=log, start_new_session=sys.platform != "win32", creationflags=flags, close_fds=True)
+    with log.open("ab") as stream:
+        proc = _sp.Popen(cmd, stdout=stream, stderr=stream, start_new_session=sys.platform != "win32", creationflags=flags, close_fds=True)
 
     # Exponential-backoff health poll (max ~6 s instead of flat 10 s)
     server_ready = False

@@ -110,7 +110,7 @@ def _write_claim(owned):
 
 def _start_daemon(port):
     pid, _, log = _files(); log.parent.mkdir(parents=True, exist_ok=True)
-    command = [daemon_python(), "-m", "autoconduck", "start", "--headless", "--daemon", "--port", str(port)]
+    command = [daemon_python(), "-m", "autoconduck", "start", "--headless", "--port", str(port)]
     with log.open("ab") as stream:
         if os.name == "nt":
             flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
