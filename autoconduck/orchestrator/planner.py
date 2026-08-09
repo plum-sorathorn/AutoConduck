@@ -38,6 +38,7 @@ class SubTask(BaseModel):
 class TaskPlan(BaseModel):
     subtasks: list[SubTask]
     summary: str = ""
+    budget_hint: float | None = None
 
 
 PLANNER_SYSTEM_PROMPT = """You are a coding-task planner. Return only JSON matching the supplied schema.
@@ -126,10 +127,12 @@ def _format_file_contents(files: dict[str, str]) -> str:
     return "\n".join(parts)
 
 
-def _model_name(cfg=None) -> str:
+def _model_name(cfg=None, task_value=0.5, config=None) -> str:
     try:
-        from autoconduck.config import select_model_by_tier
-        return select_model_by_tier("mid", cfg)
+        from autoconduck import pricing
+        config = config or cfg
+        lo, hi = config.selection.phase_bands["planner"]
+        return pricing.select_closest(pricing.pool_ids(config), lo + (hi - lo) * task_value, config, band=(lo, hi))
     except Exception:
         pass
     return "gpt-4o"

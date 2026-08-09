@@ -4,6 +4,15 @@ import logging
 from typing import Any
 
 from .planner import SubTask
+import math
+from autoconduck.evaluator import complexity_of
+
+def subagent_target(subtask_prompt, role, plan_breadth, budget_hint, config):
+    weight = {"read": .3, "analysis": .6, "write": .9}.get(role, .9)
+    hint = budget_hint if isinstance(budget_hint, (int, float)) and 0 <= budget_hint <= 1 else .5
+    raw = .4 * complexity_of(subtask_prompt, config) + .3 * hint * weight + .3 / math.sqrt(max(1, plan_breadth))
+    lo, hi = config.selection.phase_bands["subagent"]
+    return lo + (hi - lo) * max(0, min(1, raw))
 
 
 def build_subagent_prompt(task: SubTask, upstream_summaries: str = "") -> str:
@@ -39,10 +48,11 @@ def _text(response: Any) -> str:
 async def run_subagent(task: SubTask, upstream_summaries: str, client=None, cfg=None) -> str:
     try:
         import asyncio
-        from autoconduck.config import select_model_by_tier, qualify_model
+        from autoconduck.config import qualify_model
+        from autoconduck import pricing
         from autoconduck.config import orchestrator_litellm_params
         params = orchestrator_litellm_params(cfg)
-        params["model"] = qualify_model(select_model_by_tier("cheap", cfg))
+        params["model"] = qualify_model(pricing.select_closest(pricing.pool_ids(cfg), subagent_target(build_subagent_prompt(task, upstream_summaries), "read", 1, None, cfg), cfg, band=cfg.selection.phase_bands["subagent"]))
         params["_path"] = "orchestrator-subagent"
         params["_pseudo"] = "autoconduck"
         prompt = build_subagent_prompt(task, upstream_summaries)

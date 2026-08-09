@@ -25,16 +25,26 @@ def has_stack_trace(text: str) -> bool:
     patterns = (r"Traceback \(most recent call last\)", r"File \"[^\"]+\", line \d+", r"\b(?:Error|Exception|CompilerError|TypeError|ValueError|SyntaxError):", r"\b\w+(?:\.\w+)*:\d+:\d+\b", r"\b(?:fatal|unhandled|undefined reference|build failed)\b")
     return any(re.search(p, text, re.I) for p in patterns)
 
-def complexity_of(text: str) -> float:
+def complexity_of(text: str, config=None) -> float:
     # All regex calls here operate on the same text string; caller should dedup/shared-cache
     # where possible (e.g., dispatcher.clean_routing_text already strips reminders before score).
     t = str(text or "")
-    length = min(len(t) / 500.0, 1.0)
-    identifiers = len(set(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", t)))
-    refs = min(identifiers / 25.0, 1.0)
-    structural = len(re.findall(r"refactor|migrate|redesign|architecture|feature|entire|whole|all files|multiple files|integration|codebase", t, re.I))
-    files = len(re.findall(r"\b\S+\.(?:py|js|ts|go|rs|java|sql|yaml|json)\b", t, re.I))
-    return min(1.0, 0.20 * length + 0.15 * refs + 0.50 * min(structural / 3, 1) + 0.15 * min(files / 3, 1))
+    length = min(1.0, len(t) / 1200)
+    refs = min(1.0, len(re.findall(r"@\w+|#\d+|`[^`]*`|https?://\S+", t)) / 3)
+    structural = min(1.0, (len(re.findall(r"(?m)^\s*(?:[-*]|\d+[.)])\s+|```|^\s*##\s+", t)) + len(re.findall(r"refactor|migrate|redesign|architecture|feature|entire|whole|all files|multiple files|integration|codebase", t, re.I))) / 3)
+    files = min(1.0, len(re.findall(r"[\w./\\-]+\.\w{1,4}\b", t)) / 3)
+    hard = r"architecture|refactor|migrate|race condition|concurrency|security|distributed|optimize|algorithm"
+    easy = r"typo|rename|format|comment|lint|simple"
+    keyword_domain = (max(-3, min(3, len(re.findall(hard, t, re.I)) - len(re.findall(easy, t, re.I)))) + 3) / 6
+    edits = bool(re.search(r"\b(?:fix|implement|add|refactor|write|build)\b", t, re.I))
+    reads = bool(re.search(r"\b(?:explain|what|why|describe|review|summarize)\b", t, re.I))
+    edit_intent = 1.0 if edits and not reads else 0.0 if reads and not edits else 0.5
+    numbered = len(re.findall(r"(?m)^\s*\d+[.)]\s+", t))
+    markers = len(re.findall(r"\b(?:then|next|after that|also|finally)\b", t, re.I)) + max(0, numbered - 1)
+    multi_step = min(1.0, markers / 3)
+    weights = getattr(getattr(config, "selection", None), "complexity_weights", None) or {"length": .15, "refs": .10, "structural": .25, "files": .10, "keyword_domain": .15, "edit_intent": .15, "multi_step": .10}
+    value = sum(weights[k] * v for k, v in {"length": length, "refs": refs, "structural": structural, "files": files, "keyword_domain": keyword_domain, "edit_intent": edit_intent, "multi_step": multi_step}.items())
+    return min(1.0, value + (STACK_TRACE_BOOST if has_stack_trace(t) else 0))
 
 def _last(messages: list) -> str:
     if not messages: return ""
@@ -54,7 +64,7 @@ def score(messages: list, history, match: RouteMatch, pseudo_model: str = "autoc
     hysteresis_floor = float(getattr(cfg, "hysteresis_floor", HYSTERESIS_FLOOR) if cfg else HYSTERESIS_FLOOR)
 
     text = _last(messages)
-    complexity = complexity_of(text)
+    complexity = complexity_of(text, cfg)
     trace = has_stack_trace(text)
     confidence = min(1.0, max(float(match.confidence), complexity * 0.75) + (stack_trace_boost if trace else 0))
     previous = history[-1] if isinstance(history, list) and history else history

@@ -111,8 +111,8 @@ async def _do_slow_route(messages, body_model):
 
 def _pick_fast_model(body_model, cfg):
     try:
-        from .pricing import select
-        return select(getattr(cfg, "model_list", []), body_model, cfg)
+        from .pricing import select_closest, pool_ids
+        return select_closest(pool_ids(cfg), .15, cfg, pseudo_model=body_model)
     except Exception:
         from .config import resolve_orchestrator_model
         return resolve_orchestrator_model(cfg)

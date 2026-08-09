@@ -27,6 +27,7 @@ class State(BaseModel):
     result: str | None = None
     fallback: bool = False
     attempt: int = 0
+    task_value: float = 0.5
 
 
 def _response_text(response: Any) -> str:
@@ -52,21 +53,20 @@ async def _call(client: Any, model: str, messages: list[dict[str, str]]) -> str:
     return _response_text(await litellm.acompletion(messages=messages, **params))
 
 
-def _executor_model(pseudo_model: str, cfg=None) -> str:
+def _executor_model(pseudo_model: str, cfg=None, task_value=.5, compactor_summary="", subtask_count=0) -> str:
     try:
         from autoconduck import pricing
-        selected = pricing.select(getattr(cfg, "model_list", []), pseudo_model, cfg)
-        if isinstance(selected, str):
-            return selected
-        if selected:
-            return str(getattr(selected, "model", selected))
+        from autoconduck.evaluator import complexity_of
+        lo, hi = cfg.selection.phase_bands["executor"]
+        raw = .5 * task_value + .3 * complexity_of(compactor_summary, cfg) + .2 * min(1, subtask_count / 6)
+        return pricing.select_closest(pricing.pool_ids(cfg), lo + (hi - lo) * max(0, min(1, raw)), cfg, pseudo_model=pseudo_model, band=(lo, hi))
     except Exception:
         pass
     from autoconduck.config import select_model_by_tier
     return select_model_by_tier("expensive", cfg)
 
 
-async def run(messages: list, history, pseudo_model: str = "autoconduck", client=None) -> str | None:
+async def run(messages: list, history, pseudo_model: str = "autoconduck", client=None, task_value: float = 0.5) -> str | None:
     if not _LANGGRAPH_AVAILABLE:
         return None
     try:
@@ -108,7 +108,8 @@ async def run(messages: list, history, pseudo_model: str = "autoconduck", client
 
         async def executor_node(state: State) -> dict:
             prompt = f"Original request:\n{state.messages}\n\nAnalyst summary:\n{state.compacted}"
-            return {"result": await _call(client, _executor_model(state.pseudo_model, cfg), [{"role": "user", "content": prompt}])}
+            task_value = getattr(state, "task_value", 0.5)
+            return {"result": await _call(client, _executor_model(state.pseudo_model, cfg, task_value, state.compacted, len(state.subagent_outputs)), [{"role": "user", "content": prompt}])}
 
         def after_plan(state: State):
             if state.plan is not None:
@@ -128,7 +129,7 @@ async def run(messages: list, history, pseudo_model: str = "autoconduck", client
         graph.add_conditional_edges("subagent_pool", after_pool, {"compact": "compactor", "end": END})
         graph.add_edge("compactor", "executor")
         graph.add_edge("executor", END)
-        final = await graph.compile().ainvoke(State(messages=messages, history=history, pseudo_model=pseudo_model))
+        final = await graph.compile().ainvoke(State(messages=messages, history=history, pseudo_model=pseudo_model, task_value=task_value))
         state = State.model_validate(final)
         return None if state.fallback else state.result
     except Exception:

@@ -167,18 +167,45 @@ The graph is `planner → subagent_pool → (compactor | end) → executor → E
 Its `after_plan` edge retries or falls back; if the plan is `None` twice, the
 graph returns `None` and the request uses the fast path.
 
-`build_task_plan()` uses a few-shot, strict JSON prompt to produce a
-`TaskPlan` of `SubTask{id, goal, scope, output_contract, constraints, depends_on,
-verified_context, read_budget}`. The planner reads in-scope files and distills
-`verified_context` bullets so subagents do not re-read them.
+`build_task_plan()` uses a few-shot, strict JSON prompt to produce a `TaskPlan`
+of `SubTask{id, goal, scope, output_contract, constraints, depends_on,
+verified_context, read_budget}`. The planner reads the in-scope files itself and
+distills their contents into up to eight short `verified_context` bullets (each
+under 15 words). Those bullets are injected into every subagent prompt, so
+subagents do not re-read the files.
 
-Independent dependency waves run concurrently with `asyncio.gather`; results
-are sorted by task ID before merging, keeping compaction deterministic. This
-is the multiple-agent mechanism: N subagents read/write their scoped files
-concurrently. The compactor is pure aggregation, while the executor performs
-final synthesis on the `expensive` tier. Tiering is `mid` planner, `cheap`
-read-only subagents, and `expensive` executor/compactor, so one slow request
-uses several models of different costs.
+Independent dependency waves run concurrently with `asyncio.gather`; the Send
+envelope is retained for map/reduce API compatibility. A subagent whose task
+depends on sibling tasks receives those siblings' outputs concatenated verbatim
+as `CONTEXT FROM SIBLING TASKS`; there is no summarization or rewriting at this
+boundary. Subagent outputs are then ordered by dependency count and merged.
+
+The compactor is deterministic and LLM-free, not a synthesis model call. It
+drops lines whose `file:line` references appeared in an earlier report, drops
+exact duplicate lines, and truncates the result at about 950 words (about 1k
+tokens) while preserving complete lines. The result is stored in
+`state.compacted`. Tiering is `mid` planner, `cheap` read-only subagents, and
+`expensive` executor; the compactor costs nothing.
+
+The executor prompt is assembled exactly as:
+
+```text
+Original request:
+<original user messages, passed through untouched>
+
+Analyst summary:
+<state.compacted>
+```
+
+The original request is never rewritten by compaction. The expensive executor
+performs the final synthesis from the raw request and the deduplicated,
+truncated analyst lines; this is the only LLM-driven synthesis step in the
+pipeline.
+
+In short, between phases the pipeline only (a) distills file contents into
+`verified_context` at the planner, (b) joins sibling outputs verbatim, and (c)
+deterministically deduplicates and truncates in the compactor. There is no
+inter-phase LLM summarization layer; final synthesis is the executor's job.
 
 Every planner and subagent call is a plain `litellm` completion to the resolved
 gateway model, not a subprocess spawn of Claude Code. The `agents/` adapters

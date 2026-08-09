@@ -10,6 +10,12 @@ from typing import Any
 from .config import home_dir
 from . import pricing
 
+_latest_selection: dict[str, Any] = {}
+
+def record_selection(task_value: float, target_scaled_cost: float, model: str, config) -> None:
+    if getattr(getattr(config, "selection", None), "expose_value_in_stats", True):
+        _latest_selection.update(last_task_value=task_value, last_target_scaled_cost=target_scaled_cost, last_selected_model=model)
+
 
 def stats_path() -> Path:
     return home_dir() / "run" / "stats.jsonl"
@@ -66,7 +72,9 @@ def aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
         item["calls"] += 1; item["prompt_tokens"] += p; item["completion_tokens"] += c; item["total_tokens"] += p + c; item["cost"] += cost
         paths[str(row.get("path", "unknown"))] = paths.get(str(row.get("path", "unknown")), 0) + 1
         pseudos[str(row.get("pseudo_model", "unknown"))] = pseudos.get(str(row.get("pseudo_model", "unknown")), 0) + 1
-    return {"totals": totals, "models": dict(sorted(models.items(), key=lambda x: (-x[1]["cost"], -x[1]["total_tokens"], x[0]))), "paths": paths, "pseudos": pseudos}
+    result = {"totals": totals, "models": dict(sorted(models.items(), key=lambda x: (-x[1]["cost"], -x[1]["total_tokens"], x[0]))), "paths": paths, "pseudos": pseudos}
+    result.update(_latest_selection)
+    return result
 
 
 def render_table(agg: dict[str, Any]) -> str:

@@ -14,6 +14,17 @@ class ModelEntry(BaseModel):
     price_out: float = 0.0
     enabled: bool = True
 
+class SelectionConfig(BaseModel):
+    value_to_cost_gamma: float = 1.0
+    pseudo_bias_budget: float = -0.20
+    pseudo_bias_expensive: float = 0.20
+    pseudo_bias_enabled: bool = True
+    ema_min_samples: int = 3
+    closeness_epsilon: float = 0.02
+    expose_value_in_stats: bool = True
+    phase_bands: dict[str, list[float]] = Field(default_factory=lambda: {"planner": [0.55, 0.85], "subagent": [0.10, 0.55], "executor": [0.35, 0.70]})
+    complexity_weights: dict[str, float] = Field(default_factory=lambda: {"length": .15, "refs": .10, "structural": .25, "files": .10, "keyword_domain": .15, "edit_intent": .15, "multi_step": .10})
+
 class Config(BaseModel):
     host: str = "127.0.0.1"; port: int = 11434; log_level: str = "INFO"
     ambiguous_low: float = 0.55; ambiguous_high: float = 0.70; hysteresis_floor: float = 0.50; escalation_threshold: float = 0.80; stack_trace_boost: float = 0.25
@@ -24,6 +35,7 @@ class Config(BaseModel):
     preset_overrides: dict[str, list[dict]] = Field(default_factory=dict)
     shims: dict[str, str] = Field(default_factory=dict)
     managed_server: bool = False
+    selection: SelectionConfig = Field(default_factory=SelectionConfig)
 
 def resolve_api_key(entry: dict) -> str:
     if entry.get("api_key"):
