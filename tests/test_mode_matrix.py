@@ -92,19 +92,19 @@ def fast(client, model="autoconduck", text="fix this typo"):
     return client.post("/v1/chat/completions", json={"model": model, "messages": [{"role": "user", "content": text}]})
 
 
-def test_fast_path_routes_to_cheapest(harness):
+def test_fast_path_routes_to_closest_cost_model(harness):
     client, calls, _ = harness
     response = fast(client)
     assert response.status_code == 200
     assert calls
 
 
-def test_expensive_pseudo_picks_priciest(harness):
+def test_expensive_pseudo_shifts_selection_target(harness):
     _, calls, _ = harness
     assert fast(harness[0], "autoconduck-expensive").status_code == 200
 
 
-def test_budget_pseudo_does_not_pick_priciest(harness):
+def test_budget_pseudo_shifts_away_from_expensive_model(harness):
     client, calls, _ = harness
     fast(client, "autoconduck-budget")
     assert "pricy-model" not in calls[-1][0]

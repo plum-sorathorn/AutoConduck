@@ -20,11 +20,11 @@ def test_scaled_cost_is_monotonic():
     assert pricing.scaled_cost("cheap") < pricing.scaled_cost("mid")
 
 
-def test_select_cheapest_and_skips_degraded():
-    cfg = SimpleNamespace(degraded_window_s=300, degraded_error_rate=.2)
-    assert pricing.select(["mid", "cheap"], "autoconduck", cfg) == "cheap"
-    for _ in range(3): pricing.record_error("cheap")
-    assert pricing.select(["mid", "cheap"], "autoconduck", cfg) == "mid"
+def test_select_closest_matches_target():
+    cfg = SimpleNamespace(degraded_window_s=300, degraded_error_rate=.2, value_to_cost_gamma=1.0,
+                          pseudo_bias_budget=-.2, pseudo_bias_expensive=.2, pseudo_bias_enabled=True,
+                          ema_min_samples=3, closeness_epsilon=.02)
+    assert pricing.select_closest(["mid", "cheap"], 0.7, cfg) == "cheap"
 
 
 def test_subscription_flag_and_ema_correction():
@@ -34,19 +34,19 @@ def test_subscription_flag_and_ema_correction():
     assert pricing._ema["cheap"]["samples"] == 2
 
 
-def test_select_dict_pool_uses_cheapest_and_priciest_models():
+def test_select_dict_pool_matches_closest_target():
     pool = [
         {"id": "a", "price_in": 0.1, "price_out": 0.1},
         {"id": "b", "price_in": 0.01, "price_out": 0.01},
     ]
     cfg = SimpleNamespace(degraded_window_s=300, degraded_error_rate=.2, model_list=pool)
-    assert pricing.select(pool, "autoconduck", cfg) == "a"
-    assert pricing.select(pool, "autoconduck-expensive", cfg) == "a"
+    assert pricing.select_closest(pool, 0.0, cfg) == "b"
+    assert pricing.select_closest(pool, 1.0, cfg) == "a"
 
 
-def test_select_dict_pool_does_not_raise():
+def test_select_closest_dict_pool_does_not_raise():
     cfg = SimpleNamespace(degraded_window_s=300, degraded_error_rate=.2, model_list=[{"id": "x"}])
-    assert pricing.select([{"id": "x"}], "autoconduck", cfg) == "x"
+    assert pricing.select_closest([{"id": "x"}], 0.15, cfg) == "x"
 
 
 def test_select_model_by_tier_is_deterministic_for_equal_costs():

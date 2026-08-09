@@ -154,8 +154,8 @@ def _build():
                     pass
             if not model:
                 try:
-                    from .pricing import select
-                    model = select(getattr(cfg, "model_list", []), body_model, cfg)
+                    from .pricing import pool_ids, select_closest
+                    model = select_closest(pool_ids(cfg), 0.15, cfg, pseudo_model=body_model)
                 except Exception:
                     from .config import resolve_orchestrator_model
                     model = resolve_orchestrator_model(cfg)

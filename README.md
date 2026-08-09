@@ -1,9 +1,10 @@
 # AutoConduck
 
 AutoConduck is a local, zero-overhead model router and task orchestrator for
-OpenAI-compatible coding agents. It routes each turn to the **cheapest capable
-model**, keeping ordinary decisions on a sub-5 ms fast path and escalating
-complex, multi-file work to parallel subagents.
+OpenAI-compatible coding agents. It routes each turn to the model whose cost is
+**CLOSEST** to a task-value score computed on the fly, keeping ordinary decisions
+on a sub-5 ms fast path and escalating complex, multi-file work to parallel
+subagents.
 
 Coding agents select one of three pseudo-models:
 
@@ -72,7 +73,7 @@ custom_models:
 model_list:
   - model_name: deepseek-v4-flash
     provider: llmgateway
-    tier: balanced
+    tier: balanced  # advisory/display-only
 ```
 
 Use the TUI Model Source screen to register this shape; keep the API key in
@@ -108,8 +109,9 @@ with `autoconduck start --headless` for them.
 3. `dispatcher.route()` runs the synchronous, zero-I/O fast path: 
    `semantic_router.route()` → `evaluator.score()` → an optional tiebreaker.
    This path is designed to stay under 5 ms.
-4. A `FAST` decision lets `pricing.select()` choose the model for one
-   completion. A `SLOW` decision hands the whole request to the LangGraph
+4. A `FAST` decision lets `pricing.select_closest()` match a model to the
+   task's computed complexity value; `RoutingDecision.model` is set by the
+   dispatcher. A `SLOW` decision hands the whole request to the LangGraph
    workflow in `orchestrator/graph.py`.
 5. Errors anywhere degrade to the fast path, never to a client-facing API
    error.
@@ -132,8 +134,8 @@ token-overlap matching over the examples is used; no match returns
 The evaluator is pure math on the fast path:
 
 ```text
-complexity = 0.20·(chars/500) + 0.15·(identifiers/25)
-           + 0.50·(structural_hits/3) + 0.15·(files_in_scope/3)
+complexity = 0.15·length + 0.10·refs + 0.25·structural + 0.10·files
+           + 0.15·keyword_domain + 0.15·edit_intent + 0.10·multi_step
 ```
 
 Each term is clamped so the final score is at most 1. Confidence is
@@ -146,20 +148,21 @@ The ambiguous zone is `[0.55, 0.70]`: confidence in that zone (or below its
 low bound) invokes a cheap two-token LLM tiebreaker (“Reply only FAST or
 SLOW”); exceptions return `fast`. The current slow rule is
 `complexity >= 0.6 OR (route == slow_path AND confidence >= 0.70)`, so complex
-prompts escalate even when the semantic router says fast. The budget pseudo-
-model multiplies confidence by `1.15`; expensive multiplies it by `0.85` but
-uses the expensive pricing tier.
+prompts escalate even when the semantic router says fast. The budget pseudo-model multiplies confidence by `1.15`; expensive multiplies
+it by `0.85`. Both instead shift the selection target: budget applies a `−0.20`
+bias and expensive a `+0.20` bias.
 
 ### Pricing (`pricing.py`)
 
-Prices resolve in this order: config `model_list`/`custom_models` `price_in`/
-`price_out`, `litellm.model_cost`, then `pricing_fallback.json`. `scaled_cost`
-applies EMA token correction (α=`0.1`) to observed input/output tokens and
-then `ln(1 + cost)` scaling. `select()` sorts by ascending scaled cost and
-returns the cheapest, except `autoconduck-expensive`, which returns the most
-expensive. Models with trailing error rate above `0.20` over `300s` are
-dropped. `select_model_by_tier()` chooses cheapest (`cheap`), the middle cost
-rank (`mid`), or most expensive (`expensive`).
+Prices resolve config → `litellm.model_cost` → `pricing_fallback.json`.
+`scaled_cost` is `ln(1 + price)` relative to the pool maximum. An EMA realized-
+cost blend (α=`0.1`, requiring at least 3 samples) replaces flat price for
+matching. `select_closest()` picks the nearest `|scaled_cost − target|`, ties
+going to the cheaper model; degraded models (over 20% errors in 300s) are
+excluded, and errors or an all-degraded pool fall back to `cheapest_enabled()`.
+`target_scaled_cost` maps task value using `value_to_cost_gamma` and pseudo-model
+bias (budget `−0.20`, expensive `+0.20`). `select()` and
+`select_model_by_tier()` are deprecated wrappers.
 
 ### LangGraph orchestrator (`orchestrator/`)
 
@@ -184,8 +187,11 @@ The compactor is deterministic and LLM-free, not a synthesis model call. It
 drops lines whose `file:line` references appeared in an earlier report, drops
 exact duplicate lines, and truncates the result at about 950 words (about 1k
 tokens) while preserving complete lines. The result is stored in
-`state.compacted`. Tiering is `mid` planner, `cheap` read-only subagents, and
-`expensive` executor; the compactor costs nothing.
+`state.compacted`. Phase bands are planner `[0.55,0.85]`, subagents
+`[0.10,0.55]`, and executor `[0.35,0.70]`, each with on-the-fly targets from
+task value, subtask prompt/role/plan breadth and planner `budget_hint`, or
+compactor-summary complexity and integration count. The compactor costs
+nothing.
 
 The executor prompt is assembled exactly as:
 
@@ -240,7 +246,13 @@ Configuration is `config.yaml` under `~/.autoconduck` or `$AUTOCONDUCK_HOME`:
 | `degraded_error_rate` | 0.20 |
 | `degraded_window_s` | 300 |
 | `pseudo_model` | `autoconduck` |
-| `model_list` | id, prices, tier, enabled |
+| `phase_bands` | planner, subagent, executor ranges |
+| `complexity_weights` | seven evaluator factor weights |
+| `value_to_cost_gamma` | 1.0 |
+| `pseudo_bias_budget` / `pseudo_bias_expensive` / `pseudo_bias_enabled` | -0.20 / 0.20 / true |
+| `ema_min_samples` | 3 |
+| `expose_value_in_stats` | true |
+| `model_list` | id, prices, enabled; `tier` is advisory/display-only |
 
 `/stats` is the routing audit log (path, model, latency); `/healthz` is the
 liveness endpoint. To see generated prompts, run:
