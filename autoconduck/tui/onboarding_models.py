@@ -11,6 +11,12 @@ def models_for_provider(key: str, presets: dict[str, list[dict[str, Any]]]) -> l
 def overrides_for_toggle(key: str, models: list[dict[str, Any]], enabled: set[str]) -> list[dict[str, Any]]:
     return [dict(model) for model in models if model["id"] in enabled]
 
+def default_enabled_ids(models: list[dict[str, Any]], existing_overrides: list[dict[str, Any]] | None = None) -> set[str]:
+    model_ids = {model["id"] for model in models}
+    if existing_overrides:
+        return {row["id"] for row in existing_overrides if row.get("id") in model_ids}
+    return model_ids if len(models) <= 5 else set()
+
 def upsert_custom_models(existing: list[dict[str, Any]], provider: str, base_url: str, api_key_env: str, model_ids: list[str]) -> list[dict[str, Any]]:
     result = [row for row in existing if row.get("provider") != provider]
     result.extend({"id": model_id, "provider": provider, "api_key": api_key_env,

@@ -9,7 +9,14 @@ from autoconduck.model_presets import (
     CATALOG_SHORTLIST,
     curated_model_catalog,
     catalog_for_provider,
+    clean_model_id,
 )
+
+def test_clean_model_id():
+    assert clean_model_id("us/meta-llama/llama-3-3-70b-instruct") == "llama-3-3-70b-instruct"
+    assert clean_model_id("us.anthropic.claude-3-5-sonnet-20241022-v2:0") == "claude-3-5-sonnet-20241022-v2:0"
+    assert clean_model_id("openai/gpt-4o") == "gpt-4o"
+    assert clean_model_id("gpt-4o") == "gpt-4o"
 from autoconduck.tui.onboarding import (
     format_price,
     render_model_rows,

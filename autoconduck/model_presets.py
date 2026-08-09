@@ -201,6 +201,21 @@ def _catalog_provider(model_id: str, raw: dict[str, Any] | None = None) -> str:
         return str(provider)
     return model_id.split("/", 1)[0] if "/" in model_id else "openai"
 
+_CATALOG_QUALIFIERS = ("us.", "eu.", "apac.", "bedrock.", "azure.", "vertex_ai.", "anthropic.", "meta.", "amazon.", "mistral.", "cohere.", "ai21.")
+
+def clean_model_id(model_id: str) -> str:
+    cleaned = model_id.rsplit("/", 1)[-1]
+    while True:
+        lower = cleaned.lower()
+        qualifier = next((q for q in _CATALOG_QUALIFIERS if lower.startswith(q)), None)
+        if not qualifier:
+            return cleaned
+        cleaned = cleaned[len(qualifier):]
+
+def _catalog_id_is_unqualified(model_id: str) -> bool:
+    cleaned = model_id.rsplit("/", 1)[-1].lower()
+    return "/" not in model_id and not any(cleaned.startswith(q) for q in _CATALOG_QUALIFIERS)
+
 
 def curated_model_catalog() -> list[dict[str, Any]]:
     """Return deduplicated chat models with prices in USD per million tokens."""
@@ -222,12 +237,12 @@ def curated_model_catalog() -> list[dict[str, Any]]:
             continue
         if any(key in raw for key in ("mode", "image_generation", "embedding")) and raw.get("mode") != "chat":
             continue
-        bare = model_id.split("/", 1)[-1]
+        bare = clean_model_id(model_id)
         candidate = {"id": bare, "provider": _catalog_provider(model_id, raw),
                      "price_in": values.get("price_in", 0) * 1000,
                      "price_out": values.get("price_out", 0) * 1000}
         # Prefer an unqualified model over provider-qualified aliases.
-        if bare not in rows or "/" not in model_id:
+        if bare not in rows or _catalog_id_is_unqualified(model_id):
             rows[bare] = candidate
 
     fallback = _load_fallback()

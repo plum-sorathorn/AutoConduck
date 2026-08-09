@@ -2,7 +2,7 @@
 from __future__ import annotations
 import shutil
 from pathlib import Path
-from .onboarding_models import models_for_provider, overrides_for_toggle, upsert_custom_models, remove_custom_provider
+from .onboarding_models import models_for_provider, overrides_for_toggle, upsert_custom_models, remove_custom_provider, default_enabled_ids
 from autoconduck.config import get_config, save_config
 from autoconduck.model_presets import PRESETS, curated_model_catalog
 from autoconduck.model_presets import resolve_models
@@ -51,7 +51,7 @@ try:
     from textual.containers import Vertical
     from textual.screen import Screen
     from textual.binding import Binding
-    from textual.widgets import Static, Input, Label, Select
+    from textual.widgets import Static, Input, Label
     try:
         from textual.widgets import TextArea
     except ImportError:
@@ -96,23 +96,40 @@ if _TEXTUAL:
             elif e.key in ("left","esc"): self.controller.pop_screen()
             self.query_one("#sources").update(render_source_rows(self.SOURCES,self.selected,self.cursor))
     class ModelSelectionScreen(Screen):
+        BINDINGS = [Binding("/", "focus_search", "filter")]
         def __init__(self, controller, agents, key):
-            super().__init__(); self.controller=controller; self.agents=set(agents); self.key=key; self.models=models_for_provider(key,PRESETS); self.enabled={m["id"] for m in self.models}; self.cursor=0
-        def compose(self): yield Vertical(Static(render_model_rows(self.models,self.enabled,self.cursor),id="models",markup=True),Static("space: toggle · enter/right: confirm · esc/left: back · [ctrl+c] quit"))
+            super().__init__(); self.controller=controller; self.agents=set(agents); self.key=key; self.models=models_for_provider(key,PRESETS); self.cursor=0; self.filtered_models=self.models; self._error=None
+            cfg=get_config(); self.enabled=default_enabled_ids(self.models,cfg.preset_overrides.get(self.key))
+        def compose(self): yield Vertical(Input(placeholder="type to filter…",id="search"),Static(render_model_rows(self.models,self.enabled,self.cursor),id="models",markup=True),Static(self._footer(),id="footer"))
+        def _footer(self):
+            if self._error: return self._error
+            return f"{len(self.enabled)}/{len(self.models)} selected · space: toggle · enter/right: confirm · esc/left: back · [ctrl+c] quit" if len(self.models)>5 else "space: toggle · enter/right: confirm · esc/left: back · [ctrl+c] quit"
+        def on_mount(self):
+            if len(self.models)>5: self.query_one("#search",Input).focus()
+        def on_input_changed(self,event):
+            if event.input.id=="search":
+                term=event.value.lower(); self.filtered_models=[m for m in self.models if term in m["id"].lower()]; self.cursor=0; self.query_one("#models").update(render_model_rows(self.filtered_models,self.enabled,self.cursor))
+        def on_input_submitted(self,event):
+            if event.input.id=="search": event.input.blur()
         def _confirm(self):
+            if len(self.models)>5 and not self.enabled:
+                self._error="Select at least one model (space to toggle)"; self.query_one("#footer").update(self._footer()); return
             cfg=get_config(); cfg.selected_presets=list(dict.fromkeys(cfg.selected_presets+[self.key])); cfg.preset_overrides[self.key]=overrides_for_toggle(self.key,self.models,self.enabled); _persist(cfg)
             if self.agents & LauncherIntegrationScreen.ELIGIBLE: self.controller.push_screen(LauncherIntegrationScreen(self.controller,self.agents))
             else: self._finish()
         def _finish(self):
             from .dashboard import DashboardScreen
             self.controller.switch_screen(DashboardScreen())
+        def action_focus_search(self): self.query_one("#search",Input).focus()
         def on_key(self,e):
-            if e.key == "down": self.cursor=move_cursor(self.cursor,1,len(self.models))
-            elif e.key == "up": self.cursor=move_cursor(self.cursor,-1,len(self.models))
-            elif e.key=="space" and self.models: self.enabled.symmetric_difference_update({self.models[self.cursor]["id"]})
+            if e.key == "down": self.cursor=move_cursor(self.cursor,1,len(self.filtered_models))
+            elif e.key == "up": self.cursor=move_cursor(self.cursor,-1,len(self.filtered_models))
+            elif e.key=="space" and self.filtered_models:
+                self.enabled.symmetric_difference_update({self.filtered_models[self.cursor]["id"]})
+                if self.enabled: self._error=None
             elif e.key in ("enter","right"): self._confirm()
             elif e.key in ("esc","left"): self.controller.pop_screen()
-            self.query_one("#models").update(render_model_rows(self.models,self.enabled,self.cursor))
+            self.query_one("#models").update(render_model_rows(self.filtered_models,self.enabled,self.cursor)); self.query_one("#footer").update(self._footer())
     class CustomProvidersScreen(Screen):
         def __init__(self,controller,agents): super().__init__(); self.controller=controller; self.agents=set(agents); self.cursor=0; self.confirm_delete=None
         def _providers(self):
@@ -149,28 +166,45 @@ if _TEXTUAL:
                 from .dashboard import DashboardScreen
                 self.controller.switch_screen(DashboardScreen())
     class ProviderFormScreen(Screen):
-        BINDINGS = [Binding("ctrl+enter", "save", "Save", priority=True), ("ctrl+s", "save", "Save"), ("esc", "cancel", "Cancel")]
+        BINDINGS = [Binding("ctrl+enter", "save", "Save", priority=True), ("ctrl+s", "save", "Save"), ("esc", "cancel", "Cancel"), ("/", "focus_search", "filter")]
         def __init__(self,controller,agents,provider=None):
-            super().__init__(); self.controller=controller; self.agents=agents; self.provider=provider
+            super().__init__(); self.controller=controller; self.agents=agents; self.provider=provider; self._search_rows=[]; self._search_cursor=0
         def compose(self):
             old=next((x for x in get_config().custom_models if x.get("provider")==self.provider),{})
             models = "\n".join(x["id"] for x in get_config().custom_models if x.get("provider")==self.provider)
-            catalog = curated_model_catalog()
-            options = [(model_option_label(row), row['id']) for row in catalog]
-            widgets = [Static("Custom provider"), Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"), Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"), Input(value=old.get("api_key",old.get("api_key_env","")),placeholder="API key or environment variable name",id="api_key")]
-            if options:
-                widgets.append(Select(options, prompt="Add a model…", id="model_catalog"))
+            widgets = [Static("Custom provider"), Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"), Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"), Input(value=old.get("api_key",old.get("api_key_env","")),placeholder="API key or environment variable name",id="api_key"), Input(placeholder="type to filter models…",id="model_search"), Static("",id="model_results",markup=True)]
             widgets.extend([Label("One model ID per line (newline-separated)", classes="label"),TextArea(models,id="models"),*([Static(render_models_placeholder(False),id="placeholder",markup=True)] if not models else []),Static("enter: save · ctrl+s: save · esc: cancel", id="error")])
             yield Vertical(*widgets)
-        def on_select_changed(self, event):
-            if getattr(event, "select", None) and event.select.id == "model_catalog" and event.value:
-                area = self.query_one("#models")
-                current = _models_value(area)
-                ids = [line.strip() for line in current.splitlines() if line.strip()]
-                if event.value not in ids:
-                    area.text = (current.rstrip() + "\n" if current.strip() else "") + str(event.value)
-                event.select.value = Select.BLANK
-        def on_input_submitted(self, event): self.action_save()
+        def on_mount(self): self._render_results()
+        def _render_results(self):
+            term=self.query_one("#model_search",Input).value.lower()
+            rows=[r for r in curated_model_catalog() if term in r["id"].lower() or term in r["provider"].lower()][:12]
+            self._search_rows=rows
+            if self._search_cursor >= len(rows): self._search_cursor=max(0,len(rows)-1)
+            lines=[]
+            for i, r in enumerate(rows):
+                mark=i==self._search_cursor
+                lines.append((((["[reverse]› " if mark else "  "][0])+model_option_label(r)+f" · {r['provider']}")+(["[/reverse]" if mark else ""][0])))
+            self.query_one("#model_results").update("\n".join(lines) or "No matches")
+        def on_input_changed(self,event):
+            if event.input.id=="model_search": self._search_cursor=0; self._render_results()
+        def on_input_submitted(self, event):
+            if event.input.id == "model_search":
+                if getattr(self,"_search_rows",[]):
+                    area = self.query_one("#models")
+                    current = _models_value(area); value=self._search_rows[self._search_cursor]["id"]
+                    ids=[line.strip() for line in current.splitlines() if line.strip()]
+                    if value not in ids: area.text=(current.rstrip()+"\n" if current.strip() else "")+value
+                event.input.focus(); return
+            if event.input.id in {"provider","base_url","api_key","models"}: self.action_save()
+        def on_key(self,event):
+            if event.key=="escape" and self.query_one("#model_search",Input).has_focus:
+                search=self.query_one("#model_search",Input)
+                if search.value: search.value=""; event.stop(); return
+                self.action_cancel(); event.stop(); return
+            if event.key in ("up","down") and self.query_one("#model_search",Input).has_focus:
+                self._search_cursor=move_cursor(self._search_cursor,1 if event.key=="down" else -1,len(getattr(self,"_search_rows",[]))); self._render_results(); event.stop()
+        def action_focus_search(self): self.query_one("#model_search",Input).focus()
         def action_cancel(self): self.controller.pop_screen()
         def action_save(self):
             try:
@@ -185,7 +219,6 @@ if _TEXTUAL:
                 resolve_models(cfg); save_config(cfg); self.controller.pop_screen()
             except Exception as exc:
                 self.query_one("#error").update(str(exc))
-
     class LauncherIntegrationScreen(Screen):
         ELIGIBLE={"claude_code","opencode","aider","kilocode"}
         def __init__(self,controller,selected=None): super().__init__(); self.controller=controller; self.agents=sorted(set(selected or ())&self.ELIGIBLE); self.checked=set(self.agents); self.cursor=0; self.result=""
@@ -213,8 +246,3 @@ def _persist(cfg):
     models=resolve_models(cfg); cfg.model_list=[m.model_dump() for m in models]; save_config(cfg)
 def _delete_provider(provider):
     cfg=get_config(); cfg.custom_models=remove_custom_provider(cfg.custom_models,provider); save_config(cfg)
-
-
-
-
-
