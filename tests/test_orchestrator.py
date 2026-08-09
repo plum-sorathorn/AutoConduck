@@ -172,13 +172,15 @@ def test_compact_dedupes_refs():
     assert len(result.split()) < 1000
 
 
-def test_run_fallback_when_planner_fails():
+@pytest.mark.asyncio
+async def test_run_fallback_when_planner_fails():
     import autoconduck.orchestrator.graph as graph
     with patch.object(graph, "_LANGGRAPH_AVAILABLE", True), patch.object(graph, "build_task_plan", return_value=None):
-        assert graph.run([], None) is None
+        assert await graph.run([], None) is None
 
 
-def test_run_happy_path():
+@pytest.mark.asyncio
+async def test_run_happy_path():
     import autoconduck.orchestrator.graph as graph
     plan = TaskPlan(subtasks=[valid_task()])
     class Client:
@@ -189,4 +191,4 @@ def test_run_happy_path():
     with patch.object(graph, "_LANGGRAPH_AVAILABLE", True):
         with patch.object(graph, "build_task_plan", return_value=plan):
             with patch.object(graph, "run_subagent", return_value="Finding at src/auth.py:1"):
-                assert graph.run([], None, client=Client()) == "final answer"
+                assert await graph.run([], None, client=Client()) == "final answer"

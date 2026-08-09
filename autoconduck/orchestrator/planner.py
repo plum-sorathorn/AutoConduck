@@ -1,6 +1,7 @@
 """Structured task planning prompts and validation."""
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -127,8 +128,8 @@ def _format_file_contents(files: dict[str, str]) -> str:
 
 def _model_name(cfg=None) -> str:
     try:
-        from autoconduck.config import resolve_orchestrator_model
-        return resolve_orchestrator_model(cfg)
+        from autoconduck.config import select_model_by_tier
+        return select_model_by_tier("mid", cfg)
     except Exception:
         pass
     return "gpt-4o"
@@ -137,6 +138,8 @@ def _model_name(cfg=None) -> str:
 def _completion(client: Any, messages: list[dict[str, str]], cfg=None, **kwargs: Any) -> Any:
     from autoconduck.config import orchestrator_litellm_params
     kwargs = {**orchestrator_litellm_params(cfg), **kwargs}
+    from autoconduck.config import qualify_model
+    kwargs["model"] = qualify_model(_model_name(cfg))
     if client is not None:
         if hasattr(client, "completion"):
             return client.completion(messages=messages, **kwargs)
@@ -162,8 +165,15 @@ def build_task_plan(messages: list, client=None, cfg=None) -> TaskPlan | None:
         file_block = _format_file_contents(_read_files(paths))
         system_content = PLANNER_SYSTEM_PROMPT + file_block
         prompt_messages = [{"role": "system", "content": system_content}, *messages]
+        user_msg = "\n".join(
+            str(message.get("content", "")) for message in messages
+            if isinstance(message, dict)
+        )
         for _ in range(2):
             try:
+                logging.getLogger("autoconduck.orchestrator").debug(
+                    "PLANNER PROMPT:\n%s\n---\n%s", system_content, user_msg
+                )
                 response = _completion(client, prompt_messages, cfg=cfg, response_format={
                     "type": "json_schema", "json_schema": {"name": "TaskPlan", "schema": schema, "strict": True}
                 })

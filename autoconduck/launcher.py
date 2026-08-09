@@ -119,6 +119,18 @@ def _start_daemon(port):
     pid.write_text(str(child.pid))
     return child.pid
 
+def kill_existing_on_port(port: int) -> None:
+    """Forcefully kill any process listening on *port*.
+
+    This is called by ``cmd_launch_agent`` so every --claude launch gets a
+    fresh server process instead of reusing stale ones.
+    """
+    pid = find_process_on_port(port)
+    if pid is not None:
+        kill_process(pid)
+        time.sleep(0.3)  # brief grace period for OS to release the socket
+
+
 def ensure_server(port=None) -> bool:
     port = _port(port); pid, _, _ = _files()
     if server_alive(port):
@@ -129,9 +141,13 @@ def ensure_server(port=None) -> bool:
             return False
     try: _start_daemon(port)
     except OSError: return False
-    for _ in range(50):
-        if server_alive(port): _write_claim(True); return True
-        time.sleep(.2)
+    # Exponential-backoff poll (max ~6 s total instead of flat 10 s).
+    # The daemon only needs to import everything once; it becomes ready
+    # well before all 50 iterations are needed in practice.
+    for attempt in range(25):
+        if server_alive(port):
+            _write_claim(True); return True
+        time.sleep(min(0.15 * (1.5 ** attempt), 0.8))
     try: pid.unlink()
     except OSError: pass
     return False

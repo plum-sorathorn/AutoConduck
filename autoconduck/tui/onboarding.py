@@ -33,6 +33,10 @@ def render_check_rows(agents, checked, cursor):
     return "\n".join((f"[reverse]› {'✓' if a in checked else ' '} {a}[/reverse]" if i == cursor else f"  {'✓' if a in checked else ' '} {a}") for i, a in enumerate(agents)) or "No eligible agents selected."
 def _models_value(widget):
     return getattr(widget, "text", None) or getattr(widget, "value", "")
+MODELS_PLACEHOLDER = "One model ID per line (newline-separated)\nExample:\n  gpt-4o\n  gpt-4o-mini"
+def render_models_placeholder(has_models):
+    if has_models: return ""
+    return f"[dim]┌─ {MODELS_PLACEHOLDER}[/dim]"
 
 try:
     from textual.app import ComposeResult
@@ -142,7 +146,8 @@ if _TEXTUAL:
             super().__init__(); self.controller=controller; self.agents=agents; self.provider=provider
         def compose(self):
             old=next((x for x in get_config().custom_models if x.get("provider")==self.provider),{})
-            yield Vertical(Static("Custom provider"),Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"),Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"),Input(value=old.get("api_key",old.get("api_key_env","")),placeholder="API key or environment variable name",id="api_key"),Label("One model ID per line (newline-separated)", classes="label"),TextArea("\n".join(x["id"] for x in get_config().custom_models if x.get("provider")==self.provider),id="models"),Static("enter: save · ctrl+s: save · esc: cancel", id="error"))
+            models = "\n".join(x["id"] for x in get_config().custom_models if x.get("provider")==self.provider)
+            yield Vertical(Static("Custom provider"),Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"),Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"),Input(value=old.get("api_key",old.get("api_key_env","")),placeholder="API key or environment variable name",id="api_key"),Label("One model ID per line (newline-separated)", classes="label"),TextArea(models,id="models"),*([Static(render_models_placeholder(False),id="placeholder",markup=True)] if not models else []),Static("enter: save · ctrl+s: save · esc: cancel", id="error"))
         def on_input_submitted(self, event): self.action_save()
         def action_cancel(self): self.controller.pop_screen()
         def action_save(self):

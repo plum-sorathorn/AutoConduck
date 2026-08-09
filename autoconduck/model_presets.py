@@ -48,9 +48,16 @@ def _load_fallback() -> dict[str, dict]:
     return {}
 
 
-def _ingest_litellm_costs() -> dict[str, dict]:
+def _ingest_litellm_costs(enrich_pricing: bool = True) -> dict[str, dict]:
     global _litellm_costs_cache
     if _litellm_costs_cache is not None:
+        return _litellm_costs_cache
+    # Gate the expensive litellm.model_cost iteration behind a flag so that
+    # fast paths like ``--claude`` never pay this cost.  It defaults to True
+    # for backward compatibility; callers that don't need enriched pricing
+    # (e.g. agent launcher, onboarding screens) should pass False.
+    if not enrich_pricing:
+        _litellm_costs_cache = {}
         return _litellm_costs_cache
     try:
         import litellm  # type: ignore

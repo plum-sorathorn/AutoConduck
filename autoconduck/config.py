@@ -66,6 +66,14 @@ def resolve_orchestrator_model(cfg=None) -> str:
                 return str(model)
     return "gpt-4o"
 
+def select_model_by_tier(tier: str, cfg=None) -> str:
+    """Select a configured model by relative price, with the legacy fallback."""
+    try:
+        from autoconduck.pricing import select_model_by_tier as _select
+        return _select(tier, cfg or get_config()) or resolve_orchestrator_model(cfg)
+    except Exception:
+        return resolve_orchestrator_model(cfg)
+
 def orchestrator_litellm_params(cfg=None) -> dict[str, str]:
     """Build LiteLLM kwargs for the configured orchestration model."""
     model = resolve_orchestrator_model(cfg)

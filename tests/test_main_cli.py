@@ -77,66 +77,135 @@ def test_claude_and_opencode_flags_exit_two():
                 assert exc.code == 2
 
 
+# Helpers for cmd_launch_agent tests (new flow uses kill+daemon+poll, not ensure_server)
+
+
+_CLAUDE_ENV_MOCK = {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:11434",
+    "ANTHROPIC_AUTH_TOKEN": "autoconduck-local",
+    "ANTHROPIC_MODEL": "autoconduck",
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+}
+
+
+def _build_base_patches():
+    """Return a list of patch objects for common cmd_launch_agent setup."""
+    p = [
+        patch.object(cli.subprocess, "Popen", MagicMock()),
+    ]
+    return p
+
+
 def test_cmd_launch_agent_uses_real_binary_env_and_releases_in_order():
     cfg = Config(port=11434, pseudo_model="autoconduck")
-    adapter = SimpleNamespace(id="claude_code", binary_name="claude", patch=lambda cfg: None)
+    adapter_cls_mock = MagicMock()
+    adapter_instance = SimpleNamespace(id="claude_code", binary_name="claude", patch=lambda cfg: None)
+    adapter_cls_mock.return_value = adapter_instance
     events = []
     result = SimpleNamespace(returncode=0)
-
-    def ensure(port):
-        events.append(("ensure", port))
 
     def run(command, **kwargs):
         events.append(("run", command, kwargs))
         return result
 
-    with patch.object(cli, "load_config", return_value=cfg), \
-         patch("autoconduck.agents.all_adapters", return_value=[adapter]), \
-         patch("autoconduck.launcher.ensure_server", side_effect=ensure), \
-         patch("autoconduck.launcher.real_binary_path", return_value="C:\\fake\\claude.exe"), \
-         patch("autoconduck.launcher.release_server", side_effect=lambda port: events.append(("release", port))), \
-         patch("autoconduck.launcher._claude_env", return_value={
-             "ANTHROPIC_BASE_URL": "http://127.0.0.1:11434",
-             "ANTHROPIC_AUTH_TOKEN": "autoconduck-local",
-             "ANTHROPIC_MODEL": "autoconduck",
-             "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
-         }) as claude_env, \
-         patch.object(cli.subprocess, "run", side_effect=run):
-        assert cli.cmd_launch_agent("claude_code") == 0
+    home_mock = MagicMock()
+    log_mock = MagicMock()
+    home_mock.__truediv__ = lambda self, key: log_mock
+    log_mock.parent.mkdir = MagicMock()
 
-    assert [event[0] for event in events] == ["ensure", "run", "release"]
-    assert events[1][1] == ["C:\\fake\\claude.exe"]
-    env = events[1][2]["env"]
+    patches = _build_base_patches()
+    patches.append(patch.object(cli, "load_config", return_value=cfg))
+    patches.append(patch.object(cli, "home_dir", return_value=home_mock))
+    patches.append(patch("builtins.open", MagicMock()))
+    patches.append(patch("autoconduck.launcher.kill_existing_on_port"))
+    patches.append(patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe"))
+    real_path_val = "C:\\fake\\claude.exe"
+    patches.append(patch("autoconduck.launcher.real_binary_path", return_value=real_path_val))
+    release_var = {}
+
+    def record_release(port):
+        release_var["called"] = True
+        events.append(("release", port))
+    patches.append(patch("autoconduck.launcher.release_server", side_effect=record_release))
+    patches.append(patch("autoconduck.launcher._claude_env", return_value=_CLAUDE_ENV_MOCK))
+    patches.append(patch.object(cli.subprocess, "run", side_effect=run))
+
+    urlopen_ctx = patch("urllib.request.urlopen")
+    adapter_ctx = patch("autoconduck.agents.claude_code.ClaudeCodeAdapter", adapter_cls_mock)
+
+    ctx_mgrs = patches + [urlopen_ctx, adapter_ctx]
+    # Use contextlib.ExitStack to dynamically compose patches
+    with patch("contextlib.ExitStack") as stack_mock:
+        stack = MagicMock()
+        stack_mock.return_value.__enter__ = MagicMock(side_effect=lambda s=stack: s)
+        stack_mock.return_value.__exit__ = MagicMock(return_value=False)
+        for p in ctx_mgrs:
+            p.start()
+        try:
+            assert cli.cmd_launch_agent("claude_code") == 0
+        finally:
+            for p in reversed(ctx_mgrs):
+                p.stop()
+
+    assert [event[0] for event in events] == ["run", "release"]
+    assert events[0][1] == ["C:\\fake\\claude.exe"]
+    env = events[0][2]["env"]
     assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:11434"
     assert env["ANTHROPIC_AUTH_TOKEN"] == "autoconduck-local"
     assert env["ANTHROPIC_MODEL"] == "autoconduck"
     assert env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] == "1"
-    claude_env.assert_called_once_with(11434, "autoconduck")
 
 
 def test_cmd_launch_agent_nonzero_exit_still_releases():
     cfg = Config(port=11434)
-    adapter = SimpleNamespace(id="opencode", binary_name="opencode", patch=lambda cfg: None)
+    events = []
+    result = SimpleNamespace(returncode=3)
+
+    def run(command, **kwargs):
+        events.append(("run", command, kwargs))
+        return result
+
+    home_mock = MagicMock()
+    log_mock = MagicMock()
+    home_mock.__truediv__ = lambda self, key: log_mock
+    log_mock.parent.mkdir = MagicMock()
+
+    real_path_val = "C:\\fake\\opencode.exe"
+
     with patch.object(cli, "load_config", return_value=cfg), \
-         patch("autoconduck.agents.all_adapters", return_value=[adapter]), \
-         patch("autoconduck.launcher.ensure_server"), \
-         patch("autoconduck.launcher.real_binary_path", return_value="C:\\fake\\opencode.exe"), \
+         patch.object(cli, "home_dir", return_value=home_mock), \
+         patch("builtins.open", MagicMock()), \
+         patch("autoconduck.launcher.kill_existing_on_port"), \
+         patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe"), \
+         patch("autoconduck.launcher.real_binary_path", return_value=real_path_val), \
          patch("autoconduck.launcher.release_server") as release, \
-         patch.object(cli.subprocess, "run", return_value=SimpleNamespace(returncode=3)):
-        assert cli.cmd_launch_agent("opencode") == 3
+         patch.object(cli.subprocess, "run", side_effect=run), \
+         patch.object(cli.subprocess, "Popen", MagicMock()):
+        with patch("urllib.request.urlopen"):
+            assert cli.cmd_launch_agent("opencode") == 3
     release.assert_called_once_with(11434)
 
 
 def test_cmd_launch_agent_missing_binary_returns_one_and_releases():
     cfg = Config(port=11434)
-    adapter = SimpleNamespace(id="claude_code", binary_name="claude", patch=lambda cfg: None)
+    events = []
+
+    home_mock = MagicMock()
+    log_mock = MagicMock()
+    home_mock.__truediv__ = lambda self, key: log_mock
+    log_mock.parent.mkdir = MagicMock()
+
     with patch.object(cli, "load_config", return_value=cfg), \
-         patch("autoconduck.agents.all_adapters", return_value=[adapter]), \
-         patch("autoconduck.launcher.ensure_server"), \
+         patch.object(cli, "home_dir", return_value=home_mock), \
+         patch("builtins.open", MagicMock()), \
+         patch("autoconduck.launcher.kill_existing_on_port"), \
+         patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe"), \
          patch("autoconduck.launcher.real_binary_path", return_value=None), \
          patch.object(cli.shutil, "which", return_value=None), \
-         patch("autoconduck.launcher.release_server") as release:
-        assert cli.cmd_launch_agent("claude_code") == 1
+         patch("autoconduck.launcher.release_server") as release, \
+         patch.object(cli.subprocess, "Popen", MagicMock()):
+        with patch("urllib.request.urlopen"):
+            assert cli.cmd_launch_agent("claude_code") == 1
     release.assert_called_once_with(11434)
 
 

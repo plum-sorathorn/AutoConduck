@@ -2,9 +2,11 @@ from autoconduck.tui.onboarding import (
     CustomProvidersScreen,
     LauncherIntegrationScreen,
     ModelSelectionScreen,
+    MODELS_PLACEHOLDER,
     ProviderFormScreen,
     render_check_rows,
     render_model_rows,
+    render_models_placeholder,
     render_provider_rows,
 )
 
@@ -31,3 +33,10 @@ def test_onboarding_render_helpers_return_expected_markup():
     assert "opencode" in check_rows
     assert "  aider" in check_rows
     assert "[reverse]" in check_rows
+
+
+def test_render_models_placeholder_shows_format_and_hides_when_models_exist():
+    assert render_models_placeholder(True) == ""
+    shown = render_models_placeholder(False)
+    assert "newline-separated" in shown
+    assert "gpt-4o" in shown

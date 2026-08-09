@@ -59,5 +59,5 @@ def score(messages: list, history, match: RouteMatch, pseudo_model: str = "autoc
     boundary_low, boundary_high = min(1.0, low * multiplier), min(1.0, high * multiplier)
     if confidence < boundary_low or (boundary_low <= confidence <= boundary_high):
         return Score("ambiguous", "fast", confidence, complexity, "confidence is in the ambiguous zone")
-    slow = match.route == "slow_path" and complexity >= 0.6 or match.route == "slow_path" and confidence >= boundary_high
+    slow = complexity >= 0.6 or (match.route == "slow_path" and confidence >= boundary_high)
     return Score("slow" if slow else "fast", "slow" if slow else "fast", confidence, complexity, "stack trace boost" if trace else "semantic route and complexity")

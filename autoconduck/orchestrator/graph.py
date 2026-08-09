@@ -37,44 +37,45 @@ def _response_text(response: Any) -> str:
     return str(response.choices[0].message.content)
 
 
-def _call(client: Any, model: str, messages: list[dict[str, str]]) -> str:
+async def _call(client: Any, model: str, messages: list[dict[str, str]]) -> str:
+    import asyncio
     from autoconduck.config import orchestrator_litellm_params, get_config, qualify_model
     params = orchestrator_litellm_params(get_config())
     params["model"] = qualify_model(model)
     if client is not None and hasattr(client, "completion"):
-        return _response_text(client.completion(messages=messages, **params))
+        return _response_text(await asyncio.to_thread(client.completion, messages=messages, **params))
     if client is not None and hasattr(client, "chat"):
-        return _response_text(client.chat.completions.create(messages=messages, **params))
+        return _response_text(await asyncio.to_thread(client.chat.completions.create, messages=messages, **params))
     import litellm
-    return _response_text(litellm.completion(messages=messages, **params))
+    return _response_text(await litellm.acompletion(messages=messages, **params))
 
 
 def _executor_model(pseudo_model: str, cfg=None) -> str:
     try:
         from autoconduck import pricing
-        selected = pricing.select(pseudo_model)
+        selected = pricing.select(getattr(cfg, "model_list", []), pseudo_model, cfg)
         if isinstance(selected, str):
             return selected
         if selected:
             return str(getattr(selected, "model", selected))
     except Exception:
         pass
-    from autoconduck.config import resolve_orchestrator_model
-    return resolve_orchestrator_model(cfg)
+    from autoconduck.config import select_model_by_tier
+    return select_model_by_tier("expensive", cfg)
 
 
-def run(messages: list, history, pseudo_model: str = "autoconduck", client=None) -> str | None:
+async def run(messages: list, history, pseudo_model: str = "autoconduck", client=None) -> str | None:
     if not _LANGGRAPH_AVAILABLE:
         return None
     try:
         from autoconduck.config import get_config
         cfg = get_config()
-        def planner_node(state: State) -> dict:
+        async def planner_node(state: State) -> dict:
             plan = build_task_plan(state.messages, client=client, cfg=cfg)
             attempt = state.attempt + 1
             return {"plan": plan, "attempt": attempt, "fallback": plan is None and attempt >= 2}
 
-        def subagent_pool_node(state: State) -> dict:
+        async def subagent_pool_node(state: State) -> dict:
             if state.plan is None:
                 return {"fallback": True}
             completed: dict[str, str] = {}
@@ -86,10 +87,13 @@ def run(messages: list, history, pseudo_model: str = "autoconduck", client=None)
                     return {"fallback": True}
                 # Construct Send envelopes so the pool remains compatible with the
                 # native map/reduce API while keeping injectable clients deterministic.
-                for task in ready:
+                import asyncio
+                import inspect
+                calls = [run_subagent(task, "\n".join(completed[dep] for dep in task.depends_on), client=client, cfg=cfg) for task in ready]
+                results = await asyncio.gather(*(call if inspect.isawaitable(call) else asyncio.sleep(0, result=call) for call in calls))
+                for task, result in sorted(zip(ready, results), key=lambda pair: pair[0].id):
                     Send("subagent_pool", {"task_id": task.id})
-                    upstream = "\n".join(completed[dep] for dep in task.depends_on)
-                    completed[task.id] = run_subagent(task, upstream, client=client, cfg=cfg)
+                    completed[task.id] = result
                     pending.remove(task)
             return {"subagent_outputs": completed}
 
@@ -100,9 +104,9 @@ def run(messages: list, history, pseudo_model: str = "autoconduck", client=None)
             ) if task.id in state.subagent_outputs]
             return {"compacted": compact(ordered)}
 
-        def executor_node(state: State) -> dict:
+        async def executor_node(state: State) -> dict:
             prompt = f"Original request:\n{state.messages}\n\nAnalyst summary:\n{state.compacted}"
-            return {"result": _call(client, _executor_model(state.pseudo_model, cfg), [{"role": "user", "content": prompt}])}
+            return {"result": await _call(client, _executor_model(state.pseudo_model, cfg), [{"role": "user", "content": prompt}])}
 
         def after_plan(state: State):
             if state.plan is not None:
@@ -122,7 +126,7 @@ def run(messages: list, history, pseudo_model: str = "autoconduck", client=None)
         graph.add_conditional_edges("subagent_pool", after_pool, {"compact": "compactor", "end": END})
         graph.add_edge("compactor", "executor")
         graph.add_edge("executor", END)
-        final = graph.compile().invoke(State(messages=messages, history=history, pseudo_model=pseudo_model))
+        final = await graph.compile().ainvoke(State(messages=messages, history=history, pseudo_model=pseudo_model))
         state = State.model_validate(final)
         return None if state.fallback else state.result
     except Exception:
