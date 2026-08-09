@@ -1,6 +1,7 @@
 """AutoConduck CLI and pragmatic FastAPI/LiteLLM hybrid surface."""
 from __future__ import annotations
-import argparse, asyncio, json, os, sys, time, subprocess
+import argparse, asyncio, json, os, sys, time, subprocess, shutil
+from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Any
 from .config import get_config, load_config, save_config, home_dir
@@ -12,21 +13,39 @@ def _run_proxy(port: int, log_level: str = "info", host: str = "127.0.0.1"):
     import uvicorn
     uvicorn.run(app, host=host, port=port, log_level=log_level.lower(), access_log=False)
 
+def _check_port_available(port: int) -> None:
+    from .launcher import find_process_on_port, kill_process, prompt_kill_port
+
+    pid = find_process_on_port(port)
+    if pid is None:
+        return
+    if prompt_kill_port(port, pid) and kill_process(pid):
+        print(f"Killed process {pid} using port {port}", file=sys.stderr)
+        return
+    print(f"Port {port} is in use by PID {pid}; kill it and retry", file=sys.stderr)
+    raise SystemExit(1)
+
 def cmd_start(args):
     cfg = load_config(); port = args.port or cfg.port or DEFAULT_PORT
     if not getattr(args, "headless", False) and not home_dir().exists():
-        _run_proxy(_find_free_port(port), cfg.log_level)
+        port = _find_free_port(port)
+        _check_port_available(port)
+        _run_proxy(port, cfg.log_level)
         return
     if getattr(args, "headless", False):
         if getattr(args, "daemon", False):
+            _check_port_available(port)
             log = (home_dir() / "run" / "server.log"); log.parent.mkdir(parents=True, exist_ok=True)
-            cmd = [sys.executable, "-m", "autoconduck", "start", "--headless", "--port", str(port), "--host", args.host]
+            from .launcher import daemon_python
+            cmd = [daemon_python(), "-m", "autoconduck", "start", "--headless", "--port", str(port), "--host", args.host]
             with log.open("ab") as stream:
-                flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP) if sys.platform == "win32" else 0
+                flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if sys.platform == "win32" else 0
                 subprocess.Popen(cmd, stdout=stream, stderr=stream, start_new_session=sys.platform != "win32", creationflags=flags, close_fds=True)
             return
+        _check_port_available(port)
         _run_proxy(port, cfg.log_level, args.host) if args.host != "127.0.0.1" else _run_proxy(port, cfg.log_level)
     else:
+        _check_port_available(port)
         try:
             from .tui.app import AutoConduckApp
             AutoConduckApp(configured=bool(getattr(cfg, "model_list", []))).run()
@@ -38,15 +57,57 @@ def cmd_edit(args):
     AutoConduckApp(configured=True).run()
 
 def cmd_uninstall(args):
-    if not args.force and input("Uninstall AutoConduck and restore agent configs? [y/N] ").lower() not in ("y", "yes"): return
+    if not args.force and input("Uninstall AutoConduck, stop the daemon, and delete ALL state under the autoconduck home (config, backups, logs, run, cache, shims, state.json) as if freshly installed? [y/N] ").lower() not in ("y", "yes"): return
+    cfg = load_config()
     from .agents import all_adapters
     from . import launcher
+    from . import update
+    try:
+        launcher.stop_server(getattr(cfg, "port", None) or DEFAULT_PORT)
+    except Exception as exc:
+        print(f"warning: could not stop daemon: {exc}")
     for adapter in all_adapters():
         try: adapter.revert()
         except Exception as exc: print(f"failed {adapter.display_name}: {exc}")
-    path = home_dir() / "config.yaml"
-    if path.exists(): path.unlink()
     launcher.uninstall_shims(); launcher.remove_path_entry()
+    purge_home_dir(home_dir())
+    print("AutoConduck state purged; package remains installed.")
+    hint = update.uninstall_hint(update.detect_install_method())
+    if hint: print(f"Package still installed — remove it with: {hint}")
+
+def purge_home_dir(home: Path) -> None:
+    """Remove state, refusing obvious catastrophic paths."""
+    import shutil
+    try:
+        resolved = home.resolve()
+        if not home.exists() or not home.is_dir(): return
+        if resolved == Path.cwd().resolve() or resolved.parent == resolved:
+            print(f"error: refusing to purge unsafe home directory: {resolved}")
+            return
+        shutil.rmtree(resolved, ignore_errors=True)
+    except OSError as exc:
+        print(f"error: could not purge home directory: {exc}")
+
+def cmd_update(args):
+    from . import __version__, update
+    method = update.detect_install_method(); command = update.upgrade_command(method)
+    print(f"Current version: {__version__}")
+    if command is None:
+        if method == "uv-tool-editable": print("Editable checkout detected; update it manually (git pull), then reinstall with: uv tool install --editable .")
+        elif method == "pip-editable": print("Editable checkout detected; update it manually (git pull), then reinstall with: pip install -e .")
+        else: print("No managed installation detected; update the checkout manually (git pull) and reinstall.")
+        return
+    if args.dry_run:
+        print(f"Would run: {command}"); return
+    tool = shutil.which(command.split()[0])
+    if not tool:
+        print(f"Error: required package manager '{command.split()[0]}' was not found on PATH."); return
+    subprocess.call([tool, *command.split()[1:]])
+    try:
+        import importlib.metadata
+        print(f"New version: {importlib.metadata.version('autoconduck')}")
+    except importlib.metadata.PackageNotFoundError:
+        print("Upgrade finished; run autoconduck --version to confirm the new version.")
 
 def cmd_ensure(args):
     from . import launcher
@@ -74,6 +135,29 @@ def cmd_install(args):
     for aid, path in paths.items(): print(f"{aid}: {path}")
     if modified: print(f"PATH: {modified}")
 
+def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
+    from . import launcher
+    from .agents import all_adapters
+
+    cfg = load_config()
+    port = port or getattr(cfg, "port", None) or DEFAULT_PORT
+    adapter = next(a for a in all_adapters() if a.id == agent_id)
+    adapter.patch(cfg)
+    launcher.ensure_server(port)
+    real_bin = launcher.real_binary_path(agent_id) or shutil.which(adapter.binary_name)
+    if not real_bin:
+        print(f"agent '{agent_id}' not found on PATH; run: autoconduck install {agent_id}")
+        launcher.release_server(port)
+        return 1
+    env = os.environ.copy()
+    if agent_id == "claude_code":
+        env.update(launcher._claude_env(port, getattr(cfg, "pseudo_model", "autoconduck")))
+    print(f"AutoConduck ready at http://127.0.0.1:{port} — launching {adapter.binary_name}")
+    try:
+        return subprocess.run([real_bin], env=env).returncode
+    finally:
+        launcher.release_server(port)
+
 def _litellm():
     try:
         import litellm
@@ -86,12 +170,15 @@ try:
     from pydantic import BaseModel, Field
     from .messages_api import (
         openai_messages_from_anthropic,
+        openai_tools_from_anthropic,
+        openai_tool_choice_from_anthropic,
         serve_model_ids,
         custom_entry,
         litellm_params_for,
         count_tokens,
         AnthropicSSETranslator,
         anthropic_response_text,
+        coerce_content_text,
         PSEUDO_MODELS,
     )
     class CompletionRequest(BaseModel):
@@ -111,6 +198,9 @@ try:
         stream: bool = True
         tools: list[dict[str, Any]] | None = None
         tool_choice: Any | None = None
+        thinking: Any | None = None
+        metadata: dict[str, Any] | None = None
+        cache_control: Any | None = None
     class _Stats:
         decisions: list[dict[str, Any]] = []
     @asynccontextmanager
@@ -124,7 +214,7 @@ try:
     PSEUDO = PSEUDO_MODELS
     async def _call(model, body):
         llm = _litellm()
-        if llm is None: return {"id": "autoconduck", "choices": [{"message": {"role": "assistant", "content": ""}}]}
+        if llm is None: raise RuntimeError("litellm unavailable")
         kwargs = body.model_dump(exclude_none=True); kwargs["model"] = model; kwargs.pop("stream", None)
         kwargs.update(litellm_params_for(model, get_config()))
         result = await llm.acompletion(**kwargs)
@@ -175,7 +265,10 @@ try:
         if body.stream:
             async def relay():
                 llm = _litellm()
-                if llm is None: return
+                if llm is None:
+                    yield "data: " + json.dumps({"error": {"message": "litellm unavailable", "type": "api_error"}}) + "\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
                 kwargs = body.model_dump(exclude_none=True); kwargs["model"] = target
                 kwargs.update(extra)
                 response = await llm.acompletion(**kwargs)
@@ -207,18 +300,37 @@ try:
                     for ev in translator.translate(chunk):
                         yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                 return StreamingResponse(relay_answer(), media_type="text/event-stream")
-            return JSONResponse(anthropic_response_text(answer, target or body.model))
+            return JSONResponse(anthropic_response_text(answer, target or body.model, input_text=json.dumps(oai_messages)))
         from .messages_api import messages_litellm_kwargs
         kwargs = messages_litellm_kwargs(target, extra)
+        for name, value in (
+            ("tools", openai_tools_from_anthropic(body.tools)),
+            ("tool_choice", openai_tool_choice_from_anthropic(body.tool_choice)),
+            ("max_tokens", body.max_tokens),
+            ("stop", body.stop_sequences),
+            ("temperature", body.temperature),
+            ("top_p", body.top_p),
+            ("thinking", body.thinking),
+            ("metadata", body.metadata),
+            ("cache_control", body.cache_control),
+        ):
+            if value is not None:
+                kwargs[name] = value
         if body.stream:
+            llm = _litellm()
+            if llm is None:
+                return JSONResponse({"type": "error", "error": {"type": "api_error", "message": "litellm unavailable"}}, status_code=502)
+            try:
+                response = await llm.acompletion(messages=oai_messages, stream=True, drop_params=True, **kwargs)
+            except Exception as exc:
+                return JSONResponse({"type": "error", "error": {"type": "api_error", "message": str(exc)}}, status_code=502)
+
             async def relay():
                 translator = AnthropicSSETranslator(target, input_text=json.dumps(oai_messages))
                 stopped = False
                 try:
-                    llm = _litellm()
-                    if llm is None:
-                        raise RuntimeError("litellm unavailable")
-                    response = await llm.acompletion(messages=oai_messages, stream=True, **kwargs)
+                    for ev in translator._ensure_message_start():
+                        yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                     last_emit = time.monotonic()
                     async for chunk in response:
                         if await request.is_disconnected(): break
@@ -237,19 +349,20 @@ try:
                                 stopped = True
                             yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                 except Exception as exc:
-                    yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': {'type': 'api_error', 'message': str(exc)}})}\n\n"
+                    for ev in translator.error(str(exc)):
+                        yield f"event: {ev['event']}\ndata: {ev['data']}\n\n"
                     if not stopped:
                         yield 'event: message_stop\ndata: {"type": "message_stop"}\n\n'
             return StreamingResponse(relay(), media_type="text/event-stream")
         try:
             llm = _litellm()
             if llm is None:
-                return JSONResponse(anthropic_response_text("", target))
-            result = await llm.acompletion(messages=oai_messages, stream=False, **kwargs)
-            text = result.choices[0].message.content if hasattr(result, "choices") else ""
+                return JSONResponse({"type": "error", "error": {"type": "api_error", "message": "litellm unavailable"}}, status_code=503)
+            result = await llm.acompletion(messages=oai_messages, stream=False, drop_params=True, **kwargs)
+            text = result.choices[0].message.content if hasattr(result, "choices") else None
         except Exception as exc:
             return JSONResponse({"type": "error", "error": {"type": "api_error", "message": str(exc)}}, status_code=500)
-        return JSONResponse(anthropic_response_text(text or "", target))
+        return JSONResponse(anthropic_response_text(coerce_content_text(text), target, input_text=json.dumps(oai_messages)))
     @app.post("/v1/messages/count_tokens")
     async def messages_count_tokens(request: Request):
         try:
@@ -263,14 +376,18 @@ except ImportError:
     app = None
 
 def main(argv: list[str] | None = None):
-    parser = argparse.ArgumentParser(prog="autoconduck"); parser.add_argument("--version", action="store_true")
+    parser = argparse.ArgumentParser(prog="autoconduck"); parser.add_argument("--version", action="store_true"); parser.add_argument("--claude", action="store_true"); parser.add_argument("--opencode", action="store_true")
     sub = parser.add_subparsers(dest="cmd"); start = sub.add_parser("start"); start.add_argument("--headless", action="store_true"); start.add_argument("--daemon", action="store_true"); start.add_argument("--port", type=int); start.add_argument("--host", default="127.0.0.1")
     for name, func in (("ensure", cmd_ensure), ("release", cmd_release), ("stop", cmd_stop)):
         p = sub.add_parser(name); p.add_argument("--port", type=int); p.set_defaults(handler=func)
     install = sub.add_parser("install"); install.add_argument("agents", nargs="*"); install.set_defaults(handler=cmd_install)
+    update = sub.add_parser("update"); update.add_argument("--dry-run", action="store_true"); update.set_defaults(handler=cmd_update)
     sub.add_parser("edit"); uninstall = sub.add_parser("uninstall"); uninstall.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
     if args.version: from . import __version__; print(__version__)
+    elif args.claude and args.opencode: print("--claude and --opencode cannot be used together", file=sys.stderr); raise SystemExit(2)
+    elif args.claude: raise SystemExit(cmd_launch_agent("claude_code"))
+    elif args.opencode: raise SystemExit(cmd_launch_agent("opencode"))
     elif args.cmd == "start": cmd_start(args)
     elif args.cmd == "edit": cmd_edit(args)
     elif args.cmd == "uninstall": cmd_uninstall(args)

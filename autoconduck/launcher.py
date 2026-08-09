@@ -9,11 +9,95 @@ def shims_dir() -> Path: return config.home_dir() / "bin"
 def _run_dir() -> Path: return config.run_dir()
 def _files(): return (_run_dir()/"server.pid", _run_dir()/"server.claims", _run_dir()/"server.log")
 def _port(port): return port or config.get_config().port
+
+def daemon_python() -> str:
+    """Use the windowless Windows interpreter when it is available."""
+    if os.name == "nt" and sys.executable.lower().endswith("python.exe"):
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        if pythonw.exists(): return str(pythonw)
+    return sys.executable
 def server_alive(port=None) -> bool:
     try:
         with urlopen(f"http://127.0.0.1:{_port(port)}/healthz", timeout=.5) as response:
             return response.status == 200
     except Exception: return False
+
+def _parse_netstat_output(text: str, port: int | None = None) -> int | None:
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) >= 5 and fields[0].upper() == "TCP":
+            local = fields[1].rsplit(":", 1)
+            if len(local) == 2 and fields[3].upper() == "LISTENING" and (port is None or local[1] == str(port)):
+                try: return int(fields[4])
+                except ValueError: pass
+    return None
+
+def _parse_lsof_output(text: str) -> int | None:
+    for line in text.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) >= 2:
+            try: return int(fields[1])
+            except ValueError: pass
+    return None
+
+def _parse_ss_output(text: str) -> int | None:
+    match = re.search(r"pid=(\d+)", text)
+    return int(match.group(1)) if match else None
+
+def find_process_on_port(port: int) -> int | None:
+    """Return the PID listening on *port*, using available platform tools."""
+    try:
+        import psutil
+        for connection in psutil.net_connections(kind="inet"):
+            if connection.laddr and connection.laddr.port == port and connection.pid:
+                return connection.pid
+        return None
+    except (ImportError, OSError):
+        pass
+    if os.name == "nt":
+        try:
+            result = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True, check=False)
+            return _parse_netstat_output(result.stdout, port)
+        except OSError:
+            return None
+    for command in (("lsof", "-i", f":{port}"), ("ss", "-ltnp")):
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+        except OSError:
+            continue
+        pid = _parse_lsof_output(result.stdout) if command[0] == "lsof" else _parse_ss_output(result.stdout)
+        if pid is not None: return pid
+    return None
+
+def kill_process(pid: int) -> bool:
+    if os.name == "nt":
+        try:
+            result = subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, check=False, creationflags=subprocess.CREATE_NO_WINDOW)
+            return result.returncode == 0
+        except OSError: return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    time.sleep(.1)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    try:
+        os.kill(pid, signal.SIGKILL)
+        return True
+    except OSError:
+        return False
+
+def prompt_kill_port(port: int, pid: int) -> bool:
+    if not sys.stdin.isatty(): return False
+    answer = input(f"Port {port} is in use by process {pid}. Kill it and start AutoConduck? [y/N] ")
+    return answer.strip().lower() in {"y", "yes"}
 
 def _write_claim(owned):
     _, claims, _ = _files(); claims.parent.mkdir(parents=True, exist_ok=True)
@@ -26,10 +110,10 @@ def _write_claim(owned):
 
 def _start_daemon(port):
     pid, _, log = _files(); log.parent.mkdir(parents=True, exist_ok=True)
-    command = [sys.executable, "-m", "autoconduck", "start", "--headless", "--daemon", "--port", str(port)]
+    command = [daemon_python(), "-m", "autoconduck", "start", "--headless", "--daemon", "--port", str(port)]
     with log.open("ab") as stream:
         if os.name == "nt":
-            flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
             child = subprocess.Popen(command, stdout=stream, stderr=stream, creationflags=flags, close_fds=True)
         else: child = subprocess.Popen(command, stdout=stream, stderr=stream, start_new_session=True)
     pid.write_text(str(child.pid))
@@ -39,6 +123,10 @@ def ensure_server(port=None) -> bool:
     port = _port(port); pid, _, _ = _files()
     if server_alive(port):
         _write_claim(False); return False
+    existing_pid = find_process_on_port(port)
+    if existing_pid is not None:
+        if not prompt_kill_port(port, existing_pid) or not kill_process(existing_pid):
+            return False
     try: _start_daemon(port)
     except OSError: return False
     for _ in range(50):
@@ -57,7 +145,7 @@ def stop_server(port=None) -> bool:
     pidfile, claims, _ = _files(); pid = _read_pid()
     if pid is None: return False
     try:
-        if os.name == "nt": subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True)
+        if os.name == "nt": subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
         else: os.kill(pid, signal.SIGTERM)
     except OSError: pass
     for path in (pidfile, claims):
@@ -89,32 +177,27 @@ def real_binary_path(agent_id):
     path = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if p.lower() != blocked)
     return shutil.which(name, path=path)
 
-def _claude_env_blocks(port: int, pseudo: str) -> tuple[str, str]:
+def _claude_env(port: int, pseudo: str = "autoconduck") -> dict[str, str]:
+    return {
+        "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}",
+        "ANTHROPIC_AUTH_TOKEN": "autoconduck-local",
+        "ANTHROPIC_MODEL": pseudo,
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": pseudo,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": pseudo,
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": pseudo,
+        "ANTHROPIC_CUSTOM_MODEL_OPTION": pseudo,
+        "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION": "AutoConduck local router",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+    }
+
+def _claude_env_blocks(port: int, pseudo: str = "autoconduck") -> tuple[str, str]:
     """Return (bash_exports, cmd_sets) for the Claude Code agent_id only."""
-    bash = (
-        'export ANTHROPIC_BASE_URL="http://127.0.0.1:${PORT}"\n'
-        'export ANTHROPIC_AUTH_TOKEN="autoconduck-local"\n'
-        f'export ANTHROPIC_MODEL="{pseudo}"\n'
-        f'export ANTHROPIC_DEFAULT_OPUS_MODEL="{pseudo}"\n'
-        f'export ANTHROPIC_DEFAULT_SONNET_MODEL="{pseudo}"\n'
-        f'export ANTHROPIC_DEFAULT_HAIKU_MODEL="{pseudo}"\n'
-        f'export ANTHROPIC_CUSTOM_MODEL_OPTION="{pseudo}"\n'
-        'export ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION="AutoConduck local router"\n'
-        'export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"\n'
-        'export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS="1"'
-    )
-    cmd = (
-        'set "ANTHROPIC_BASE_URL=http://127.0.0.1:%PORT%"\n'
-        'set "ANTHROPIC_AUTH_TOKEN=autoconduck-local"\n'
-        f'set "ANTHROPIC_MODEL={pseudo}"\n'
-        f'set "ANTHROPIC_DEFAULT_OPUS_MODEL={pseudo}"\n'
-        f'set "ANTHROPIC_DEFAULT_SONNET_MODEL={pseudo}"\n'
-        f'set "ANTHROPIC_DEFAULT_HAIKU_MODEL={pseudo}"\n'
-        f'set "ANTHROPIC_CUSTOM_MODEL_OPTION={pseudo}"\n'
-        'set "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION=AutoConduck local router"\n'
-        'set "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"\n'
-        'set "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1"'
-    )
+    values = _claude_env(port, pseudo)
+    bash = "\n".join(f'export {key}="{value}"' for key, value in values.items())
+    bash = bash.replace(values["ANTHROPIC_BASE_URL"], "http://127.0.0.1:${PORT}")
+    cmd = "\n".join(f'set "{key}={value}"' for key, value in values.items())
+    cmd = cmd.replace(values["ANTHROPIC_BASE_URL"], "http://127.0.0.1:%PORT%")
     return bash, cmd
 
 def shim_script(agent_id, real_bin):
@@ -200,7 +283,24 @@ def _ensure_windows_path():
         winreg.CloseKey(key); return "registry"
     except OSError: return None
 def remove_path_entry():
-    if os.name == "nt": return None
+    if os.name == "nt":
+        try:
+            import winreg
+            registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+            key = winreg.OpenKey(registry, "Environment", 0, winreg.KEY_READ | winreg.KEY_WRITE)
+            try:
+                old, value_type = winreg.QueryValueEx(key, "Path")
+            except OSError:
+                winreg.CloseKey(key); winreg.CloseKey(registry); return None
+            target = str(shims_dir()).casefold()
+            entries = str(old).split(";")
+            kept = [entry for entry in entries if entry.casefold() != target]
+            if len(kept) != len(entries):
+                winreg.SetValueEx(key, "Path", 0, value_type, ";".join(kept))
+            winreg.CloseKey(key); winreg.CloseKey(registry)
+        except OSError:
+            return None
+        return None
     for rc in (Path.home()/".bashrc", Path.home()/".zshrc"):
         try: rc.write_text(_BLOCK.sub("\n", rc.read_text()))
         except OSError: pass

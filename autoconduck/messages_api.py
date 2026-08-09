@@ -21,7 +21,7 @@ STOP_REASON_MAP: dict[Any, Any] = {
     "length": "max_tokens",
     "tool_calls": "tool_use",
     "function_call": "tool_use",
-    None: None,
+    None: "end_turn",
 }
 
 
@@ -37,6 +37,11 @@ def _text_from_blocks(blocks: Any) -> str:
                 parts.append(b)
         return "".join(parts)
     return ""
+
+
+def coerce_content_text(content: Any) -> str:
+    """Return plain text for the varied content shapes returned by providers."""
+    return _text_from_blocks(content)
 
 
 def openai_messages_from_anthropic(body: dict) -> list[dict]:
@@ -59,13 +64,18 @@ def openai_messages_from_anthropic(body: dict) -> list[dict]:
             continue
 
         text_parts: list[str] = []
+        content_parts: list[dict[str, Any]] = []
         tool_calls: list[dict] = []
+        tool_messages: list[dict] = []
+        has_image = False
         for block in content:
             if not isinstance(block, dict):
                 continue
             btype = block.get("type")
             if btype == "text":
-                text_parts.append(block.get("text", ""))
+                text = block.get("text", "")
+                text_parts.append(text)
+                content_parts.append({"type": "text", "text": text})
             elif btype == "tool_use":
                 tool_calls.append(
                     {
@@ -81,23 +91,75 @@ def openai_messages_from_anthropic(body: dict) -> list[dict]:
                 result_content = block.get("content")
                 if isinstance(result_content, list):
                     result_content = _text_from_blocks(result_content)
-                messages.append(
+                tool_messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": block.get("tool_use_id"),
                         "content": result_content,
                     }
                 )
-            # image / unknown block types are silently skipped.
+            elif btype == "image":
+                source = block.get("source") or {}
+                if source.get("type") == "base64" and source.get("data"):
+                    url = f"data:{source.get('media_type', 'application/octet-stream')};base64,{source['data']}"
+                elif source.get("type") == "url" and source.get("url"):
+                    url = source["url"]
+                else:
+                    continue
+                has_image = True
+                content_parts.append({"type": "image_url", "image_url": {"url": url}})
+            # Unknown block types are silently skipped.
 
         if tool_calls:
-            entry: dict[str, Any] = {"role": role, "content": "".join(text_parts) or None}
+            entry: dict[str, Any] = {
+                "role": role,
+                "content": content_parts if has_image else "".join(text_parts) or None,
+            }
             entry["tool_calls"] = tool_calls
             messages.append(entry)
-        elif text_parts:
-            messages.append({"role": role, "content": "".join(text_parts)})
+        elif text_parts or has_image:
+            messages.append({
+                "role": role,
+                "content": content_parts if has_image else "".join(text_parts),
+            })
+        messages.extend(tool_messages)
 
     return messages
+
+
+def openai_tools_from_anthropic(tools: Any) -> list[dict]:
+    """Translate Anthropic tool definitions to OpenAI function tools."""
+    if not tools:
+        return []
+    result: list[dict] = []
+    for tool in tools:
+        if not isinstance(tool, dict) or not tool.get("name"):
+            continue
+        function = {
+            "name": tool["name"],
+            "description": tool.get("description", ""),
+            "parameters": tool.get("input_schema", {"type": "object"}),
+        }
+        result.append({"type": "function", "function": function})
+    return result
+
+
+def openai_tool_choice_from_anthropic(choice: Any) -> Any:
+    """Translate Anthropic tool_choice values accepted by OpenAI APIs."""
+    if choice == "any":
+        return "required"
+    if not isinstance(choice, dict):
+        return choice
+    choice_type = choice.get("type")
+    if choice_type == "auto":
+        return "auto"
+    if choice_type == "none":
+        return "none"
+    if choice_type == "any":
+        return "required"
+    if choice_type == "tool" and choice.get("name"):
+        return {"type": "function", "function": {"name": choice["name"]}}
+    return choice
 
 
 def serve_model_ids(cfg) -> list[str]:
@@ -147,18 +209,21 @@ def count_tokens(text: str) -> int:
         return max(1, len(text or "") // 4)
 
 
-def anthropic_response_text(content: str, model: str, stop_reason: str = "end_turn") -> dict:
+def anthropic_response_text(
+    content: Any, model: str = "", stop_reason: str = "end_turn", input_text: str = ""
+) -> dict:
+    text = coerce_content_text(content)
     return {
         "id": "msg_" + uuid.uuid4().hex[:12],
         "type": "message",
         "role": "assistant",
-        "content": [{"type": "text", "text": content}],
+        "content": [{"type": "text", "text": text}],
         "model": model,
         "stop_reason": stop_reason,
         "stop_sequence": None,
         "usage": {
-            "input_tokens": count_tokens(content),
-            "output_tokens": count_tokens(content),
+            "input_tokens": count_tokens(input_text),
+            "output_tokens": count_tokens(text),
         },
     }
 
@@ -173,6 +238,8 @@ class AnthropicSSETranslator:
         self.started = False
         self.blocks: dict[int, dict] = {}
         self.text_index: int | None = None
+        self.tool_indices: dict[int, int] = {}
+        self.next_block_index = 0
         self.finished = False
         self.output_tokens = 0
 
@@ -208,7 +275,8 @@ class AnthropicSSETranslator:
 
         if delta.get("content"):
             if self.text_index is None:
-                self.text_index = 0
+                self.text_index = self.next_block_index
+                self.next_block_index += 1
                 self.blocks[self.text_index] = {"kind": "text", "started": True}
                 events.append(
                     {
@@ -226,7 +294,8 @@ class AnthropicSSETranslator:
                 }
             )
         elif delta.get("role") == "assistant" and self.text_index is None and not delta.get("tool_calls"):
-            self.text_index = 0
+            self.text_index = self.next_block_index
+            self.next_block_index += 1
             self.blocks[self.text_index] = {"kind": "text", "started": True}
             events.append(
                 {
@@ -238,7 +307,10 @@ class AnthropicSSETranslator:
 
         for tc in delta.get("tool_calls") or []:
             idx = tc.get("index", 0)
-            block_index = idx + 1  # offset so the text block (0) never collides
+            if idx not in self.tool_indices:
+                self.tool_indices[idx] = self.next_block_index
+                self.next_block_index += 1
+            block_index = self.tool_indices[idx]
             fn = tc.get("function") or {}
             if block_index not in self.blocks:
                 self.blocks[block_index] = {"kind": "tool_use", "started": True}
@@ -266,6 +338,15 @@ class AnthropicSSETranslator:
 
         finish_reason = choice.get("finish_reason")
         if finish_reason:
+            if not self.blocks:
+                self.text_index = self.next_block_index
+                self.next_block_index += 1
+                self.blocks[0] = {"kind": "text", "started": True}
+                events.append({
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                })
             events.extend(self._close(finish_reason, chunk))
 
         return events
@@ -286,7 +367,7 @@ class AnthropicSSETranslator:
         events.append(
             {
                 "type": "message_delta",
-                "delta": {"stop_reason": stop_reason},
+                "delta": {"stop_reason": stop_reason, "stop_sequence": None},
                 "usage": {"output_tokens": usage_out},
             }
         )
@@ -297,4 +378,26 @@ class AnthropicSSETranslator:
     def finish(self) -> list[dict]:
         if self.finished:
             return []
-        return self._close(None)
+        # Some providers send only a finish_reason chunk. Anthropic still
+        # requires a content block in the message, even when it is empty.
+        events = self._ensure_message_start()
+        if not self.blocks:
+            self.text_index = self.next_block_index
+            self.next_block_index += 1
+            self.blocks[0] = {"kind": "text", "started": True}
+            events.append({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            })
+        events.extend(self._close("stop"))
+        return events
+
+    def error(self, message: str) -> list[dict]:
+        return [{
+            "event": "error",
+            "data": json.dumps({
+                "type": "error",
+                "error": {"type": "api_error", "message": message},
+            }),
+        }]

@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 import types
 
+import pytest
+
+from autoconduck import main
 from autoconduck import messages_api as m
 
 
@@ -115,6 +118,33 @@ def test_messages_kwargs_do_not_clobber_qualified_model():
     assert m.messages_litellm_kwargs("deepseek-v4-flash", {"model": "openai/deepseek-v4-flash"})["model"] == "openai/deepseek-v4-flash"
 
 
+def test_openai_tools_from_anthropic():
+    tools = [{"name": "do_thing", "description": "Do it", "input_schema": {"type": "object", "properties": {}}}]
+    assert m.openai_tools_from_anthropic(tools) == [{
+        "type": "function",
+        "function": {"name": "do_thing", "description": "Do it", "parameters": tools[0]["input_schema"]},
+    }]
+    assert m.openai_tools_from_anthropic([]) == []
+    assert m.openai_tools_from_anthropic(None) == []
+    assert m.openai_tool_choice_from_anthropic({"type": "auto"}) == "auto"
+    assert m.openai_tool_choice_from_anthropic({"type": "tool", "name": "do_thing"}) == {
+        "type": "function", "function": {"name": "do_thing"}
+    }
+
+
+def test_openai_tool_choice_from_anthropic_all_variants():
+    assert m.openai_tool_choice_from_anthropic(None) is None
+    assert m.openai_tool_choice_from_anthropic("auto") == "auto"
+    assert m.openai_tool_choice_from_anthropic("none") == "none"
+    assert m.openai_tool_choice_from_anthropic("any") == "required"
+    assert m.openai_tool_choice_from_anthropic({"type": "auto"}) == "auto"
+    assert m.openai_tool_choice_from_anthropic({"type": "none"}) == "none"
+    assert m.openai_tool_choice_from_anthropic({"type": "any"}) == "required"
+    assert m.openai_tool_choice_from_anthropic({"type": "tool", "name": "X"}) == {
+        "type": "function", "function": {"name": "X"}
+    }
+
+
 def test_translator_text_stream_events():
     translator = m.AnthropicSSETranslator("autoconduck")
     chunk1 = {"choices": [{"delta": {"role": "assistant", "content": "Hel"}, "finish_reason": None}]}
@@ -174,6 +204,7 @@ def test_translator_tool_calls_events():
 
     assert "content_block_start" in types_seen
     tool_start = next(e for e in events if e["type"] == "content_block_start" and e["content_block"]["type"] == "tool_use")
+    assert tool_start["index"] == 0
     assert tool_start["content_block"]["name"] == "get_weather"
 
     input_delta = next(e for e in events if e["type"] == "content_block_delta" and e["delta"]["type"] == "input_json_delta")
@@ -182,6 +213,14 @@ def test_translator_tool_calls_events():
     message_delta = next(e for e in events if e["type"] == "message_delta")
     assert message_delta["delta"]["stop_reason"] == "tool_use"
     assert types_seen[-1] == "message_stop"
+
+
+def test_translator_text_then_tool_uses_sequential_indices():
+    translator = m.AnthropicSSETranslator("autoconduck")
+    events = translator.translate({"choices": [{"delta": {"content": "hi"}, "finish_reason": None}]})
+    events += translator.translate({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call", "function": {"name": "x", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]})
+    starts = [e for e in events if e["type"] == "content_block_start"]
+    assert [e["index"] for e in starts] == [0, 1]
 
 
 def test_translator_finish_idempotent():
@@ -193,3 +232,96 @@ def test_translator_finish_idempotent():
 def test_count_tokens_estimate():
     assert m.count_tokens("") >= 0
     assert m.count_tokens("hello world") > 0
+
+
+def test_anthropic_response_coerces_list_and_none_content():
+    response = m.anthropic_response_text([
+        {"type": "text", "text": "hello"},
+        {"type": "image", "source": {}},
+        " world",
+    ])
+    assert response["content"] == [{"type": "text", "text": "hello world"}]
+    assert m.anthropic_response_text(None)["content"] == [{"type": "text", "text": ""}]
+
+
+def test_translator_finish_creates_empty_text_block():
+    translator = m.AnthropicSSETranslator("autoconduck")
+    events = translator.translate({"choices": [{"delta": {}, "finish_reason": "stop"}]})
+    event_types = [event["type"] for event in events]
+    assert "content_block_start" in event_types
+    assert event_types[-2:] == ["message_delta", "message_stop"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_litellm_missing_emits_error_and_done(monkeypatch):
+    async def route_target(_model, _messages):
+        return "test-model", {"model": "openai/test-model"}
+
+    class Request:
+        async def is_disconnected(self):
+            return False
+
+    monkeypatch.setattr(main, "_route_target", route_target)
+    monkeypatch.setattr(main, "_litellm", lambda: None)
+    body = main.CompletionRequest(model="autoconduck", messages=[], stream=True)
+    response = await main.completions(body, Request())
+    output = "".join([chunk async for chunk in response.body_iterator])
+    assert '"type": "api_error"' in output
+    assert "data: [DONE]" in output
+
+
+@pytest.mark.asyncio
+async def test_messages_stream_first_await_failure_returns_502(monkeypatch):
+    class FailingLLM:
+        async def acompletion(self, **_kwargs):
+            raise RuntimeError("upstream failed")
+
+    async def route_target(_model, _messages):
+        return "test-model", {"model": "openai/test-model"}
+
+    class Request:
+        async def is_disconnected(self):
+            return False
+
+    monkeypatch.setattr(main, "_route_target", route_target)
+    monkeypatch.setattr(main, "_litellm", lambda: FailingLLM())
+
+    body = main.MessagesRequest(
+        model="autoconduck",
+        messages=[{"role": "user", "content": "Hello"}],
+        stream=True,
+    )
+    response = await main.messages_endpoint(body, Request())
+    assert response.status_code == 502
+    assert response.body == b'{"type":"error","error":{"type":"api_error","message":"upstream failed"}}'
+
+
+@pytest.mark.asyncio
+async def test_messages_thinking_enables_litellm_drop_params(monkeypatch):
+    calls = []
+
+    class Result:
+        choices = [types.SimpleNamespace(message=types.SimpleNamespace(content="Hello"))]
+
+    class LLM:
+        async def acompletion(self, **kwargs):
+            calls.append(kwargs)
+            return Result()
+
+    async def route_target(_model, _messages):
+        return "deepseek", {"model": "openai/deepseek"}
+
+    monkeypatch.setattr(main, "_route_target", route_target)
+    monkeypatch.setattr(main, "_litellm", lambda: LLM())
+
+    body = main.MessagesRequest(
+        model="autoconduck",
+        messages=[{"role": "user", "content": "Hello"}],
+        thinking={"type": "enabled", "budget_tokens": 1024},
+        stream=False,
+    )
+    response = await main.messages_endpoint(body, object())
+
+    assert response.status_code == 200
+    assert calls[0]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+    assert calls[0]["drop_params"] is True
