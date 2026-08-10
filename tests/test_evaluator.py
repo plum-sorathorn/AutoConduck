@@ -121,14 +121,40 @@ def test_high_complexity_with_stack_trace_esculates():
 
 
 def test_tool_loop_in_dispatcher_route_preserves_fast_path():
-    """Verify tool calls in message history force fast path in dispatcher route."""
+    """Verify in-flight tool calls/results force fast path in dispatcher route."""
     messages = [
         {"role": "user", "content": "refactor the entire codebase"},
         {"role": "assistant", "content": "I will inspect files.", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "read_file"}}]},
         {"role": "tool", "content": "file contents...", "tool_call_id": "call_1"},
-        {"role": "user", "content": "refactor the entire codebase"},
     ]
     decision = route(messages, [], config=Config())
     assert decision.path == "fast"
     assert decision.reason == "interactive agent tool loop"
+
+
+def test_new_user_prompt_after_tool_history_evaluates_complexity():
+    """Verify a new user prompt following past tool history is evaluated for complexity rather than forced to fast path."""
+    messages = [
+        {"role": "user", "content": "simple ask"},
+        {"role": "assistant", "content": "reading...", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "read_file"}}]},
+        {"role": "tool", "content": "file contents...", "tool_call_id": "call_1"},
+        {
+            "role": "user",
+            "content": (
+                "Things to look into and fix:\n"
+                "1. first time start-up is super slow. Need to optimize. Find out why it might be slow...\n"
+                "2. AutoConduck shouldn't automatically install onto coding agents...\n"
+                "3. TUI toggle doesn't tell user keybind...\n"
+                "4. TUI page for presets...\n"
+                "5. After selecting models...\n"
+                "6. error launching autoconduck with pi...\n"
+                "7. server did not become ready within 30 s...\n"
+                "8. uv tool install --force error: access denied..."
+            ),
+        },
+    ]
+    decision = route(messages, [], config=Config())
+    assert decision.complexity >= 0.75
+    assert decision.reason != "interactive agent tool loop"
+
 

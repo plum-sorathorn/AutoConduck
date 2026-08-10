@@ -47,20 +47,39 @@ def complexity_of(text: str, config=None) -> float:
     return min(1.0, value + (STACK_TRACE_BOOST if has_stack_trace(t) else 0))
 
 def is_tool_loop(messages: list) -> bool:
-    """Return True if the message sequence represents an interactive agent tool loop."""
-    if not isinstance(messages, list):
+    """Return True if the message sequence represents an in-flight tool loop turn.
+
+    A turn is an active tool loop if the latest active message in the sequence is a tool call
+    or tool result, indicating the agent is currently executing tool actions. If the latest
+    message is a new user prompt, it is evaluated for task complexity instead of being forced
+    to the fast path.
+    """
+    if not isinstance(messages, list) or not messages:
         return False
-    for msg in messages:
-        if isinstance(msg, dict):
-            if msg.get("role") in ("tool", "function"):
+    last_msg = None
+    for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            last_msg = msg
+            break
+        role = msg.get("role", "user")
+        content = str(msg.get("content", ""))
+        if role != "system" and "<system-reminder>" not in content:
+            last_msg = msg
+            break
+
+    if not last_msg or not isinstance(last_msg, dict):
+        return False
+
+    role = last_msg.get("role", "user")
+    if role in ("tool", "function"):
+        return True
+    if "tool_calls" in last_msg or "function_call" in last_msg:
+        return True
+    content = last_msg.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result"):
                 return True
-            if "tool_calls" in msg or "function_call" in msg:
-                return True
-            content = msg.get("content")
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result"):
-                        return True
     return False
 
 def _last(messages: list) -> str:

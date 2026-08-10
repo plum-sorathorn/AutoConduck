@@ -17,36 +17,59 @@ def test_version_prints_version_and_exits_zero(capsys):
 def test_start_headless_port_and_host_dispatch_without_binding():
     cfg = Config(port=11434, log_level="warning")
     args = MagicMock(port=12345, host="0.0.0.0", headless=True)
-    with patch.object(cli, "load_config", return_value=cfg), \
-         patch.object(cli, "_find_free_port", side_effect=lambda port: port), \
-         patch.object(cli, "_run_proxy") as run_proxy, \
-         patch("autoconduck.agents.claude_code.ClaudeCodeAdapter.patch") as claude_patch, \
-         patch("autoconduck.launcher.install_shims") as install_shims, \
-         patch("autoconduck.launcher.ensure_path_entry"):
-        with patch.object(sys, "argv", ["autoconduck", "start", "--headless", "--port", "12345", "--host", "0.0.0.0"]):
+    with (
+        patch.object(cli, "load_config", return_value=cfg),
+        patch.object(cli, "_find_free_port", side_effect=lambda port: port),
+        patch.object(cli, "_run_proxy") as run_proxy,
+        patch("autoconduck.agents.claude_code.ClaudeCodeAdapter.patch") as claude_patch,
+        patch("autoconduck.launcher.install_shims") as install_shims,
+        patch("autoconduck.launcher.ensure_path_entry"),
+    ):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "autoconduck",
+                "start",
+                "--headless",
+                "--port",
+                "12345",
+                "--host",
+                "0.0.0.0",
+            ],
+        ):
             cli.main()
     run_proxy.assert_called_once_with(12345, "warning", "0.0.0.0")
-    claude_patch.assert_called_once()
-    install_shims.assert_called_once_with(["claude_code"])
+    # Starting the API must not mutate or install any coding-agent integration.
+    claude_patch.assert_not_called()
+    install_shims.assert_not_called()
 
 
 def test_edit_and_uninstall_force_dispatch():
-    with patch.object(cli, "cmd_edit") as edit, patch.object(sys, "argv", ["autoconduck", "edit"]):
+    with (
+        patch.object(cli, "cmd_edit") as edit,
+        patch.object(sys, "argv", ["autoconduck", "edit"]),
+    ):
         cli.main()
     edit.assert_called_once()
 
-    with patch.object(cli, "cmd_uninstall") as uninstall, patch.object(sys, "argv", ["autoconduck", "uninstall", "--force"]):
+    with (
+        patch.object(cli, "cmd_uninstall") as uninstall,
+        patch.object(sys, "argv", ["autoconduck", "uninstall", "--force"]),
+    ):
         cli.main()
     assert uninstall.call_args.args[0].force is True
 
 
 def test_no_args_falls_back_to_headless_when_tui_is_unavailable():
     cfg = Config(port=11434, models=[])
-    with patch.object(cli, "home_dir", return_value=MagicMock(exists=lambda: False)), \
-         patch.object(cli, "load_config", return_value=cfg), \
-         patch.object(cli, "_find_free_port", return_value=12000), \
-         patch.object(cli, "_run_proxy") as run_proxy, \
-         patch.dict(sys.modules, {"autoconduck.tui": None}):
+    with (
+        patch.object(cli, "home_dir", return_value=MagicMock(exists=lambda: False)),
+        patch.object(cli, "load_config", return_value=cfg),
+        patch.object(cli, "_find_free_port", return_value=12000),
+        patch.object(cli, "_run_proxy") as run_proxy,
+        patch.dict(sys.modules, {"autoconduck.tui": None}),
+    ):
         with patch.object(sys, "argv", ["autoconduck"]):
             cli.main()
     run_proxy.assert_called_once_with(12000, cfg.log_level)
@@ -81,6 +104,7 @@ def test_claude_and_opencode_flags_exit_two():
             except SystemExit as exc:
                 assert exc.code == 2
 
+
 def test_pi_flag_dispatches_to_pi():
     with patch.object(cli, "cmd_launch_agent", return_value=0) as launch:
         with patch.object(sys, "argv", ["autoconduck", "--pi"]):
@@ -90,6 +114,7 @@ def test_pi_flag_dispatches_to_pi():
                 assert exc.code == 0
     launch.assert_called_once_with("pi")
 
+
 def test_pi_and_claude_flags_exit_two():
     with patch.object(sys, "argv", ["autoconduck", "--pi", "--claude"]):
         with patch("builtins.print"):
@@ -97,6 +122,7 @@ def test_pi_and_claude_flags_exit_two():
                 cli.main()
             except SystemExit as exc:
                 assert exc.code == 2
+
 
 def test_pi_and_opencode_flags_exit_two():
     with patch.object(sys, "argv", ["autoconduck", "--pi", "--opencode"]):
@@ -129,7 +155,9 @@ def _build_base_patches():
 def test_cmd_launch_agent_uses_real_binary_env_and_releases_in_order():
     cfg = Config(port=11434, pseudo_model="autoconduck")
     adapter_cls_mock = MagicMock()
-    adapter_instance = SimpleNamespace(id="claude_code", binary_name="claude", patch=lambda cfg: None)
+    adapter_instance = SimpleNamespace(
+        id="claude_code", binary_name="claude", patch=lambda cfg: None
+    )
     adapter_cls_mock.return_value = adapter_instance
     events = []
     result = SimpleNamespace(returncode=0)
@@ -148,20 +176,31 @@ def test_cmd_launch_agent_uses_real_binary_env_and_releases_in_order():
     patches.append(patch.object(cli, "home_dir", return_value=home_mock))
     patches.append(patch("builtins.open", MagicMock()))
     patches.append(patch("autoconduck.launcher.kill_existing_on_port"))
-    patches.append(patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe"))
+    patches.append(
+        patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe")
+    )
     real_path_val = "C:\\fake\\claude.exe"
-    patches.append(patch("autoconduck.launcher.real_binary_path", return_value=real_path_val))
+    patches.append(
+        patch("autoconduck.launcher.real_binary_path", return_value=real_path_val)
+    )
     release_var = {}
 
     def record_release(port):
         release_var["called"] = True
         events.append(("release", port))
-    patches.append(patch("autoconduck.launcher.release_server", side_effect=record_release))
-    patches.append(patch("autoconduck.launcher._claude_env", return_value=_CLAUDE_ENV_MOCK))
+
+    patches.append(
+        patch("autoconduck.launcher.release_server", side_effect=record_release)
+    )
+    patches.append(
+        patch("autoconduck.launcher._claude_env", return_value=_CLAUDE_ENV_MOCK)
+    )
     patches.append(patch.object(cli.subprocess, "run", side_effect=run))
 
     urlopen_ctx = patch("urllib.request.urlopen")
-    adapter_ctx = patch("autoconduck.agents.claude_code.ClaudeCodeAdapter", adapter_cls_mock)
+    adapter_ctx = patch(
+        "autoconduck.agents.claude_code.ClaudeCodeAdapter", adapter_cls_mock
+    )
 
     ctx_mgrs = patches + [urlopen_ctx, adapter_ctx]
     # Use contextlib.ExitStack to dynamically compose patches
@@ -189,22 +228,29 @@ def test_cmd_launch_agent_uses_real_binary_env_and_releases_in_order():
 def test_cmd_launch_agent_passes_file_object_streams_to_popen(tmp_path):
     cfg = Config(port=11434)
     captured = {}
-    adapter_instance = SimpleNamespace(id="claude_code", binary_name="claude", patch=lambda cfg: None)
+    adapter_instance = SimpleNamespace(
+        id="claude_code", binary_name="claude", patch=lambda cfg: None
+    )
 
     def popen(command, **kwargs):
         captured.update(kwargs)
         return SimpleNamespace(pid=1234)
 
-    with patch.object(cli, "load_config", return_value=cfg), \
-         patch.object(cli, "home_dir", return_value=tmp_path), \
-         patch("autoconduck.launcher.kill_existing_on_port"), \
-         patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe"), \
-         patch("autoconduck.launcher.real_binary_path", return_value=None), \
-         patch.object(cli.shutil, "which", return_value=None), \
-         patch("autoconduck.launcher.release_server"), \
-         patch.object(cli.subprocess, "Popen", side_effect=popen), \
-         patch("urllib.request.urlopen"), \
-         patch("autoconduck.agents.claude_code.ClaudeCodeAdapter", return_value=adapter_instance):
+    with (
+        patch.object(cli, "load_config", return_value=cfg),
+        patch.object(cli, "home_dir", return_value=tmp_path),
+        patch("autoconduck.launcher.kill_existing_on_port"),
+        patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe"),
+        patch("autoconduck.launcher.real_binary_path", return_value=None),
+        patch.object(cli.shutil, "which", return_value=None),
+        patch("autoconduck.launcher.release_server"),
+        patch.object(cli.subprocess, "Popen", side_effect=popen),
+        patch("urllib.request.urlopen"),
+        patch(
+            "autoconduck.agents.claude_code.ClaudeCodeAdapter",
+            return_value=adapter_instance,
+        ),
+    ):
         assert cli.cmd_launch_agent("claude_code") == 1
 
     log_path = tmp_path / "run" / "server.log"
@@ -232,15 +278,17 @@ def test_cmd_launch_agent_nonzero_exit_still_releases():
 
     real_path_val = "C:\\fake\\opencode.exe"
 
-    with patch.object(cli, "load_config", return_value=cfg), \
-         patch.object(cli, "home_dir", return_value=home_mock), \
-         patch("builtins.open", MagicMock()), \
-         patch("autoconduck.launcher.kill_existing_on_port"), \
-         patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe"), \
-         patch("autoconduck.launcher.real_binary_path", return_value=real_path_val), \
-         patch("autoconduck.launcher.release_server") as release, \
-         patch.object(cli.subprocess, "run", side_effect=run), \
-         patch.object(cli.subprocess, "Popen", MagicMock()):
+    with (
+        patch.object(cli, "load_config", return_value=cfg),
+        patch.object(cli, "home_dir", return_value=home_mock),
+        patch("builtins.open", MagicMock()),
+        patch("autoconduck.launcher.kill_existing_on_port"),
+        patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe"),
+        patch("autoconduck.launcher.real_binary_path", return_value=real_path_val),
+        patch("autoconduck.launcher.release_server") as release,
+        patch.object(cli.subprocess, "run", side_effect=run),
+        patch.object(cli.subprocess, "Popen", MagicMock()),
+    ):
         with patch("urllib.request.urlopen"):
             assert cli.cmd_launch_agent("opencode") == 3
     release.assert_called_once_with(11434)
@@ -255,15 +303,17 @@ def test_cmd_launch_agent_missing_binary_returns_one_and_releases():
     home_mock.__truediv__ = lambda self, key: log_mock
     log_mock.parent.mkdir = MagicMock()
 
-    with patch.object(cli, "load_config", return_value=cfg), \
-         patch.object(cli, "home_dir", return_value=home_mock), \
-         patch("builtins.open", MagicMock()), \
-         patch("autoconduck.launcher.kill_existing_on_port"), \
-         patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe"), \
-         patch("autoconduck.launcher.real_binary_path", return_value=None), \
-         patch.object(cli.shutil, "which", return_value=None), \
-         patch("autoconduck.launcher.release_server") as release, \
-         patch.object(cli.subprocess, "Popen", MagicMock()):
+    with (
+        patch.object(cli, "load_config", return_value=cfg),
+        patch.object(cli, "home_dir", return_value=home_mock),
+        patch("builtins.open", MagicMock()),
+        patch("autoconduck.launcher.kill_existing_on_port"),
+        patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe"),
+        patch("autoconduck.launcher.real_binary_path", return_value=None),
+        patch.object(cli.shutil, "which", return_value=None),
+        patch("autoconduck.launcher.release_server") as release,
+        patch.object(cli.subprocess, "Popen", MagicMock()),
+    ):
         with patch("urllib.request.urlopen"):
             assert cli.cmd_launch_agent("claude_code") == 1
     release.assert_called_once_with(11434)
@@ -271,8 +321,13 @@ def test_cmd_launch_agent_missing_binary_returns_one_and_releases():
 
 def test_update_dry_run_for_uv_tool(capsys):
     args = SimpleNamespace(dry_run=True)
-    with patch("autoconduck.update.detect_install_method", return_value="uv-tool"), \
-         patch("autoconduck.update.upgrade_command", return_value="uv tool upgrade autoconduck"):
+    with (
+        patch("autoconduck.update.detect_install_method", return_value="uv-tool"),
+        patch(
+            "autoconduck.update.upgrade_command",
+            return_value="uv tool upgrade autoconduck",
+        ),
+    ):
         cli.cmd_update(args)
     output = capsys.readouterr().out
     assert "Current version:" in output

@@ -169,7 +169,11 @@ def _build():
                 (time.perf_counter() - started) * 1000,
             )
             if path == "SLOW":
-                if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
+                if (
+                    request is not None
+                    and hasattr(request, "is_disconnected")
+                    and await request.is_disconnected()
+                ):
                     pass
                 else:
                     try:
@@ -338,7 +342,9 @@ def _build():
                 status_code=400,
             )
         try:
-            target, extra = await _route_target(body.model, oai_messages, request=request)
+            target, extra = await _route_target(
+                body.model, oai_messages, request=request
+            )
         except Exception as exc:
             return JSONResponse(
                 {"type": "error", "error": {"type": "api_error", "message": str(exc)}},
@@ -726,22 +732,16 @@ def cmd_start(args):
     cfg = load_config()
     port = args.port or cfg.port or DEFAULT_PORT
 
-    def configure_claude():
-        from .agents.claude_code import ClaudeCodeAdapter
-        from . import launcher
-
-        ClaudeCodeAdapter().patch(cfg, port)
-        launcher.install_shims(["claude_code"])
-        launcher.ensure_path_entry()
+    # Agent configuration and shim installation are intentionally opt-in.  They
+    # happen only from ``install`` or the explicit onboarding integration step,
+    # never as a side effect of starting the API or opening the TUI.
 
     if not getattr(args, "headless", False) and not home_dir().exists():
         port = _find_free_port(port)
         _check_port_available(port)
-        configure_claude()
         _run_proxy(port, cfg.log_level)
         return
     if getattr(args, "headless", False):
-        configure_claude()
         if getattr(args, "daemon", False):
             _check_port_available(port)
             log = home_dir() / "run" / "server.log"
@@ -780,10 +780,19 @@ def cmd_start(args):
                 )
             from . import launcher
 
-            deadline = time.monotonic() + float(
-                os.environ.get("AUTOCONDUCK_READY_TIMEOUT", "30.0")
-            )
+            # Cold starts can include the one-time LiteLLM registry import.
+            # Keep the historical 30s floor while allowing slower machines a
+            # useful budget instead of reporting a misleading timeout.
+            try:
+                ready_budget = max(
+                    30.0, float(os.environ.get("AUTOCONDUCK_READY_TIMEOUT", "60.0"))
+                )
+            except ValueError:
+                ready_budget = 60.0
+            deadline = time.monotonic() + ready_budget
             while time.monotonic() < deadline and not launcher.server_alive(port):
+                if child.poll() is not None:
+                    break
                 time.sleep(0.1)
             if not launcher.server_alive(port):
                 if sys.platform == "win32":
@@ -809,7 +818,7 @@ def cmd_start(args):
                     except OSError:
                         pass
                 print(
-                    f"AutoConduck daemon failed to become ready on port {port}",
+                    f"AutoConduck daemon failed to become ready within {ready_budget:.0f}s on port {port}",
                     file=sys.stderr,
                 )
                 return 1
@@ -828,7 +837,6 @@ def cmd_start(args):
         ) if args.host != "127.0.0.1" else _run_proxy(port, cfg.log_level)
     else:
         _check_port_available(port)
-        configure_claude()
         try:
             from .tui.app import AutoConduckApp
 
@@ -843,7 +851,7 @@ def cmd_start(args):
 def cmd_edit(args):
     from .tui.app import AutoConduckApp
 
-    AutoConduckApp(configured=False).run()
+    getattr(AutoConduckApp(configured=False), "run")()
 
 
 def cmd_reset(args):
@@ -864,7 +872,10 @@ def cmd_reset(args):
         try:
             paths = [p for p in adapter.config_paths() if p.exists()]
             adapter.revert()
-            reverted.append(f"  ✓ Reverted {adapter.display_name}" + (f" ({', '.join(str(p) for p in paths)})" if paths else ""))
+            reverted.append(
+                f"  ✓ Reverted {adapter.display_name}"
+                + (f" ({', '.join(str(p) for p in paths)})" if paths else "")
+            )
         except Exception as exc:
             print(f"  ✗ Failed {adapter.display_name}: {exc}")
     launcher.uninstall_shims()
@@ -1034,7 +1045,7 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
         return 1
 
     cfg = load_config()
-    port = port or getattr(cfg, "port", None) or DEFAULT_PORT
+    port = int(port or getattr(cfg, "port", None) or DEFAULT_PORT)
 
     # Reuse a healthy manual daemon; otherwise preserve the existing fresh-start behavior.
     if launcher.server_alive(port):
@@ -1067,12 +1078,15 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
 
     # Exponential-backoff health poll with a configurable cold-start budget.
     server_ready = False
+    # LiteLLM's first import can be expensive on a fresh installation. Keep
+    # the documented 30-second minimum while giving cold starts a 60-second
+    # default budget; callers may still choose a longer timeout explicitly.
     try:
         ready_budget = max(
-            0.0, float(os.environ.get("AUTOCONDUCK_READY_TIMEOUT", "30.0"))
+            30.0, float(os.environ.get("AUTOCONDUCK_READY_TIMEOUT", "60.0"))
         )
     except ValueError:
-        ready_budget = 30.0
+        ready_budget = 60.0
     deadline = time.monotonic() + ready_budget
     attempt = 0
     while time.monotonic() < deadline:
@@ -1094,6 +1108,19 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
         attempt += 1
 
     if not server_ready:
+        # Do not leave a detached cold-start daemon behind when readiness fails.
+        if sys.platform == "win32":
+            _sp.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                creationflags=_sp.CREATE_NO_WINDOW,
+            )
+        else:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except (OSError, AttributeError):
+                proc.terminate()
         print(
             f"error: server did not become ready within {ready_budget:.0f} s (daemon PID {proc.pid})",
             file=sys.stderr,
@@ -1102,14 +1129,17 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
 
     # Patch the adapter
     try:
-        adapter.patch(cfg, port=port)
+        # Adapters may optionally accept the launch port (Pi does); the base
+        # adapter contract predates that optional argument.
+        adapter.patch(cfg, port=port)  # type: ignore[call-arg]
     except TypeError:
         # Fallback for adapters that don't accept port argument (e.g., ClaudeCodeAdapter)
         adapter.patch(cfg)
 
     real_bin = launcher.real_binary_path(agent_id)
-    if not real_bin:
-        real_bin = shutil.which(adapter.binary_name)
+    binary_name = getattr(adapter, "binary_name", None)
+    if not real_bin and binary_name:
+        real_bin = shutil.which(binary_name)
 
     if not real_bin:
         print(
@@ -1140,11 +1170,10 @@ def cmd_tune(args):
     """Launch tuning UI, with a useful deterministic fallback."""
     try:
         from .tui.app import AutoConduckApp
-        from .tui.tune import TuneScreen
 
         mode = getattr(args, "mode", None) or "select"
         app = AutoConduckApp(configured=True, tune_mode=mode)
-        app.run()
+        getattr(app, "run")()
     except (ImportError, RuntimeError):
         cfg = get_config()
         print("AutoConduck tuning is unavailable without Textual.")
