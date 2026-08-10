@@ -28,7 +28,7 @@ def test_custom_models_distinguish_environment_names_from_literal_keys():
     assert "api_key" not in env_rows[0]
 
     literal_rows = upsert_custom_models([], "local", "http://localhost", "sk-abc123", ["literal-model"])
-    assert literal_rows[0]["api_key"] == "sk-abc123"
+    assert "api_key" not in literal_rows[0]
     assert "api_key_env" not in literal_rows[0]
 
 def test_large_presets_start_empty_but_preserve_overrides():
@@ -44,7 +44,7 @@ def test_apply_api_key_environment_name_is_immutable():
 
 def test_apply_api_key_literal_removes_environment_name():
     entries = [{"id": "a", "api_key_env": "OLD_KEY"}]
-    assert apply_api_key(entries, "sk-lit") == [{"id": "a", "api_key": "sk-lit"}]
+    assert apply_api_key(entries, "sk-lit") == [{"id": "a"}]
 
 def test_apply_api_key_blank_value_returns_deep_copies():
     entries = [{"id": "a", "nested": {"value": 1}}]

@@ -14,8 +14,14 @@ if _TEXTUAL:
     class AutoConduckApp(App):
         BINDINGS = [("ctrl+c", "quit", "quit"), ("ctrl+q", "ignore_quit", "disabled")]
         CSS = "Screen { padding: 1; } #footer { color: $text-muted; } #header { color: $success; } .focused { background: $boost; color: $text; }"
-        def __init__(self, configured=False): super().__init__(); self.configured = configured; self.paused = False
-        def on_mount(self): self.push_screen(DashboardScreen() if self.configured else OnboardingScreen(self))
+        def __init__(self, configured=False, tune_mode=None): super().__init__(); self.configured = configured; self.tune_mode = tune_mode; self.paused = False
+        def on_mount(self):
+            if self.tune_mode:
+                from .tune import TuneScreen, SimpleTuneScreen, AdvancedTuneScreen
+                screen = SimpleTuneScreen(self) if self.tune_mode == "simple" else AdvancedTuneScreen(self) if self.tune_mode == "advanced" else TuneScreen(self)
+                self.push_screen(screen)
+            else:
+                self.push_screen(DashboardScreen() if self.configured else OnboardingScreen(self))
         def action_pause(self): self.paused = not self.paused
         def action_edit(self): self.push_screen(ModelSourceScreen(self))
         def action_ignore_quit(self): pass

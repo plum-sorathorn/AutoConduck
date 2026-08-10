@@ -20,7 +20,11 @@ def apply_api_key(entries: list[dict], value: str) -> list[dict]:
         return [{**entry_without_key, "api_key_env": value}
                 for entry in result
                 for entry_without_key in [{key: item for key, item in entry.items() if key != "api_key"}]]
-    return [{**entry_without_env, "api_key": value}
+    from ..auth import set_provider_key
+    providers = {str(entry.get("provider") or str(entry.get("id", "")).split("/", 1)[0] or "openai") for entry in result}
+    for provider in providers:
+        set_provider_key(provider, value)
+    return [{**entry_without_env}
             for entry in result
             for entry_without_env in [{key: item for key, item in entry.items() if key != "api_key_env"}]]
 
@@ -60,8 +64,12 @@ def upsert_custom_models(existing: list[dict[str, Any]], provider: str, base_url
     for model_id in dict.fromkeys(x.strip() for x in model_ids):
         if model_id:
             prices = by_clean_id.get(clean_model_id(model_id), {})
-            auth = ({"api_key_env": api_key_env} if ENV_VAR_NAME.fullmatch(api_key_env)
-                    else {"api_key": api_key_env})
+            if ENV_VAR_NAME.fullmatch(api_key_env):
+                auth = {"api_key_env": api_key_env}
+            else:
+                from ..auth import set_provider_key
+                set_provider_key(provider, api_key_env)
+                auth = {}
             result.append({"id": model_id, "provider": provider, **auth,
                            "base_url": base_url, "price_in": prices.get("price_in", DEFAULT_PRICE_IN),
                            "price_out": prices.get("price_out", DEFAULT_PRICE_OUT), "enabled": True})

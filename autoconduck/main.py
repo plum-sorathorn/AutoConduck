@@ -190,7 +190,7 @@ def _build():
         target, extra = await _route_target(body.model, body.messages)
         if extra.get("__answer__") is not None:
             from .stats import record
-            record(extra.get("_path", "SLOW"), extra.get("_pseudo", body.model), "orchestrator-answer", 0, 0)
+            record(extra.get("_path", "SLOW"), extra.get("_pseudo", body.model), target or "unknown", 0, 0)
             return {
                 "id": "autoconduck", "object": "chat.completion",
                 "choices": [{"message": {"role": "assistant", "content": extra["__answer__"]}}],
@@ -639,6 +639,19 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
         launcher.release_server(port)
 
 
+def cmd_tune(args):
+    """Launch tuning UI, with a useful deterministic fallback."""
+    try:
+        from .tui.app import AutoConduckApp
+        from .tui.tune import TuneScreen
+        app = AutoConduckApp(configured=True, tune_mode=getattr(args, "mode", None))
+        app.run()
+    except (ImportError, RuntimeError):
+        cfg = get_config()
+        print("AutoConduck tuning is unavailable without Textual.")
+        print(cfg.selection.model_dump())
+
+
 def main(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(prog="autoconduck")
     parser.add_argument("--version", action="store_true")
@@ -660,6 +673,9 @@ def main(argv: list[str] | None = None):
     stats_parser.add_argument("--reset", action="store_true")
     stats_parser.add_argument("--force", action="store_true")
     stats_parser.set_defaults(handler=cmd_stats)
+    tune_parser = sub.add_parser("tune")
+    tune_parser.add_argument("--mode", choices=("simple", "advanced"), default=None)
+    tune_parser.set_defaults(handler=cmd_tune)
     install = sub.add_parser("install")
     install.add_argument("agents", nargs="*")
     install.set_defaults(handler=cmd_install)

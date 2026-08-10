@@ -144,6 +144,9 @@ if _TEXTUAL:
         def action_save(self):
             try:
                 cfg=get_config(); value=self.query_one("#api_key",Input).value
+                if value.strip() and not ENV_VAR_NAME.fullmatch(value.strip()):
+                    from ..auth import set_provider_key
+                    set_provider_key(self.key, value.strip())
                 cfg.preset_overrides[self.key]=apply_api_key(cfg.preset_overrides.get(self.key, []), value); _persist(cfg)
                 if self.agents & LauncherIntegrationScreen.ELIGIBLE: self.controller.push_screen(LauncherIntegrationScreen(self.controller,self.agents))
                 else: self._finish()

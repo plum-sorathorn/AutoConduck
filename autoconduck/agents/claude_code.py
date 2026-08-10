@@ -1,4 +1,5 @@
 from __future__ import annotations
+import copy
 import json
 import shutil
 from datetime import datetime, timezone
@@ -57,7 +58,31 @@ class ClaudeCodeAdapter(BaseAdapter):
         for key, value in values.items():
             env[key] = value
         data["env"] = env
-        data["autoconduck"] = {"managed_env_keys": list(values), "previous_env": previous}
+        claude_settings = getattr(config, "claude_code", None)
+        allowed_tools = list(getattr(claude_settings, "allowed_tools", []))
+        permissions = data.get("permissions")
+        previous_permissions = (copy.deepcopy(marker["previous_permissions"])
+                                if "previous_permissions" in marker else copy.deepcopy(permissions))
+        if not isinstance(permissions, dict):
+            permissions = {}
+        existing_allow = permissions.get("allow")
+        if not isinstance(existing_allow, list):
+            existing_allow = []
+        permissions["allow"] = list(dict.fromkeys(existing_allow + allowed_tools))
+        default_mode = getattr(claude_settings, "default_mode", None)
+        if default_mode is not None and "defaultMode" not in permissions:
+            permissions["defaultMode"] = default_mode
+        if getattr(claude_settings, "enable_all_project_mcp_servers", False):
+            permissions["enableAllProjectMcpServers"] = True
+        data["permissions"] = permissions
+        contributed = marker.get("contributed_permissions", allowed_tools)
+        if not isinstance(contributed, list):
+            contributed = allowed_tools
+        data["autoconduck"] = {
+            "managed_env_keys": list(values), "previous_env": previous,
+            "previous_permissions": previous_permissions,
+            "contributed_permissions": list(dict.fromkeys(contributed + allowed_tools)),
+        }
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
     def revert(self) -> None:
@@ -84,5 +109,18 @@ class ClaudeCodeAdapter(BaseAdapter):
                         data["env"] = env
                     else:
                         data.pop("env", None)
+                    if "previous_permissions" in marker and marker["previous_permissions"] is not None:
+                        data["permissions"] = marker["previous_permissions"]
+                    elif "previous_permissions" in marker:
+                        permissions = data.get("permissions")
+                        if isinstance(permissions, dict):
+                            allow = permissions.get("allow")
+                            contributed = marker.get("contributed_permissions", [])
+                            if isinstance(allow, list) and isinstance(contributed, list):
+                                permissions["allow"] = [item for item in allow if item not in contributed]
+                                if not permissions["allow"]:
+                                    permissions.pop("allow", None)
+                                if not permissions:
+                                    data.pop("permissions", None)
                 data.pop("autoconduck", None)
                 p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

@@ -205,3 +205,33 @@ New files: `tests/test_valuation.py`, `tests/test_pricing_select_closest.py`, `t
 11. **`tui/`** — cosmetic pass on any copy implying tier controls routing (P2, non-blocking).
 12. New test files per §5, plus updates to existing orchestrator/dispatcher tests replacing tier assertions with value/band assertions.
 13. Full `pytest` run; confirm green; remove now-unused internal call sites for `select`/`select_model_by_tier` (keep the functions themselves as the deprecated bridge).
+## Value-aware selection (cost per successful task)
+
+Selection learns realized value from local traffic. After `ema_min_samples`, a
+model's effective value is its realized dollars per request divided by
+`max(success_rate, quality_min_success_rate)` and then divided by its optional
+pool-entry `quality_score` (a static prior in `(0, 1]`). This lets known weaker
+models be discounted without external benchmark scraping while success rates
+are learned from the user's own traffic. `ema_alpha` controls the cost EMA.
+
+The optional spend guard tracks realized spend in a rolling
+`spend_guard_window_s` window and excludes models whose annualized-to-minute
+rate exceeds `spend_guard_max_usd_per_min`; a pool entry's `max_usd_per_min`
+overrides the global cap. If every model is over budget, normal selection is
+retained as a safe fallback. The guard can be disabled in selection config.
+## API keys and auth file
+
+Provider credentials are stored outside `config.yaml` in
+`$AUTOCONDUCK_HOME/auth.yaml` (normally `~/.autoconduck/auth.yaml`):
+
+```yaml
+providers:
+  openai: sk-...
+  my-gateway: env:MY_GATEWAY_KEY
+```
+
+Values may be literal keys or `env:NAME` references, resolved when read. Key
+precedence is auth file, legacy literal `api_key` in `config.yaml`, then
+`api_key_env`. Existing literal keys are migrated automatically on load,
+written to the provider entry, removed from config, and backed up first.
+On POSIX systems the auth file is created with mode `0600`.

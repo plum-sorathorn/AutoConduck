@@ -29,13 +29,13 @@ def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> flo
         return 0.0
 
 
-def record(path: str, pseudo_model: str, model: str, prompt_tokens: int, completion_tokens: int) -> None:
+def record(path: str, pseudo_model: str, model: str, prompt_tokens: int, completion_tokens: int, *, cost: float | None = None, success: bool = True) -> None:
     try:
         prompt_tokens, completion_tokens = int(prompt_tokens), int(completion_tokens)
-        pricing.record_usage(model, prompt_tokens, completion_tokens)
+        pricing.record_usage(model, prompt_tokens, completion_tokens, cost=cost, success=success)
         row = {"ts": datetime.now(timezone.utc).isoformat(), "path": path, "pseudo_model": pseudo_model,
                "model": model, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
-               "cost": estimate_cost(model, prompt_tokens, completion_tokens)}
+               "cost": cost if cost is not None else estimate_cost(model, prompt_tokens, completion_tokens)}
         target = stats_path()
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as stream:
@@ -111,7 +111,9 @@ def install_recorder(llm: Any) -> None:
         try:
             if not kwargs.get("stream"):
                 result = await original(*args, **kwargs)
-                p, c = _usage(result); record(path, pseudo, model, p, c)
+                p, c = _usage(result)
+                hidden = getattr(result, "_hidden_params", {}) or {}
+                record(path, pseudo, model, p, c, cost=hidden.get("response_cost"))
                 return result
             options = dict(kwargs.get("stream_options") or {}); options.setdefault("include_usage", True); kwargs["stream_options"] = options
             response = await original(*args, **kwargs)
@@ -119,14 +121,19 @@ def install_recorder(llm: Any) -> None:
             final_usage: tuple[int, int] | None = None
             async def relay():
                 nonlocal prompt, completion, final_usage
-                async for chunk in response:
-                    p, c = _usage(chunk); prompt = max(prompt, p); completion += c
-                    if _usage(chunk) != (0, 0):
-                        final_usage = _usage(chunk)
-                    yield chunk
-                record(path, pseudo, model, *(final_usage or (prompt, completion)))
+                try:
+                    async for chunk in response:
+                        p, c = _usage(chunk); prompt = max(prompt, p); completion += c
+                        if _usage(chunk) != (0, 0):
+                            final_usage = _usage(chunk)
+                        yield chunk
+                    record(path, pseudo, model, *(final_usage or (prompt, completion)))
+                except Exception:
+                    pricing.record_error(model)
+                    raise
             return relay()
         except Exception:
+            pricing.record_error(model)
             raise
     wrapped._autoconduck_recorder = True
     llm.acompletion = wrapped

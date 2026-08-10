@@ -7,7 +7,7 @@ try:
 except Exception: _COSTS = {}
 try: _FALLBACK = json.loads((Path(__file__).with_name("pricing_fallback.json")).read_text())
 except Exception: _FALLBACK = {}
-_errors = defaultdict(deque); _ema = {}; _last_usage = {}
+_errors = defaultdict(deque); _ema = {}; _spend = defaultdict(deque); _last_usage = {}
 def _pool_id(entry):
     if isinstance(entry, str): return entry
     if isinstance(entry, dict):
@@ -22,7 +22,7 @@ def _configured_entry(model, config):
             if isinstance(entry.get("litellm_params"), dict): name = name or entry["litellm_params"].get("model")
             if str(name or "").removeprefix("openai/") == wanted:
                 params = entry.get("litellm_params") if isinstance(entry.get("litellm_params"), dict) else entry
-                if "price_in" in params or "price_out" in params:
+                if any(key in params for key in ("price_in", "price_out", "quality_score", "max_usd_per_min")):
                     return params
     return None
 def _entry(model, config=None):
@@ -31,10 +31,19 @@ def _entry(model, config=None):
 def is_subscription(model): return bool(_FALLBACK.get(model, {}).get("subscription", False))
 def _entry_effective_value(model, config):
     entry = _entry(model, config); ema = _ema.get(str(model))
-    minimum = getattr(getattr(config, "selection", None), "ema_min_samples", 3)
+    selection = getattr(config, "selection", config)
+    minimum = getattr(selection, "ema_min_samples", 3)
     if ema and ema["samples"] >= minimum:
-        return float(entry.get("price_in", 0)) * ema["prompt"] / 1_000_000 + float(entry.get("price_out", 0)) * ema["completion"] / 1_000_000
-    return float(entry.get("price_in", 0)) + float(entry.get("price_out", 0))
+        rate = ema["successes"] / max(1, ema["attempts"])
+        base = ema["cost"] / max(rate, float(getattr(selection, "quality_min_success_rate", 0.5)))
+    else:
+        base = float(entry.get("price_in", 0)) + float(entry.get("price_out", 0))
+    quality = entry.get("quality_score", 1.0)
+    try:
+        quality = float(quality)
+    except (TypeError, ValueError):
+        quality = 1.0
+    return base / quality if 0 < quality <= 1 else base
 def scaled_cost(model, config=None, *, use_ema=True):
     # Compute entries once per model instead of calling _entry() separately for price_in and price_out.
     configured = [str(name) for entry in (getattr(config, "model_list", []) or [])
@@ -50,10 +59,29 @@ def is_degraded(model, window_s=300, error_rate=.2):
     return len(q) > 0 and sum(x[1] for x in q)/len(q) > error_rate
 def record_error(model):
     _errors[model].append((time.time(), 1))
-def record_usage(model, prompt_tokens, completion_tokens):
-    estimate = max(1, int(prompt_tokens + completion_tokens))
+    record_usage(model, 0, 0, success=False)
+def record_usage(model, prompt_tokens, completion_tokens, *, cost=None, success=True):
+    prompt_tokens, completion_tokens = int(prompt_tokens), int(completion_tokens)
+    if cost is None:
+        entry = _entry(model)
+        cost = (prompt_tokens * float(entry.get("price_in", 0)) + completion_tokens * float(entry.get("price_out", 0))) / 1_000_000
+    cost = max(0.0, float(cost))
     old = _ema.get(model)
-    _ema[model] = {"prompt": prompt_tokens if not old else .9 * old["prompt"] + .1 * prompt_tokens, "completion": completion_tokens if not old else .9 * old["completion"] + .1 * completion_tokens, "samples": (old["samples"] + 1 if old else 1)}
+    alpha = 0.1
+    try:
+        from .config import get_config
+        alpha = float(getattr(getattr(get_config(), "selection", None), "ema_alpha", 0.1))
+    except Exception:
+        pass
+    _ema[model] = {
+        "prompt": prompt_tokens if not old else (1 - alpha) * old["prompt"] + alpha * prompt_tokens,
+        "completion": completion_tokens if not old else (1 - alpha) * old["completion"] + alpha * completion_tokens,
+        "cost": cost if not old else (1 - alpha) * old["cost"] + alpha * cost,
+        "samples": old["samples"] + 1 if old else 1,
+        "attempts": old["attempts"] + 1 if old else 1,
+        "successes": old["successes"] + (1 if success else 0) if old else (1 if success else 0),
+    }
+    _spend[str(model)].append((time.time(), cost))
     _last_usage[model] = (prompt_tokens, completion_tokens)
 def select(pool, pseudo_model, config, usage=None):
     degraded = {m for m in pool_ids_from(pool) if is_degraded(m, getattr(config, "degraded_window_s", 300), getattr(config, "degraded_error_rate", .2))}
@@ -69,7 +97,21 @@ def pool_ids_from(pool):
     return [str(n) for e in pool if (n := _pool_id(e))]
 def cheapest_enabled(config):
     names = pool_ids(config)
-    return min(names, key=lambda m: (_entry_effective_value(m, config), m)) if names else ""
+    if not names: return ""
+    eligible = [m for m in names if not is_over_budget(m, config)] or names
+    return min(eligible, key=lambda m: (_entry_effective_value(m, config), m))
+
+def is_over_budget(model, config):
+    selection = getattr(config, "selection", config)
+    if not getattr(selection, "spend_guard_enabled", True): return False
+    window = max(1, int(getattr(selection, "spend_guard_window_s", 60)))
+    now = time.time(); q = _spend[str(model)]
+    while q and now - q[0][0] > window: q.popleft()
+    entry = _entry(model, config)
+    cap = entry.get("max_usd_per_min", getattr(selection, "spend_guard_max_usd_per_min", 0.20))
+    try: cap = float(cap)
+    except (TypeError, ValueError): return False
+    return cap > 0 and sum(cost for _, cost in q) / window * 60 > cap
 def target_scaled_cost(value, pseudo_model, config):
     sel = getattr(config, "selection", config); gamma = float(getattr(sel, "value_to_cost_gamma", 1.0)); bias = 0.0
     if getattr(sel, "pseudo_bias_enabled", True): bias = {"autoconduck-budget": getattr(sel, "pseudo_bias_budget", -.2), "autoconduck-expensive": getattr(sel, "pseudo_bias_expensive", .2)}.get(pseudo_model, 0.0)
@@ -78,6 +120,8 @@ def select_closest(pool, value, config, *, pseudo_model=None, band=None, degrade
     try:
         names = [str(_pool_id(x)) for x in pool if _pool_id(x)]
         eligible = [m for m in names if not (degraded and m in degraded)]
+        non_over = [m for m in eligible if not is_over_budget(m, config)]
+        eligible = non_over or eligible
         if band:
             inside = [m for m in eligible if band[0] <= scaled_cost(m, config) <= band[1]]; eligible = inside or eligible
         if not eligible: return cheapest_enabled(config)
