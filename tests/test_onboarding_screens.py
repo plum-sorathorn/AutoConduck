@@ -44,3 +44,15 @@ def test_render_models_placeholder_shows_format_and_hides_when_models_exist():
     shown = render_models_placeholder(False)
     assert "newline-separated" in shown
     assert "gpt-4o" in shown
+
+
+def test_dashboard_mascot_header_rich_markup_validity():
+    from autoconduck.tui.dashboard import DashboardScreen
+    from rich.markup import render
+    screen = DashboardScreen()
+    for paused in (False, True):
+        screen.paused = paused
+        header_text = screen._mascot_header()
+        # Ensure rich can parse markup without raising MarkupError
+        render(header_text)
+

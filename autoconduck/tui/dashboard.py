@@ -11,7 +11,7 @@ def render_log_rows(records: list[dict], cursor: int) -> str:
         stamp = record.get("time", record.get("timestamp", "--"))
         route = record.get("route", "fast")
         model = record.get("model", record.get("model_used", "--"))
-        prompt = str(record.get("prompt", "")).replace("\n", " ")[:40]
+        prompt = str(record.get("prompt", "")).replace("\n", " ")[:40].replace("[", "\\[")
         confidence = record.get("confidence", "--")
         line = f"› {stamp} {route} {model} {prompt} ({confidence})" if index == cursor else f"  {stamp} {route} {model} {prompt} ({confidence})"
         lines.append(f"[reverse]{line}[/reverse]" if index == cursor else line)
@@ -72,7 +72,7 @@ if _TEXTUAL:
         def _mascot_header(self):
             status = "[yellow]PAUSED[/yellow]" if self.paused else "[green]● RUNNING[/green]"
             duck = self.DUCK_FRAMES[self.duck_frame]
-            return f"{duck} [{status}]\n  \\___)"
+            return f"{duck} \\[{status}]\n  \\___)"
         def _stats_summary(self):
             t = self.totals
             return (f"┌─ [bold]Usage & Cost Tracker[/bold] ─────────────────────────────────────────┐\n"
