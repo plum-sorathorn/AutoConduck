@@ -81,6 +81,31 @@ def test_claude_and_opencode_flags_exit_two():
             except SystemExit as exc:
                 assert exc.code == 2
 
+def test_pi_flag_dispatches_to_pi():
+    with patch.object(cli, "cmd_launch_agent", return_value=0) as launch:
+        with patch.object(sys, "argv", ["autoconduck", "--pi"]):
+            try:
+                cli.main()
+            except SystemExit as exc:
+                assert exc.code == 0
+    launch.assert_called_once_with("pi")
+
+def test_pi_and_claude_flags_exit_two():
+    with patch.object(sys, "argv", ["autoconduck", "--pi", "--claude"]):
+        with patch("builtins.print"):
+            try:
+                cli.main()
+            except SystemExit as exc:
+                assert exc.code == 2
+
+def test_pi_and_opencode_flags_exit_two():
+    with patch.object(sys, "argv", ["autoconduck", "--pi", "--opencode"]):
+        with patch("builtins.print"):
+            try:
+                cli.main()
+            except SystemExit as exc:
+                assert exc.code == 2
+
 
 # Helpers for cmd_launch_agent tests (new flow uses kill+daemon+poll, not ensure_server)
 

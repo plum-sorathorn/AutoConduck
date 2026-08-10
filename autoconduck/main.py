@@ -1,9 +1,10 @@
 """AutoConduck CLI and pragmatic FastAPI/LiteLLM hybrid surface."""
-import argparse, asyncio, json, logging, os, sys, time, subprocess, shutil
+import argparse, asyncio, ctypes, json, logging, os, sys, time, subprocess, shutil, signal
 from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Any
+from . import config
 from .config import get_config, load_config, save_config, home_dir
 
 
@@ -359,11 +360,109 @@ def _run_proxy(port: int, log_level: str = "info", host: str = "127.0.0.1"):
     import uvicorn
     uvicorn.run(_get_app(), host=host, port=port, log_level=log_level.lower(), access_log=False)
 
+
+SUPERVISOR_MAX_RAPID_FAILURES = 5
+SUPERVISOR_FAILURE_WINDOW = 60.0
+SUPERVISOR_INITIAL_BACKOFF = 1.0
+SUPERVISOR_MAX_BACKOFF = 30.0
+
+
+def _run_supervisor(port: int, log_level: str = "info", host: str = "127.0.0.1", child_cmd=None):
+    """Keep the in-process proxy in a child, restarting only crash exits.
+
+    Five failures within one minute are treated as a persistent startup fault;
+    giving up lets the normal ensure_server watchdog perform the next revive.
+    """
+    from .launcher import _create_kill_on_close_job, daemon_python
+
+    log_path = home_dir() / "run" / "server.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    stopping = False
+    child = None
+    job = _create_kill_on_close_job()
+    child_path = config.run_dir() / "child.pid"
+
+    def request_stop(signum, frame):
+        nonlocal stopping
+        stopping = True
+        if child is not None and child.poll() is None:
+            child.terminate()
+
+    old_handlers = {}
+    if hasattr(signal, "SIGTERM"):
+        old_handlers[signal.SIGTERM] = signal.getsignal(signal.SIGTERM)
+        signal.signal(signal.SIGTERM, request_stop)
+    if hasattr(signal, "SIGINT"):
+        old_handlers[signal.SIGINT] = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, request_stop)
+
+    def restore_handlers():
+        for signum, handler in old_handlers.items():
+            signal.signal(signum, handler)
+
+    failures = []
+    backoff = SUPERVISOR_INITIAL_BACKOFF
+    try:
+        while not stopping:
+            command = child_cmd or [daemon_python(), "-m", "autoconduck", "start", "--headless", "--port", str(port), "--host", host]
+            child_env = os.environ.copy()
+            child_env["AUTOCONDUCK_SUPERVISED"] = "1"
+            started = time.monotonic()
+            with log_path.open("ab") as stream:
+                flags = 0
+                if os.name == "nt":
+                    flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+                child = subprocess.Popen(command, stdout=stream, stderr=stream, close_fds=True,
+                                         env=child_env, creationflags=flags)
+            child_path.parent.mkdir(parents=True, exist_ok=True)
+            child_path.write_text(str(child.pid))
+            if job is not None and os.name == "nt":
+                try:
+                    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                    if not kernel32.AssignProcessToJobObject(job, int(child._handle)):
+                        error = ctypes.get_last_error()
+                        if error == 5:
+                            logging.getLogger(__name__).warning("could not assign supervised child to job: access denied")
+                        else:
+                            logging.getLogger(__name__).warning("could not assign supervised child to job")
+                except Exception:
+                    logging.getLogger(__name__).warning("could not assign supervised child to job")
+            exit_code = child.wait()
+            if stopping:
+                return
+            now = time.monotonic()
+            if now - started > SUPERVISOR_FAILURE_WINDOW:
+                failures = []
+                backoff = SUPERVISOR_INITIAL_BACKOFF
+            failures = [when for when in failures if now - when <= SUPERVISOR_FAILURE_WINDOW]
+            failures.append(now)
+            with log_path.open("a", encoding="utf-8") as stream:
+                stream.write(f"supervised server exited with code {exit_code}; restart {len(failures)}/{SUPERVISOR_MAX_RAPID_FAILURES}\n")
+            if len(failures) >= SUPERVISOR_MAX_RAPID_FAILURES:
+                with log_path.open("a", encoding="utf-8") as stream:
+                    stream.write("supervisor giving up after repeated rapid failures\n")
+                return
+            time.sleep(backoff)
+            backoff = min(backoff * 2, SUPERVISOR_MAX_BACKOFF)
+    finally:
+        restore_handlers()
+        try:
+            child_path.unlink()
+        except OSError:
+            pass
+        if job is not None:
+            try:
+                ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(job)
+            except Exception:
+                pass
 def _check_port_available(port: int) -> None:
     from .launcher import find_process_on_port, kill_process, prompt_kill_port
     pid = find_process_on_port(port)
     if pid is None:
         return
+    if os.environ.get("AUTOCONDUCK_SUPERVISED") == "1":
+        print(f"Port {port} is still in use by PID {pid}; supervised child will not kill it", file=sys.stderr)
+        raise SystemExit(1)
     if prompt_kill_port(port, pid) and kill_process(pid):
         print(f"Killed process {pid} using port {port}", file=sys.stderr)
         return
@@ -402,11 +501,43 @@ def cmd_start(args):
             from .launcher import daemon_python
             cmd = [
                 daemon_python(), "-m", "autoconduck", "start",
-                "--headless", "--port", str(port), "--host", args.host,
+                "--headless", "--supervisor", "--port", str(port), "--host", args.host,
             ]
             with log.open("ab") as stream:
                 flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if sys.platform == "win32" else 0
-                subprocess.Popen(cmd, stdout=stream, stderr=stream, start_new_session=sys.platform != "win32", creationflags=flags, close_fds=True)
+                child = subprocess.Popen(cmd, stdout=stream, stderr=stream, start_new_session=sys.platform != "win32", creationflags=flags, close_fds=True)
+            from . import launcher
+            deadline = time.monotonic() + float(os.environ.get("AUTOCONDUCK_READY_TIMEOUT", "30.0"))
+            while time.monotonic() < deadline and not launcher.server_alive(port):
+                time.sleep(0.1)
+            if not launcher.server_alive(port):
+                if sys.platform == "win32":
+                    subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"], check=False,
+                                   capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                else:
+                    try:
+                        os.killpg(child.pid, signal.SIGTERM)
+                    except (OSError, AttributeError):
+                        try:
+                            child.terminate()
+                        except OSError:
+                            pass
+                try:
+                    child.wait(timeout=5)
+                except (subprocess.TimeoutExpired, AttributeError):
+                    try:
+                        child.kill()
+                    except OSError:
+                        pass
+                print(f"AutoConduck daemon failed to become ready on port {port}", file=sys.stderr)
+                return 1
+            pidfile, _, _ = launcher._files()
+            pidfile.write_text(str(child.pid))
+            # The owner marker makes a manual daemon persistent across shim releases.
+            launcher._write_claim(False, owner=True, pid=child.pid)
+            return
+        if getattr(args, "supervisor", False):
+            _run_supervisor(port, cfg.log_level, args.host)
             return
         _check_port_available(port)
         _run_proxy(port, cfg.log_level, args.host) if args.host != "127.0.0.1" else _run_proxy(port, cfg.log_level)
@@ -569,15 +700,22 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
     into the daemon child so this parent process stays lean.
     """
     from . import launcher
-    # Only import the adapter we actually need (lazy)
-    from .agents.claude_code import ClaudeCodeAdapter
-    adapter_cls = ClaudeCodeAdapter
+    from .agents import all_adapters
+    
+    # Find the adapter by ID
+    adapter = next((a for a in all_adapters() if a.id == agent_id), None)
+    if adapter is None:
+        print(f"unknown agent '{agent_id}'", file=sys.stderr)
+        return 1
 
     cfg = load_config()
     port = port or getattr(cfg, "port", None) or DEFAULT_PORT
 
-    # Kill anything currently listening on the port (always fresh start)
-    launcher.kill_existing_on_port(port)
+    # Reuse a healthy manual daemon; otherwise preserve the existing fresh-start behavior.
+    if launcher.server_alive(port):
+        launcher._write_claim(False)
+    else:
+        launcher.kill_existing_on_port(port)
 
     log = (home_dir() / "run" / "server.log")
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -616,8 +754,11 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
         return 1
 
     # Patch the adapter
-    adapter = adapter_cls()
-    adapter.patch(cfg)
+    try:
+        adapter.patch(cfg, port=port)
+    except TypeError:
+        # Fallback for adapters that don't accept port argument (e.g., ClaudeCodeAdapter)
+        adapter.patch(cfg)
 
     real_bin = launcher.real_binary_path(agent_id)
     if not real_bin:
@@ -631,6 +772,9 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
     env = os.environ.copy()
     if agent_id == "claude_code":
         env.update(launcher._claude_env(port, getattr(cfg, "pseudo_model", "autoconduck")))
+    elif agent_id == "pi":
+        # Pi doesn't need special environment variables - settings.json handles configuration
+        pass
 
     print(f"AutoConduck ready at http://127.0.0.1:{port} — launching {adapter.binary_name}")
     try:
@@ -657,10 +801,12 @@ def main(argv: list[str] | None = None):
     parser.add_argument("--version", action="store_true")
     parser.add_argument("--claude", action="store_true")
     parser.add_argument("--opencode", action="store_true")
+    parser.add_argument("--pi", action="store_true")
     sub = parser.add_subparsers(dest="cmd")
     start = sub.add_parser("start")
     start.add_argument("--headless", action="store_true")
     start.add_argument("--daemon", action="store_true")
+    start.add_argument("--supervisor", action="store_true", help=argparse.SUPPRESS)
     start.add_argument("--port", type=int)
     start.add_argument("--host", default="127.0.0.1")
     for name, func in (("ensure", cmd_ensure), ("release", cmd_release), ("stop", cmd_stop)):
@@ -689,13 +835,15 @@ def main(argv: list[str] | None = None):
     if args.version:
         from . import __version__
         print(__version__)
-    elif args.claude and args.opencode:
-        print("--claude and --opencode cannot be used together", file=sys.stderr)
+    elif args.claude and args.opencode or args.claude and args.pi or args.opencode and args.pi:
+        print("--claude, --opencode, and --pi cannot be used together", file=sys.stderr)
         raise SystemExit(2)
     elif args.claude:
         raise SystemExit(cmd_launch_agent("claude_code"))
     elif args.opencode:
         raise SystemExit(cmd_launch_agent("opencode"))
+    elif args.pi:
+        raise SystemExit(cmd_launch_agent("pi"))
     elif args.cmd == "start":
         cmd_start(args)
     elif args.cmd == "edit":

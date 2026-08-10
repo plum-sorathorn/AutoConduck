@@ -6,6 +6,7 @@ from .continue_dev import ContinueDevAdapter
 from .kilocode import KiloCodeAdapter
 from .cursor import CursorAdapter
 from .generic_openai import GenericOpenAIAdapter
+from .pi import PiAdapter
 
 __all__ = [
     "BaseAdapter",
@@ -16,6 +17,7 @@ __all__ = [
     "KiloCodeAdapter",
     "CursorAdapter",
     "GenericOpenAIAdapter",
+    "PiAdapter",
 ]
 
 def all_adapters() -> list[BaseAdapter]:
@@ -27,6 +29,7 @@ def all_adapters() -> list[BaseAdapter]:
         KiloCodeAdapter(),
         CursorAdapter(),
         GenericOpenAIAdapter(),
+        PiAdapter(),
     ]
 
 def binary_name_for(agent_id: str) -> str | None:

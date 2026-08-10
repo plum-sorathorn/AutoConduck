@@ -11,6 +11,7 @@ class ModelEntry(BaseModel):
     api_key_env: str = "OPENAI_API_KEY"
     api_key: str | None = None
     base_url: str | None = None
+    api_base: str | None = None
     tier: str = "balanced"
     price_in: float = 0.0
     price_out: float = 0.0
@@ -41,6 +42,16 @@ class ClaudeCodeSettings(BaseModel):
     default_mode: str | None = None
     enable_all_project_mcp_servers: bool = False
 
+class PiSettings(BaseModel):
+    """Pi coding-agent integration settings."""
+    enabled: bool = True
+    model: str | None = None
+    provider: str = "autoconduck"
+    api_key_env: str = "PI_API_KEY"
+    api_key: str | None = None
+    base_url: str | None = None
+    model_entries: list[ModelEntry] = Field(default_factory=list)
+
 class Config(BaseModel):
     host: str = "127.0.0.1"; port: int = 11434; log_level: str = "INFO"
     ambiguous_low: float = 0.55; ambiguous_high: float = 0.70; hysteresis_floor: float = 0.50; escalation_threshold: float = 0.80; stack_trace_boost: float = 0.25
@@ -53,6 +64,7 @@ class Config(BaseModel):
     managed_server: bool = False
     selection: SelectionConfig = Field(default_factory=SelectionConfig)
     claude_code: ClaudeCodeSettings = Field(default_factory=ClaudeCodeSettings)
+    pi: PiSettings = Field(default_factory=PiSettings)
 
 _legacy_key_warning = False
 
@@ -108,6 +120,25 @@ def normalize_api_base(base_url: str) -> str:
         return value
     return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/") + "/v1", parts.query, parts.fragment))
 
+
+def _configured_model_sources(cfg):
+    """Yield model pools in precedence order, including Pi's optional pool."""
+    yield from (getattr(cfg, "model_list", []) or [])
+    yield from (getattr(cfg, "custom_models", []) or [])
+    pi = getattr(cfg, "pi", None)
+    if pi is not None and getattr(pi, "enabled", True):
+        entries = getattr(pi, "model_entries", []) or []
+        if entries:
+            yield from (entry.model_dump() if isinstance(entry, ModelEntry) else entry for entry in entries)
+        elif getattr(pi, "model", None):
+            yield {
+                "id": pi.model,
+                "provider": pi.provider,
+                "api_key_env": pi.api_key_env,
+                "api_key": pi.api_key,
+                "base_url": pi.base_url,
+            }
+
 def resolve_orchestrator_model(cfg=None) -> str:
     """Select the first enabled configured model for orchestration calls."""
     if cfg is None:
@@ -115,8 +146,7 @@ def resolve_orchestrator_model(cfg=None) -> str:
             cfg = get_config()
         except Exception:
             cfg = None
-    for source in (getattr(cfg, "model_list", []) or [], getattr(cfg, "custom_models", []) or []):
-        for entry in source:
+    for entry in _configured_model_sources(cfg):
             if not isinstance(entry, dict) or entry.get("enabled", True) is False:
                 continue
             model = entry.get("id") or entry.get("model_name") or entry.get("model")
@@ -137,8 +167,7 @@ def select_model_by_tier(tier: str, cfg=None) -> str:
 def orchestrator_litellm_params(cfg=None) -> dict[str, str]:
     """Build LiteLLM kwargs for the configured orchestration model."""
     model = resolve_orchestrator_model(cfg)
-    for source in (getattr(cfg, "model_list", []) or [], getattr(cfg, "custom_models", []) or []):
-        for entry in source:
+    for entry in _configured_model_sources(cfg):
             if not isinstance(entry, dict):
                 continue
             raw = entry.get("id") or entry.get("model_name") or entry.get("model")
@@ -169,8 +198,7 @@ def load_config(path=None) -> Config:
     if any(isinstance(e, dict) and e.get("api_key") for s in (config.model_list, config.custom_models) for e in s):
         from .auth import migrate_from_config
         migrate_from_config(config)
-    for source in (config.model_list, config.custom_models):
-        for entry in source:
+    for entry in _configured_model_sources(config):
             if (isinstance(entry, dict) and entry.get("enabled", True)
                     and not resolve_api_key(entry)):
                 logging.getLogger("autoconduck").warning(

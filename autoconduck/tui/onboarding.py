@@ -65,10 +65,15 @@ except ImportError:
 def _require_textual():
     if not _TEXTUAL: raise RuntimeError("Textual is required to use the AutoConduck TUI")
 
-AGENTS = ("claude_code", "opencode", "aider", "continue_dev", "kilocode", "cursor", "generic_openai")
+AGENTS = (
+    "claude_code", "opencode", "aider", "continue_dev", "kilocode", "cursor",
+    # Pi is a first-class selectable coding agent in onboarding.
+    "pi", "generic_openai",
+)
 def detect_agents():
-    home = Path.home(); locations = {"claude_code": [home/".claude"/"settings.json"], "opencode": [home/".config"/"opencode"/"config.json"], "aider": [home/".aider.conf.yml"], "continue_dev": [home/".continue"], "kilocode": [home/".kilocode"], "cursor": [home/".cursor"], "generic_openai": []}
-    commands = {"claude_code":"claude", "opencode":"opencode", "aider":"aider", "kilocode":"kilocode"}
+    home = Path.home(); locations = {"claude_code": [home/".claude"/"settings.json"], "opencode": [home/".config"/"opencode"/"config.json"], "aider": [home/".aider.conf.yml"], "continue_dev": [home/".continue"], "kilocode": [home/".kilocode"], "cursor": [home/".cursor"], "pi": [home/".pi"/"agent"/"settings.json"], "generic_openai": []}
+    # Pi follows the same config-file-or-PATH detection used by the other agents.
+    commands = {"claude_code":"claude", "opencode":"opencode", "aider":"aider", "kilocode":"kilocode", "pi":"pi"}
     return {n: next((str(p) for p in locations[n] if p.exists()), shutil.which(commands[n]) if n in commands else None) for n in AGENTS}
 
 if _TEXTUAL:
@@ -242,7 +247,9 @@ if _TEXTUAL:
             except Exception as exc:
                 self.query_one("#error").update(str(exc))
     class LauncherIntegrationScreen(Screen):
-        ELIGIBLE={"claude_code","opencode","aider","kilocode"}
+        # Keep Pi available in the final launcher integration step as well as
+        # in the initial selectable-agent list above.
+        ELIGIBLE={"claude_code","opencode","aider","kilocode","pi"}
         def __init__(self,controller,selected=None): super().__init__(); self.controller=controller; self.agents=sorted(set(selected or ())&self.ELIGIBLE); self.checked=set(self.agents); self.cursor=0; self.result=""
         def compose(self): yield Vertical(Static("Launcher integration"),Static(render_check_rows(self.agents,self.checked,self.cursor),id="agents",markup=True),Static("space: toggle · right: install · left: back · [ctrl+c] quit"))
         def on_key(self,e):
