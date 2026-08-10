@@ -22,14 +22,18 @@ def test_custom_models_use_registry_prices(monkeypatch):
     assert rows[0]["price_in"] == 1.25 and rows[0]["price_out"] == 4.5
     assert rows[1]["price_in"] == 0.001 and rows[1]["price_out"] == 0.002
 
-def test_custom_models_distinguish_environment_names_from_literal_keys():
-    env_rows = upsert_custom_models([], "local", "http://localhost", "LLMGATEWAY_API_KEY", ["env-model"])
+def test_custom_models_distinguish_environment_names_from_literal_keys(monkeypatch):
+    env_rows = upsert_custom_models([], "local", "http://localhost", "env:LLMGATEWAY_API_KEY", ["env-model"])
     assert env_rows[0]["api_key_env"] == "LLMGATEWAY_API_KEY"
     assert "api_key" not in env_rows[0]
 
-    literal_rows = upsert_custom_models([], "local", "http://localhost", "sk-abc123", ["literal-model"])
+    set_key = monkeypatch.setattr
+    calls = []
+    set_key("autoconduck.auth.set_provider_key", lambda provider, value: calls.append((provider, value)))
+    literal_rows = upsert_custom_models([], "local", "http://localhost", "ABCDEF123456", ["literal-model"])
     assert "api_key" not in literal_rows[0]
     assert "api_key_env" not in literal_rows[0]
+    assert calls == [("local", "ABCDEF123456")]
 
 def test_large_presets_start_empty_but_preserve_overrides():
     models = [{"id": str(i)} for i in range(6)]
@@ -38,13 +42,13 @@ def test_large_presets_start_empty_but_preserve_overrides():
 
 def test_apply_api_key_environment_name_is_immutable():
     entries = [{"id": "a", "api_key": "old", "provider": "openai"}]
-    result = apply_api_key(entries, "MY_API_KEY")
+    result = apply_api_key(entries, "env:MY_API_KEY")
     assert result == [{"id": "a", "provider": "openai", "api_key_env": "MY_API_KEY"}]
     assert entries == [{"id": "a", "api_key": "old", "provider": "openai"}]
 
 def test_apply_api_key_literal_removes_environment_name():
     entries = [{"id": "a", "api_key_env": "OLD_KEY"}]
-    assert apply_api_key(entries, "sk-lit") == [{"id": "a"}]
+    assert apply_api_key(entries, "ABCDEF123456") == [{"id": "a"}]
 
 def test_apply_api_key_blank_value_returns_deep_copies():
     entries = [{"id": "a", "nested": {"value": 1}}]

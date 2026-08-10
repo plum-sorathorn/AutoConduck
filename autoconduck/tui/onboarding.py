@@ -136,7 +136,7 @@ if _TEXTUAL:
             overrides=get_config().preset_overrides.get(self.key, [])
             models="\n".join(row.get("id", "") for row in overrides)
             initial=next((row.get("api_key") or resolve_api_key(row) for row in overrides if row.get("api_key") or row.get("api_key_env")), "")
-            yield Vertical(Static(self.DISPLAY_NAMES.get(self.key, self.key)), Static(models, markup=False), Input(value=initial, placeholder="API key or environment variable name", id="api_key"), Static("", id="error"), Static("ctrl+s: save · left: back · [ctrl+c] quit"))
+            yield Vertical(Static(self.DISPLAY_NAMES.get(self.key, self.key)), Static(models, markup=False), Input(value=initial, placeholder="API key (or env:NAME for an environment variable)", id="api_key"), Static("", id="error"), Static("ctrl+s: save · left: back · [ctrl+c] quit"))
         def on_key(self, event):
             if event.key == "left": self.controller.pop_screen()
         def on_input_submitted(self, event):
@@ -144,7 +144,7 @@ if _TEXTUAL:
         def action_save(self):
             try:
                 cfg=get_config(); value=self.query_one("#api_key",Input).value
-                if value.strip() and not ENV_VAR_NAME.fullmatch(value.strip()):
+                if value.strip() and not value.strip().startswith("env:"):
                     from ..auth import set_provider_key
                     set_provider_key(self.key, value.strip())
                 cfg.preset_overrides[self.key]=apply_api_key(cfg.preset_overrides.get(self.key, []), value); _persist(cfg)
@@ -198,7 +198,7 @@ if _TEXTUAL:
             old=next((x for x in get_config().custom_models if x.get("provider")==self.provider),{})
             models = "\n".join(x["id"] for x in get_config().custom_models if x.get("provider")==self.provider)
             api_key = old.get("api_key") or resolve_api_key(old)
-            widgets = [Static("Custom provider"), Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"), Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"), Input(value=api_key,placeholder="API key or environment variable name",id="api_key"), Input(placeholder="type to filter models…",id="model_search"), Static("",id="model_results",markup=True)]
+            widgets = [Static("Custom provider"), Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"), Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"), Input(value=api_key,placeholder="API key (or env:NAME for an environment variable)",id="api_key"), Input(placeholder="type to filter models…",id="model_search"), Static("",id="model_results",markup=True)]
             widgets.extend([Label("One model ID per line (newline-separated)", classes="label"),TextArea(models,id="models"),*([Static(render_models_placeholder(False),id="placeholder",markup=True)] if not models else []),Static("ctrl+s: save · left: cancel", id="error")])
             yield Vertical(*widgets)
         def on_mount(self): self._render_results()

@@ -8,16 +8,14 @@ from ..model_presets import _ingest_litellm_costs, clean_model_id
 
 DEFAULT_PRICE_IN = 0.001
 DEFAULT_PRICE_OUT = 0.002
-ENV_VAR_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
-
 def apply_api_key(entries: list[dict], value: str) -> list[dict]:
     """Apply either an environment variable name or literal key immutably."""
     result = deepcopy(entries)
     value = value.strip()
     if not value:
         return result
-    if ENV_VAR_NAME.fullmatch(value):
-        return [{**entry_without_key, "api_key_env": value}
+    if value.startswith("env:"):
+        return [{**entry_without_key, "api_key_env": value[4:]}
                 for entry in result
                 for entry_without_key in [{key: item for key, item in entry.items() if key != "api_key"}]]
     from ..auth import set_provider_key
@@ -64,8 +62,8 @@ def upsert_custom_models(existing: list[dict[str, Any]], provider: str, base_url
     for model_id in dict.fromkeys(x.strip() for x in model_ids):
         if model_id:
             prices = by_clean_id.get(clean_model_id(model_id), {})
-            if ENV_VAR_NAME.fullmatch(api_key_env):
-                auth = {"api_key_env": api_key_env}
+            if api_key_env.startswith("env:"):
+                auth = {"api_key_env": api_key_env[4:]}
             else:
                 from ..auth import set_provider_key
                 set_provider_key(provider, api_key_env)
