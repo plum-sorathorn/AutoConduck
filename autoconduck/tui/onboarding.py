@@ -76,20 +76,38 @@ def detect_agents():
     commands = {"claude_code":"claude", "opencode":"opencode", "aider":"aider", "kilocode":"kilocode", "pi":"pi"}
     return {n: next((str(p) for p in locations[n] if p.exists()), shutil.which(commands[n]) if n in commands else None) for n in AGENTS}
 
+def is_agent_configured(agent_id: str) -> bool:
+    from ..agents import all_adapters
+    adapter = next((a for a in all_adapters() if a.id == agent_id or getattr(a, "binary_name", None) == agent_id), None)
+    if not adapter: return False
+    for p in adapter.config_paths():
+        if p.exists():
+            try:
+                txt = p.read_text(encoding="utf-8").lower()
+                if "autoconduck" in txt or "# begin autoconduck" in txt: return True
+            except Exception: pass
+    return False
+
 if _TEXTUAL:
     class OnboardingScreen(Screen):
-        def __init__(self, app_controller=None): super().__init__(); self.controller=app_controller; self.selected=set(); self.detected=detect_agents(); self.cursor=0
-        def compose(self): yield Vertical(Static("┌─ AutoConduck · Detected agents ─┐"), Static(render_agent_rows(list(AGENTS), self.detected, self.selected, self.cursor), id="agents", markup=True), Static("[↑/↓] move  [space] toggle  [→] continue  [ctrl+c] quit"))
+        def __init__(self, app_controller=None):
+            super().__init__()
+            self.controller = app_controller
+            self.detected = detect_agents()
+            configured = {agent for agent in AGENTS if is_agent_configured(agent)}
+            self.selected = set(configured) if configured else set(self.detected)
+            self.cursor = 0
+        def compose(self): yield Vertical(Static("┌─ AutoConduck · Detected agents ─┐"), Static(render_agent_rows(list(AGENTS), self.detected, self.selected, self.cursor), id="agents", markup=True), Static("[↑/↓] move  [enter] toggle  [→] continue  [ctrl+c] quit"))
         def on_key(self,e):
             if e.key == "down": self.cursor=move_cursor(self.cursor,1,len(AGENTS))
             elif e.key == "up": self.cursor=move_cursor(self.cursor,-1,len(AGENTS))
-            elif e.key == "space": self.selected.symmetric_difference_update({AGENTS[self.cursor]})
+            elif e.key == "enter": self.selected.symmetric_difference_update({AGENTS[self.cursor]})
             elif e.key == "right" and self.controller: self.controller.push_screen(ModelSourceScreen(self.controller,self.selected))
             self.query_one("#agents").update(render_agent_rows(list(AGENTS),self.detected,self.selected,self.cursor))
     class ModelSourceScreen(Screen):
         SOURCES=["Anthropic","OpenAI","Google","LLM Gateway","Custom endpoint…"]
         def __init__(self, app_controller=None, selected=None): super().__init__(); self.controller=app_controller; self.agent_selected=set(selected or ()); self.cursor=0; self.selected=set()
-        def compose(self): yield Vertical(Static(render_source_rows(self.SOURCES,self.selected,self.cursor),id="sources",markup=True),Static("[↑/↓] move · [space/right] select · [left] back · [ctrl+c] quit"))
+        def compose(self): yield Vertical(Static(render_source_rows(self.SOURCES,self.selected,self.cursor),id="sources",markup=True),Static("[↑/↓] move · [enter/right] select · [left] back · [ctrl+c] quit"))
         def _choose(self):
             key=("custom" if self.cursor==4 else ("llmgateway" if self.cursor==3 else self.SOURCES[self.cursor].lower()))
             if key=="custom": self.controller.push_screen(CustomProvidersScreen(self.controller,self.agent_selected))
@@ -97,7 +115,7 @@ if _TEXTUAL:
         def on_key(self,e):
             if e.key == "down": self.cursor=move_cursor(self.cursor,1,len(self.SOURCES))
             elif e.key == "up": self.cursor=move_cursor(self.cursor,-1,len(self.SOURCES))
-            elif e.key in ("space","right"): self._choose()
+            elif e.key in ("enter","right"): self._choose()
             elif e.key == "left": self.controller.pop_screen()
             self.query_one("#sources").update(render_source_rows(self.SOURCES,self.selected,self.cursor))
     class ModelSelectionScreen(Screen):
@@ -105,18 +123,28 @@ if _TEXTUAL:
         def __init__(self, controller, agents, key):
             super().__init__(); self.controller=controller; self.agents=set(agents); self.key=key; self.models=models_for_provider(key,PRESETS); self.cursor=0; self.filtered_models=self.models; self._error=None
             cfg=get_config(); self.enabled=default_enabled_ids(self.models,cfg.preset_overrides.get(self.key))
-        def compose(self): yield Vertical(Input(placeholder="type to filter…",id="search"),Static(render_model_rows(self.models,self.enabled,self.cursor),id="models",markup=True),Static(self._footer(),id="footer"))
+        def compose(self): yield Vertical(Input(placeholder="type to filter models…",id="search"),Static(render_model_rows(self.models,self.enabled,self.cursor),id="models",markup=True),Static(self._footer(),id="footer"))
+        def on_mount(self):
+            try: self.query_one("#search", Input).focus()
+            except Exception: pass
         def _footer(self):
             if self._error: return self._error
-            return f"{len(self.enabled)}/{len(self.models)} selected · space: toggle · right: confirm · left: back · [ctrl+c] quit" if len(self.models)>5 else "space: toggle · right: confirm · left: back · [ctrl+c] quit"
+            return f"{len(self.enabled)}/{len(self.models)} selected · enter: toggle · right: confirm · left: back · [ctrl+c] quit"
         def on_input_changed(self,event):
             if event.input.id=="search":
                 term=event.value; self.filtered_models=[m for m in self.models if search_match(term, m["id"])]; self.cursor=0; self.query_one("#models").update(render_model_rows(self.filtered_models,self.enabled,self.cursor))
         def on_input_submitted(self,event):
-            if event.input.id=="search": event.input.blur()
+            if event.input.id == "search":
+                if self.filtered_models:
+                    self.enabled.symmetric_difference_update({self.filtered_models[self.cursor]["id"]})
+                    if self.enabled: self._error=None
+                    self.query_one("#models").update(render_model_rows(self.filtered_models,self.enabled,self.cursor))
+                    self.query_one("#footer").update(self._footer())
+                try: event.input.focus()
+                except Exception: pass
         def _confirm(self):
             if len(self.models)>5 and not self.enabled:
-                self._error="Select at least one model (space to toggle)"; self.query_one("#footer").update(self._footer()); return
+                self._error="Select at least one model (enter to toggle)"; self.query_one("#footer").update(self._footer()); return
             cfg=get_config(); cfg.selected_presets=list(dict.fromkeys(cfg.selected_presets+[self.key])); cfg.preset_overrides[self.key]=overrides_for_toggle(self.key,self.models,self.enabled,cfg.preset_overrides.get(self.key)); _persist(cfg)
             self.controller.push_screen(ApiKeyScreen(self.controller, self.agents, self.key))
         def _finish(self):
@@ -124,11 +152,26 @@ if _TEXTUAL:
             self.controller.switch_screen(DashboardScreen())
         def action_focus_search(self): self.query_one("#search",Input).focus()
         def on_key(self,e):
-            if e.key == "down": self.cursor=move_cursor(self.cursor,1,len(self.filtered_models))
-            elif e.key == "up": self.cursor=move_cursor(self.cursor,-1,len(self.filtered_models))
-            elif e.key=="space" and self.filtered_models:
+            if e.key == "down":
+                self.cursor=move_cursor(self.cursor,1,len(self.filtered_models))
+                self.query_one("#models").update(render_model_rows(self.filtered_models,self.enabled,self.cursor))
+                try: self.query_one("#search", Input).focus()
+                except Exception: pass
+                e.stop()
+            elif e.key == "up":
+                self.cursor=move_cursor(self.cursor,-1,len(self.filtered_models))
+                self.query_one("#models").update(render_model_rows(self.filtered_models,self.enabled,self.cursor))
+                try: self.query_one("#search", Input).focus()
+                except Exception: pass
+                e.stop()
+            elif e.key=="enter" and self.filtered_models:
                 self.enabled.symmetric_difference_update({self.filtered_models[self.cursor]["id"]})
                 if self.enabled: self._error=None
+                self.query_one("#models").update(render_model_rows(self.filtered_models,self.enabled,self.cursor))
+                self.query_one("#footer").update(self._footer())
+                try: self.query_one("#search", Input).focus()
+                except Exception: pass
+                e.stop()
             elif e.key == "right": self._confirm()
             elif e.key == "left": self.controller.pop_screen()
             self.query_one("#models").update(render_model_rows(self.filtered_models,self.enabled,self.cursor)); self.query_one("#footer").update(self._footer())
@@ -203,7 +246,15 @@ if _TEXTUAL:
             old=next((x for x in get_config().custom_models if x.get("provider")==self.provider),{})
             models = "\n".join(x["id"] for x in get_config().custom_models if x.get("provider")==self.provider)
             api_key = old.get("api_key") or resolve_api_key(old)
-            widgets = [Static("Custom provider"), Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"), Input(value=old.get("base_url",""),placeholder="base_url",id="base_url"), Input(value=api_key,placeholder="API key (or env:NAME for an environment variable)",id="api_key"), Input(placeholder="type to filter models…",id="model_search"), Static("",id="model_results",markup=True)]
+            widgets = [
+                Static("Custom provider"),
+                Input(value=old.get("provider",self.provider or ""),placeholder="provider name",id="provider"),
+                Input(value=old.get("base_url",""),placeholder="OpenAI / Default base_url (e.g. http://localhost:8000/v1)",id="base_url"),
+                Input(value=old.get("anthropic_base_url",""),placeholder="Anthropic base_url (optional)",id="anthropic_base_url"),
+                Input(value=api_key,placeholder="API key (or env:NAME for an environment variable)",id="api_key"),
+                Input(placeholder="type to filter models…",id="model_search"),
+                Static("",id="model_results",markup=True)
+            ]
             widgets.extend([Label("One model ID per line (newline-separated)", classes="label"),TextArea(models,id="models"),*([Static(render_models_placeholder(False),id="placeholder",markup=True)] if not models else []),Static("ctrl+s: save · left: cancel", id="error")])
             yield Vertical(*widgets)
         def on_mount(self): self._render_results()
@@ -235,33 +286,41 @@ if _TEXTUAL:
         def action_cancel(self): self.controller.pop_screen()
         def action_save(self):
             try:
+                try: self.query_one("#error", Static).update("[yellow]⏳ Saving custom provider settings...[/yellow]")
+                except Exception: pass
                 name=self.query_one("#provider").value.strip()
+                base_url=self.query_one("#base_url").value.strip()
+                try: anthropic_base_url=self.query_one("#anthropic_base_url").value.strip()
+                except Exception: anthropic_base_url=""
+                api_key=self.query_one("#api_key").value.strip()
                 model_ids=[line.strip() for line in _models_value(self.query_one("#models")).splitlines() if line.strip()]
                 if not name:
                     raise ValueError("add a provider name")
                 if not model_ids:
                     raise ValueError("add at least one model id")
                 cfg=get_config(); old=self.provider
-                cfg.custom_models=upsert_custom_models([x for x in cfg.custom_models if x.get("provider")!=old or not old],name,self.query_one("#base_url").value.strip(),self.query_one("#api_key").value.strip(),model_ids)
+                cfg.custom_models=upsert_custom_models([x for x in cfg.custom_models if x.get("provider")!=old or not old],name,base_url,api_key,model_ids,anthropic_base_url=anthropic_base_url)
                 resolve_models(cfg); save_config(cfg); self.controller.pop_screen()
             except Exception as exc:
-                self.query_one("#error").update(str(exc))
+                try: self.query_one("#error").update(str(exc))
+                except Exception: pass
     class LauncherIntegrationScreen(Screen):
         # Keep Pi available in the final launcher integration step as well as
         # in the initial selectable-agent list above.
         ELIGIBLE={"claude_code","opencode","aider","kilocode","pi"}
         def __init__(self,controller,selected=None): super().__init__(); self.controller=controller; self.agents=sorted(set(selected or ())&self.ELIGIBLE); self.checked=set(self.agents); self.cursor=0; self.result=""
-        def compose(self): yield Vertical(Static("Launcher integration"),Static(render_check_rows(self.agents,self.checked,self.cursor),id="agents",markup=True),Static("space: toggle · right: install · left: back · [ctrl+c] quit"))
+        def compose(self): yield Vertical(Static("Launcher integration"),Static(render_check_rows(self.agents,self.checked,self.cursor),id="agents",markup=True),Static("enter: toggle · right: install · left: back · [ctrl+c] quit"))
         def on_key(self,e):
             if e.key == "down": self.cursor=move_cursor(self.cursor,1,len(self.agents))
             elif e.key == "up": self.cursor=move_cursor(self.cursor,-1,len(self.agents))
-            elif e.key=="space" and self.agents: self.checked.symmetric_difference_update({self.agents[self.cursor]})
+            elif e.key in ("space", "enter"): self.checked.symmetric_difference_update({self.agents[self.cursor]})
             elif e.key=="left": self.controller.pop_screen()
             elif e.key=="right": self._install()
             self.query_one("#agents").update(render_check_rows(self.agents,self.checked,self.cursor))
         def _install(self):
-            if launcher is None: self._finish(); return
-            launcher.install_shims(sorted(self.checked)); self._finish()
+            if launcher is not None:
+                launcher.install_shims(sorted(self.checked))
+            self._finish()
         def _finish(self):
             from .dashboard import DashboardScreen
             self.controller.switch_screen(DashboardScreen())

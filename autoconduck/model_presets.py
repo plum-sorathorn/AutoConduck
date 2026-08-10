@@ -234,6 +234,7 @@ def curated_model_catalog() -> list[dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = {}
     # _ingest_litellm_costs is lazy and cached; its values are per 1M tokens.
     costs = _ingest_litellm_costs()
+    costs = _ingest_litellm_costs()
     try:
         import litellm  # type: ignore
         source = getattr(litellm, "model_cost", {}) or {}
@@ -283,6 +284,7 @@ def discover_models(
     entries: list[ModelEntry] = []
     fallback = _load_fallback()
     litellm_costs = _ingest_litellm_costs() if use_litellm else {}
+    costs_by_clean = {clean_model_id(key): values for key, values in litellm_costs.items()}
 
     keys = list(PRESETS) if preset_keys is None else preset_keys
     for k in keys:
@@ -293,7 +295,7 @@ def discover_models(
             # enrich price from litellm if available
             price_in = raw.get("price_in")
             price_out = raw.get("price_out")
-            cost = next((values for key, values in litellm_costs.items() if clean_model_id(key) == clean_model_id(mid)), None)
+            cost = costs_by_clean.get(clean_model_id(str(mid)))
             if cost:
                 price_in = cost.get("price_in", price_in)
                 price_out = cost.get("price_out", price_out)
@@ -314,7 +316,6 @@ def discover_models(
                 )
             )
 
-
     for raw in ([] if "custom" in keys else (custom_models or [])):
         mid = raw.get("id") or raw.get("model")
         if not mid:
@@ -322,7 +323,7 @@ def discover_models(
         # price lookup
         pi = raw.get("price_in")
         po = raw.get("price_out")
-        cost = next((values for key, values in litellm_costs.items() if clean_model_id(key) == clean_model_id(str(mid))), None)
+        cost = costs_by_clean.get(clean_model_id(str(mid)))
         if cost and pi is None:
             pi = cost.get("price_in")
             po = cost.get("price_out")
@@ -339,7 +340,6 @@ def discover_models(
                 enabled=bool(raw.get("enabled", True)),
             )
         )
-
 
     # de-duplicate by id (last wins)
     seen: dict[str, ModelEntry] = {}

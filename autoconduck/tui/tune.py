@@ -34,13 +34,40 @@ if _TEXTUAL:
     from textual.widgets import Static, Input, Button
 
     class TuneScreen(Screen):
+        OPTIONS = [("Simple Tuning Mode", "Quick budget, headroom, & monthly limit adjustments"),
+                   ("Advanced Tuning Mode", "Full parameter, gamma, quality & ambiguity band tuning")]
         def __init__(self, controller=None, mode=None):
-            super().__init__(); self.controller = controller; self.mode = mode
+            super().__init__(); self.controller = controller; self.mode = mode; self.cursor = 0
         def compose(self):
-            yield Vertical(Static("AutoConduck · Budget tuning"), Static("[s] Simple   [a] Advanced   [ctrl+c] quit", id="body"))
+            yield Vertical(
+                Static("┌─ AutoConduck · Budget & Parameter Tuning ─┐"),
+                Static(self._render_menu(), id="body", markup=True),
+                Static("↑/↓: move · Enter: select mode · [s] Simple · [a] Advanced · [ctrl+c] quit", id="help")
+            )
+        def _render_menu(self):
+            lines = ["Select tuning mode:\n"]
+            for i, (title, desc) in enumerate(self.OPTIONS):
+                mark = "› " if i == self.cursor else "  "
+                text = f"{mark}[bold]{title}[/bold] — {desc}"
+                lines.append(f"[reverse]{text}[/reverse]" if i == self.cursor else text)
+            return "\n".join(lines)
+        def _choose(self):
+            if self.controller:
+                screen = SimpleTuneScreen(self.controller) if self.cursor == 0 else AdvancedTuneScreen(self.controller)
+                self.controller.push_screen(screen)
         def on_key(self, event):
-            if event.key == "s": self.controller.push_screen(SimpleTuneScreen(self.controller))
-            elif event.key == "a": self.controller.push_screen(AdvancedTuneScreen(self.controller))
+            if event.key == "s":
+                if self.controller: self.controller.push_screen(SimpleTuneScreen(self.controller))
+            elif event.key == "a":
+                if self.controller: self.controller.push_screen(AdvancedTuneScreen(self.controller))
+            elif event.key == "down":
+                self.cursor = (self.cursor + 1) % len(self.OPTIONS)
+                self.query_one("#body", Static).update(self._render_menu())
+            elif event.key == "up":
+                self.cursor = (self.cursor - 1) % len(self.OPTIONS)
+                self.query_one("#body", Static).update(self._render_menu())
+            elif event.key == "enter":
+                self._choose()
 
     class SimpleTuneScreen(Screen):
         def __init__(self, controller=None):

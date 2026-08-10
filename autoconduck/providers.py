@@ -3,7 +3,7 @@ import httpx
 from pydantic import BaseModel, Field
 from .config import normalize_api_base, resolve_api_key
 class CustomEndpoint(BaseModel):
-    display_name: str; base_url: str; api_key_env: str | None = None; api_key: str | None = None; models: list[str] = Field(default_factory=list)
+    display_name: str; base_url: str; anthropic_base_url: str | None = None; api_key_env: str | None = None; api_key: str | None = None; models: list[str] = Field(default_factory=list)
 def discover_models(endpoint):
     try: return [x["id"] for x in httpx.get(endpoint.base_url.rstrip("/") + "/v1/models", timeout=5).json().get("data", []) if "id" in x]
     except Exception: return []

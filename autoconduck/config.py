@@ -12,6 +12,7 @@ class ModelEntry(BaseModel):
     api_key_env: str = "OPENAI_API_KEY"
     api_key: str | None = None
     base_url: str | None = None
+    anthropic_base_url: str | None = None
     api_base: str | None = None
     tier: str = "balanced"
     price_in: float = 0.0

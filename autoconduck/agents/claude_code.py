@@ -58,6 +58,10 @@ class ClaudeCodeAdapter(BaseAdapter):
         for key, value in values.items():
             env[key] = value
         data["env"] = env
+        model_overrides = data.get("modelOverrides") if isinstance(data.get("modelOverrides"), dict) else {}
+        for pseudo_name in ("autoconduck", "autoconduck-budget", "autoconduck-expensive"):
+            model_overrides[pseudo_name] = {"contextWindow": 1000000}
+        data["modelOverrides"] = model_overrides
         claude_settings = getattr(config, "claude_code", None)
         allowed_tools = list(getattr(claude_settings, "allowed_tools", []))
         permissions = data.get("permissions")
@@ -99,7 +103,7 @@ class ClaudeCodeAdapter(BaseAdapter):
                     previous = marker.get("previous_env", {})
                     managed_keys = marker.get("managed_env_keys", [])
                     keys = list(managed_keys) if isinstance(managed_keys, list) else []
-                    keys.extend(("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_CUSTOM_MODEL_OPTION", "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"))
+                    keys.extend(("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_CUSTOM_MODEL_OPTION", "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
                     for key in dict.fromkeys(keys):
                         if key in previous:
                             env[key] = previous[key]
@@ -123,4 +127,10 @@ class ClaudeCodeAdapter(BaseAdapter):
                                 if not permissions:
                                     data.pop("permissions", None)
                 data.pop("autoconduck", None)
+                model_overrides = data.get("modelOverrides")
+                if isinstance(model_overrides, dict):
+                    for pseudo_name in ("autoconduck", "autoconduck-budget", "autoconduck-expensive"):
+                        model_overrides.pop(pseudo_name, None)
+                    if not model_overrides:
+                        data.pop("modelOverrides", None)
                 p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

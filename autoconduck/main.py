@@ -701,6 +701,33 @@ def _litellm():
 
 
 def cmd_start(args):
+    flags = [
+        getattr(args, "claude", False),
+        getattr(args, "opencode", False),
+        getattr(args, "pi", False),
+        getattr(args, "aider", False),
+        getattr(args, "cursor", False),
+        getattr(args, "continue_dev", False),
+        getattr(args, "kilocode", False),
+    ]
+    if sum(1 for f in flags if f) > 1:
+        print("--claude, --opencode, and --pi cannot be used together", file=sys.stderr)
+        raise SystemExit(2)
+    if getattr(args, "claude", False):
+        raise SystemExit(cmd_launch_agent("claude_code"))
+    if getattr(args, "opencode", False):
+        raise SystemExit(cmd_launch_agent("opencode"))
+    if getattr(args, "pi", False):
+        raise SystemExit(cmd_launch_agent("pi"))
+    if getattr(args, "aider", False):
+        raise SystemExit(cmd_launch_agent("aider"))
+    if getattr(args, "cursor", False):
+        raise SystemExit(cmd_launch_agent("cursor"))
+    if getattr(args, "continue_dev", False):
+        raise SystemExit(cmd_launch_agent("continue_dev"))
+    if getattr(args, "kilocode", False):
+        raise SystemExit(cmd_launch_agent("kilocode"))
+
     cfg = load_config()
     port = args.port or cfg.port or DEFAULT_PORT
 
@@ -792,6 +819,7 @@ def cmd_start(args):
                 )
                 return 1
             pidfile, _, _ = launcher._files()
+            pidfile.parent.mkdir(parents=True, exist_ok=True)
             pidfile.write_text(str(child.pid))
             # The owner marker makes a manual daemon persistent across shim releases.
             launcher._write_claim(False, owner=True, pid=child.pid)
@@ -818,15 +846,14 @@ def cmd_start(args):
 
 
 def cmd_edit(args):
-    _get_app()  # ensure app object exists for dashboard usage
     from .tui.app import AutoConduckApp
 
     AutoConduckApp(configured=False).run()
 
 
-def cmd_uninstall(args):
-    if not args.force and input(
-        "Uninstall AutoConduck, stop the daemon, and delete ALL state under the autoconduck home (config, backups, logs, run, cache, shims, state.json) as if freshly installed? [y/N] "
+def cmd_reset(args):
+    if not getattr(args, "force", False) and input(
+        "Reset AutoConduck, stop the daemon, revert coding agent configurations, and delete state under autoconduck home? [y/N] "
     ).lower() not in ("y", "yes"):
         return
     cfg = load_config()
@@ -837,18 +864,28 @@ def cmd_uninstall(args):
         launcher.stop_server(getattr(cfg, "port", None) or DEFAULT_PORT)
     except Exception as exc:
         print(f"warning: could not stop daemon: {exc}")
+    reverted = []
     for adapter in all_adapters():
         try:
+            paths = [p for p in adapter.config_paths() if p.exists()]
             adapter.revert()
+            reverted.append(f"  ✓ Reverted {adapter.display_name}" + (f" ({', '.join(str(p) for p in paths)})" if paths else ""))
         except Exception as exc:
-            print(f"failed {adapter.display_name}: {exc}")
+            print(f"  ✗ Failed {adapter.display_name}: {exc}")
     launcher.uninstall_shims()
     launcher.remove_path_entry()
     purge_home_dir(home_dir())
-    print("AutoConduck state purged; package remains installed.")
+    print("\nCoding agents reverted:")
+    for msg in reverted:
+        print(msg)
+    print("\nAutoConduck state purged; package remains installed.")
     hint = update.uninstall_hint(update.detect_install_method())
     if hint:
         print(f"Package still installed — remove it with: {hint}")
+
+
+def cmd_uninstall(args):
+    cmd_reset(args)
 
 
 def purge_home_dir(home: Path) -> None:
@@ -1110,7 +1147,8 @@ def cmd_tune(args):
         from .tui.app import AutoConduckApp
         from .tui.tune import TuneScreen
 
-        app = AutoConduckApp(configured=True, tune_mode=getattr(args, "mode", None))
+        mode = getattr(args, "mode", None) or "select"
+        app = AutoConduckApp(configured=True, tune_mode=mode)
         app.run()
     except (ImportError, RuntimeError):
         cfg = get_config()
@@ -1131,6 +1169,13 @@ def main(argv: list[str] | None = None):
     start.add_argument("--supervisor", action="store_true", help=argparse.SUPPRESS)
     start.add_argument("--port", type=int)
     start.add_argument("--host", default="127.0.0.1")
+    start.add_argument("--claude", action="store_true")
+    start.add_argument("--opencode", action="store_true")
+    start.add_argument("--pi", action="store_true")
+    start.add_argument("--aider", action="store_true")
+    start.add_argument("--cursor", action="store_true")
+    start.add_argument("--continue-dev", "--continue_dev", action="store_true", dest="continue_dev")
+    start.add_argument("--kilocode", action="store_true")
     for name, func in (
         ("ensure", cmd_ensure),
         ("release", cmd_release),
@@ -1155,8 +1200,12 @@ def main(argv: list[str] | None = None):
     upd.add_argument("--dry-run", action="store_true")
     upd.set_defaults(handler=cmd_update)
     sub.add_parser("edit")
+    reset_parser = sub.add_parser("reset")
+    reset_parser.add_argument("--force", action="store_true")
+    reset_parser.set_defaults(handler=cmd_reset)
     uninstall = sub.add_parser("uninstall")
     uninstall.add_argument("--force", action="store_true")
+    uninstall.set_defaults(handler=cmd_uninstall)
     args = parser.parse_args(argv)
     if args.version:
         from . import __version__
@@ -1182,6 +1231,8 @@ def main(argv: list[str] | None = None):
         cmd_start(args)
     elif args.cmd == "edit":
         cmd_edit(args)
+    elif args.cmd == "reset":
+        cmd_reset(args)
     elif args.cmd == "uninstall":
         cmd_uninstall(args)
     elif hasattr(args, "handler"):

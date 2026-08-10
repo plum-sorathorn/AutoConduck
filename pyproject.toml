@@ -18,6 +18,7 @@ dependencies = [
 ]
 [project.scripts]
 autoconduck = "autoconduck.main:main"
+conduck = "autoconduck.main:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

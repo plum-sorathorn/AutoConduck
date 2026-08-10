@@ -380,11 +380,14 @@ def release_server(port=None) -> None:
                 removed = True
             else: kept.append(line)
         has_owner = any(len(line.split()) > 1 and line.split()[1] == "owner" for line in kept)
-        if kept: claims.write_text("\n".join(kept) + "\n")
+        has_active_clients = any(len(line.split()) > 1 and line.split()[1] not in ("owner", "0") for line in kept)
+        if kept:
+            claims.write_text("\n".join(kept) + "\n")
         else:
             try: claims.unlink()
             except OSError: pass
-            if pidfile.exists() and not has_owner: stop_server(port)
+        if not has_active_clients and not has_owner:
+            stop_server(port)
 
 def _adapter(agent_id):
     from .agents import all_adapters
@@ -409,6 +412,7 @@ def _claude_env(port: int, pseudo: str = "autoconduck") -> dict[str, str]:
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
         "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000",
     }
 
 def _claude_env_blocks(port: int, pseudo: str = "autoconduck") -> tuple[str, str]:

@@ -49,13 +49,14 @@ def overrides_for_toggle(key: str, models: list[dict[str, Any]], enabled: set[st
         result.append(fresh)
     return result
 
+
 def default_enabled_ids(models: list[dict[str, Any]], existing_overrides: list[dict[str, Any]] | None = None) -> set[str]:
     model_ids = {model["id"] for model in models}
     if existing_overrides:
         return {row["id"] for row in existing_overrides if row.get("id") in model_ids}
     return model_ids if len(models) <= 5 else set()
 
-def upsert_custom_models(existing: list[dict[str, Any]], provider: str, base_url: str, api_key_env: str, model_ids: list[str]) -> list[dict[str, Any]]:
+def upsert_custom_models(existing: list[dict[str, Any]], provider: str, base_url: str, api_key_env: str, model_ids: list[str], anthropic_base_url: str = "") -> list[dict[str, Any]]:
     result = [row for row in existing if row.get("provider") != provider]
     costs = _ingest_litellm_costs()
     by_clean_id = {clean_model_id(model_id): values for model_id, values in costs.items()}
@@ -68,11 +69,13 @@ def upsert_custom_models(existing: list[dict[str, Any]], provider: str, base_url
                 from ..auth import set_provider_key
                 set_provider_key(provider, api_key_env)
                 auth = {}
-            result.append({"id": model_id, "provider": provider, **auth,
-                           "base_url": base_url, "price_in": prices.get("price_in", DEFAULT_PRICE_IN),
-                           "price_out": prices.get("price_out", DEFAULT_PRICE_OUT), "enabled": True})
+            entry = {"id": model_id, "provider": provider, **auth,
+                     "base_url": base_url, "price_in": prices.get("price_in", DEFAULT_PRICE_IN),
+                     "price_out": prices.get("price_out", DEFAULT_PRICE_OUT), "enabled": True}
+            if anthropic_base_url and anthropic_base_url.strip():
+                entry["anthropic_base_url"] = anthropic_base_url.strip()
+            result.append(entry)
     return result
 
 def remove_custom_provider(existing: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
     return [row for row in existing if row.get("provider") != provider]
-
