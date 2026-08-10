@@ -85,6 +85,7 @@ def _build():
         AnthropicSSETranslator,
         anthropic_response_text,
         coerce_content_text,
+        sanitize_tools,
         PSEUDO_MODELS,
     )
 
@@ -132,11 +133,14 @@ def _build():
         if llm is None:
             raise RuntimeError("litellm unavailable")
         kwargs = body.model_dump(exclude_none=True)
+        if kwargs.get("tools"):
+            kwargs["tools"] = sanitize_tools(kwargs["tools"])
         kwargs["model"] = model
         kwargs.pop("stream", None)
         kwargs.update(litellm_params_for(model, get_config()))
         kwargs["_path"] = path if path is not None else "unknown"
         kwargs["_pseudo"] = pseudo if pseudo is not None else "unknown"
+        kwargs["drop_params"] = True
         result = await llm.acompletion(**kwargs)
         return result.model_dump() if hasattr(result, "model_dump") else result
 
@@ -296,8 +300,11 @@ def _build():
                     yield "data: [DONE]\n\n"
                     return
                 kwargs = body.model_dump(exclude_none=True)
+                if kwargs.get("tools"):
+                    kwargs["tools"] = sanitize_tools(kwargs["tools"])
                 kwargs["model"] = target
                 kwargs.update(extra)
+                kwargs["drop_params"] = True
                 response = await llm.acompletion(**kwargs)
                 async for chunk in response:
                     if await request.is_disconnected():

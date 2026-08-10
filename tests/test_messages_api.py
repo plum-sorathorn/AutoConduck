@@ -325,3 +325,37 @@ async def test_messages_thinking_enables_litellm_drop_params(monkeypatch):
     assert response.status_code == 200
     assert calls[0]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
     assert calls[0]["drop_params"] is True
+
+
+def test_sanitize_tools_converts_non_string_enums():
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "pi_tool",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {"enum": [False, True]},
+                            ]
+                        },
+                        "count": {
+                            "enum": [1, 2, 3]
+                        },
+                        "null_option": {
+                            "enum": [None]
+                        }
+                    },
+                },
+            },
+        }
+    ]
+    sanitized = m.sanitize_tools(tools)
+    props = sanitized[0]["function"]["parameters"]["properties"]
+    assert props["enabled"]["anyOf"][1]["enum"] == ["false", "true"]
+    assert props["count"]["enum"] == ["1", "2", "3"]
+    assert props["null_option"]["enum"] == ["null"]
+
