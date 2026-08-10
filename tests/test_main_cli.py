@@ -19,10 +19,15 @@ def test_start_headless_port_and_host_dispatch_without_binding():
     args = MagicMock(port=12345, host="0.0.0.0", headless=True)
     with patch.object(cli, "load_config", return_value=cfg), \
          patch.object(cli, "_find_free_port", side_effect=lambda port: port), \
-         patch.object(cli, "_run_proxy") as run_proxy:
+         patch.object(cli, "_run_proxy") as run_proxy, \
+         patch("autoconduck.agents.claude_code.ClaudeCodeAdapter.patch") as claude_patch, \
+         patch("autoconduck.launcher.install_shims") as install_shims, \
+         patch("autoconduck.launcher.ensure_path_entry"):
         with patch.object(sys, "argv", ["autoconduck", "start", "--headless", "--port", "12345", "--host", "0.0.0.0"]):
             cli.main()
     run_proxy.assert_called_once_with(12345, "warning", "0.0.0.0")
+    claude_patch.assert_called_once()
+    install_shims.assert_called_once_with(["claude_code"])
 
 
 def test_edit_and_uninstall_force_dispatch():

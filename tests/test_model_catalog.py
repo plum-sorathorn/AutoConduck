@@ -139,11 +139,11 @@ def test_catalog_merges_presets_and_fallback_without_litellm(monkeypatch):
     assert by_id["gpt-4o"]["price_in"] == pytest.approx(2.5)
     assert by_id["gpt-4o"]["price_out"] == pytest.approx(10.0)
 
-    assert by_id["claude-3-5-haiku-20241022"]["price_in"] == pytest.approx(0.25)
-    assert by_id["claude-3-5-haiku-20241022"]["price_out"] == pytest.approx(1.25)
+    assert by_id["claude-haiku-4-5"]["price_in"] == pytest.approx(1.0)
+    assert by_id["claude-haiku-4-5"]["price_out"] == pytest.approx(5.0)
 
-    assert by_id["gemini-1.5-flash"]["price_in"] == pytest.approx(0.075)
-    assert by_id["gemini-1.5-flash"]["price_out"] == pytest.approx(0.30)
+    assert by_id["gemini-3.5-flash"]["price_in"] == pytest.approx(1.5)
+    assert by_id["gemini-3.5-flash"]["price_out"] == pytest.approx(9.0)
 
     assert by_id["deepseek-chat"]["price_in"] == pytest.approx(0.14)
     assert by_id["deepseek-chat"]["price_out"] == pytest.approx(0.28)

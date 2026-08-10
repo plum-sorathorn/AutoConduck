@@ -1,3 +1,4 @@
+import logging
 import os
 from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
@@ -8,6 +9,7 @@ class ModelEntry(BaseModel):
     id: str
     provider: str = "openai"
     api_key_env: str = "OPENAI_API_KEY"
+    api_key: str | None = None
     base_url: str | None = None
     tier: str = "balanced"
     price_in: float = 0.0
@@ -42,7 +44,7 @@ def resolve_api_key(entry: dict) -> str:
         return str(entry["api_key"])
     name = entry.get("api_key_env")
     if name:
-        return os.environ.get(name, name)
+        return os.environ.get(name, "")
     return ""
 
 def qualify_model(model_id: str) -> str:
@@ -100,8 +102,10 @@ def orchestrator_litellm_params(cfg=None) -> dict[str, str]:
             result = {"model": qualify_model(model)}
             if params.get("base_url") or params.get("api_base"):
                 result["api_base"] = normalize_api_base(params.get("base_url") or params["api_base"])
-            if params.get("api_key_env"):
-                result["api_key"] = resolve_api_key(params)
+            if params.get("api_key_env") or params.get("api_key"):
+                api_key = resolve_api_key(params)
+                if api_key:
+                    result["api_key"] = api_key
             return result
     return {"model": qualify_model(model)}
 def home_dir() -> Path: return Path(os.environ.get("AUTOCONDUCK_HOME", Path.home() / ".autoconduck"))
@@ -115,7 +119,17 @@ def load_config(path=None) -> Config:
     if p.exists(): data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     if "AUTOCONDUCK_PORT" in os.environ: data["port"] = int(os.environ["AUTOCONDUCK_PORT"])
     if "AUTOCONDUCK_LOG_LEVEL" in os.environ: data["log_level"] = os.environ["AUTOCONDUCK_LOG_LEVEL"]
-    return Config(**data)
+    config = Config(**data)
+    for source in (config.model_list, config.custom_models):
+        for entry in source:
+            if (isinstance(entry, dict) and entry.get("api_key_env")
+                    and not entry.get("api_key")
+                    and not os.environ.get(entry["api_key_env"])):
+                logging.getLogger("autoconduck").warning(
+                    "API key environment variable %s is not set for model %s",
+                    entry["api_key_env"], entry.get("id") or entry.get("model_name") or "<unknown>",
+                )
+    return config
 _config = None
 _config_digest = None
 _config_path = None

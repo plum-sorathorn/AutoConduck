@@ -229,10 +229,22 @@ def _build():
             answer = extra["__answer__"]
             if body.stream:
                 async def relay_answer():
-                    translator = AnthropicSSETranslator(target or body.model)
+                    translator = AnthropicSSETranslator(target or body.model, input_text=json.dumps(oai_messages))
+                    stopped = False
+                    for ev in translator._ensure_message_start():
+                        if ev["type"] == "message_stop":
+                            stopped = True
+                        yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                     chunk = {"choices": [{"delta": {"role": "assistant", "content": answer}, "finish_reason": "stop"}]}
                     for ev in translator.translate(chunk):
+                        if ev["type"] == "message_stop":
+                            stopped = True
                         yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
+                    if not stopped:
+                        for ev in translator.finish():
+                            if ev["type"] == "message_stop":
+                                stopped = True
+                            yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                 return StreamingResponse(relay_answer(), media_type="text/event-stream")
             return JSONResponse(anthropic_response_text(coerce_content_text(answer), target or body.model, input_text=json.dumps(oai_messages)))
         from .messages_api import messages_litellm_kwargs
@@ -369,12 +381,20 @@ def _litellm():
 def cmd_start(args):
     cfg = load_config()
     port = args.port or cfg.port or DEFAULT_PORT
+    def configure_claude():
+        from .agents.claude_code import ClaudeCodeAdapter
+        from . import launcher
+        ClaudeCodeAdapter().patch(cfg, port)
+        launcher.install_shims(["claude_code"])
+        launcher.ensure_path_entry()
     if not getattr(args, "headless", False) and not home_dir().exists():
         port = _find_free_port(port)
         _check_port_available(port)
+        configure_claude()
         _run_proxy(port, cfg.log_level)
         return
     if getattr(args, "headless", False):
+        configure_claude()
         if getattr(args, "daemon", False):
             _check_port_available(port)
             log = (home_dir() / "run" / "server.log")
@@ -392,6 +412,7 @@ def cmd_start(args):
         _run_proxy(port, cfg.log_level, args.host) if args.host != "127.0.0.1" else _run_proxy(port, cfg.log_level)
     else:
         _check_port_available(port)
+        configure_claude()
         try:
             from .tui.app import AutoConduckApp
             AutoConduckApp(configured=bool(getattr(cfg, "model_list", []))).run()
@@ -488,6 +509,8 @@ def cmd_release(args):
 def cmd_stop(args):
     from . import launcher
     launcher.stop_server(args.port)
+    from .agents.claude_code import ClaudeCodeAdapter
+    ClaudeCodeAdapter().revert()
 
 
 def cmd_stats(args):
@@ -526,7 +549,7 @@ def cmd_install(args):
         if adapter is None:
             continue
         try:
-            adapter.patch(load_config())
+            adapter.patch(load_config(), getattr(load_config(), "port", DEFAULT_PORT))
         except Exception as exc:
             print(f"failed {aid}: {exc}")
     paths = launcher.install_shims(selected)
@@ -567,20 +590,29 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
     with log.open("ab") as stream:
         proc = _sp.Popen(cmd, stdout=stream, stderr=stream, start_new_session=sys.platform != "win32", creationflags=flags, close_fds=True)
 
-    # Exponential-backoff health poll (max ~6 s instead of flat 10 s)
+    # Exponential-backoff health poll with a configurable cold-start budget.
     server_ready = False
-    for attempt in range(25):
+    try:
+        ready_budget = max(0.0, float(os.environ.get("AUTOCONDUCK_READY_TIMEOUT", "30.0")))
+    except ValueError:
+        ready_budget = 30.0
+    deadline = time.monotonic() + ready_budget
+    attempt = 0
+    while time.monotonic() < deadline:
         try:
             from urllib.request import urlopen
-            with urlopen(f"http://127.0.0.1:{port}/healthz", timeout=0.5):
+            with urlopen(f"http://127.0.0.1:{port}/healthz", timeout=min(0.5, max(0.01, deadline - time.monotonic()))):
                 server_ready = True
                 break
         except Exception:
             pass
-        time.sleep(min(0.15 * (1.5 ** attempt), 0.8))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0: break
+        time.sleep(min(0.15 * (1.5 ** attempt), 0.8, remaining))
+        attempt += 1
 
     if not server_ready:
-        print(f"error: server did not become ready within 6 s (daemon PID {proc.pid})", file=sys.stderr)
+        print(f"error: server did not become ready within {ready_budget:.0f} s (daemon PID {proc.pid})", file=sys.stderr)
         return 1
 
     # Patch the adapter

@@ -40,3 +40,9 @@ def test_discover_models_keeps_custom_base_url():
     assert len(entries) == 1
     assert entries[0].id == "my-custom-model"
     assert entries[0].base_url == "https://example.com/v1"
+
+def test_discover_models_preserves_literal_api_key():
+    custom = [{"id": "literal-model", "api_key": "sk-lit", "provider": "openai"}]
+    entries = model_presets.discover_models(preset_keys=["custom"], custom_models=custom, use_litellm=False)
+    assert entries[0].api_key == "sk-lit"
+    assert entries[0].model_dump()["api_key"] == "sk-lit"

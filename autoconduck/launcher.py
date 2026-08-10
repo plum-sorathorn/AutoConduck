@@ -16,9 +16,9 @@ def daemon_python() -> str:
         pythonw = Path(sys.executable).with_name("pythonw.exe")
         if pythonw.exists(): return str(pythonw)
     return sys.executable
-def server_alive(port=None) -> bool:
+def server_alive(port=None, timeout=.5) -> bool:
     try:
-        with urlopen(f"http://127.0.0.1:{_port(port)}/healthz", timeout=.5) as response:
+        with urlopen(f"http://127.0.0.1:{_port(port)}/healthz", timeout=timeout) as response:
             return response.status == 200
     except Exception: return False
 
@@ -144,10 +144,19 @@ def ensure_server(port=None) -> bool:
     # Exponential-backoff poll (max ~6 s total instead of flat 10 s).
     # The daemon only needs to import everything once; it becomes ready
     # well before all 50 iterations are needed in practice.
-    for attempt in range(25):
-        if server_alive(port):
+    try:
+        ready_budget = max(0.0, float(os.environ.get("AUTOCONDUCK_READY_TIMEOUT", "30.0")))
+    except ValueError:
+        ready_budget = 30.0
+    deadline = time.monotonic() + ready_budget
+    attempt = 0
+    while time.monotonic() < deadline:
+        if server_alive(port, timeout=min(.5, max(.01, deadline - time.monotonic()))):
             _write_claim(True); return True
-        time.sleep(min(0.15 * (1.5 ** attempt), 0.8))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0: break
+        time.sleep(min(0.15 * (1.5 ** attempt), 0.8, remaining))
+        attempt += 1
     try: pid.unlink()
     except OSError: pass
     return False
@@ -205,6 +214,7 @@ def _claude_env(port: int, pseudo: str = "autoconduck") -> dict[str, str]:
         "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION": "AutoConduck local router",
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+        "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
     }
 
 def _claude_env_blocks(port: int, pseudo: str = "autoconduck") -> tuple[str, str]:

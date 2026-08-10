@@ -202,6 +202,30 @@ def test_anthropic_messages_shim(harness):
     assert calls
 
 
+def test_anthropic_messages_answer_stream_full_sse_sequence(harness, monkeypatch):
+    """Orchestrator __answer__ short-circuit must emit a complete Anthropic SSE
+    sequence: message_start ... content_block_delta ... message_stop."""
+    client, calls, _ = harness
+    monkeypatch.setattr(dispatcher, "route", lambda *args, **kwargs: SimpleNamespace(path="slow", model=None))
+    import autoconduck.orchestrator as orchestrator
+    async def run_graph(*args, **kwargs):
+        return "autoconduck-ok"
+    monkeypatch.setattr(orchestrator, "run", run_graph)
+    response = client.post("/v1/messages", json={
+        "model": "autoconduck",
+        "stream": True,
+        "messages": [{"role": "user", "content": "Reply with exactly: autoconduck-ok"}],
+        "max_tokens": 64,
+    })
+    assert response.status_code == 200
+    events = [line[len("event: "):] for line in response.text.splitlines() if line.startswith("event: ")]
+    assert events[0] == "message_start"
+    assert events[-1] == "message_stop"
+    assert "content_block_delta" in events
+    assert "message_delta" in events
+    assert "autoconduck-ok" in response.text
+
+
 def test_models_endpoint(harness):
     data = harness[0].get("/v1/models").json()
     ids = {item["id"] for item in data["data"]}

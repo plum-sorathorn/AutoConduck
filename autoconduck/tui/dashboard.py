@@ -43,9 +43,9 @@ if _TEXTUAL:
             self.app.push_screen(DrillDownScreen(record))
     class DrillDownScreen(Screen):
         def __init__(self, decision=None): super().__init__(); self.decision = decision or {}
-        def compose(self): yield Static("┌─ Routing Decision ─┐\n" + "\n".join(f"{k}: {v}" for k,v in self.decision.items()) + "\n\n[esc] back  [c] copy full plan JSON  [ctrl+c] quit")
+        def compose(self): yield Static("┌─ Routing Decision ─┐\n" + "\n".join(f"{k}: {v}" for k,v in self.decision.items()) + "\n\n[left] back  [c] copy full plan JSON  [ctrl+c] quit")
         def on_key(self, event):
-            if event.key == "esc": self.app.pop_screen()
+            if event.key == "left": self.app.pop_screen()
             elif event.key == "c" and self.decision: self.app.copy_to_clipboard(json.dumps(self.decision))
 else:
     class DashboardScreen(Screen):

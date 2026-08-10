@@ -131,7 +131,7 @@ def test_render_provider_rows_checkmark_for_enabled():
 
 
 @pytest.mark.asyncio
-async def test_provider_form_ctrl_enter_uses_textual_dispatch(tmp_path, monkeypatch):
+async def test_provider_form_ctrl_enter_does_not_save(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOCONDUCK_HOME", str(tmp_path))
     _reset_config_cache()
 
@@ -153,14 +153,11 @@ async def test_provider_form_ctrl_enter_uses_textual_dispatch(tmp_path, monkeypa
         await pilot.pause()
 
     cfg = load_config()
-    assert any(row["provider"] == "pilot-provider" for row in cfg.custom_models)
-    assert "pilot-provider" in {
-        row["provider"] for row in CustomProvidersScreen(app, set())._providers()
-    }
+    assert not any(row["provider"] == "pilot-provider" for row in cfg.custom_models)
 
 
 @pytest.mark.asyncio
-async def test_provider_form_enter_in_input_uses_textual_dispatch(tmp_path, monkeypatch):
+async def test_provider_form_enter_in_input_does_not_save(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOCONDUCK_HOME", str(tmp_path))
     _reset_config_cache()
 
@@ -183,10 +180,7 @@ async def test_provider_form_enter_in_input_uses_textual_dispatch(tmp_path, monk
         await pilot.pause()
 
     cfg = load_config()
-    assert any(row["provider"] == "enter-provider" for row in cfg.custom_models)
-    assert "enter-provider" in {
-        row["provider"] for row in CustomProvidersScreen(app, set())._providers()
-    }
+    assert not any(row["provider"] == "enter-provider" for row in cfg.custom_models)
 
 
 @pytest.mark.asyncio

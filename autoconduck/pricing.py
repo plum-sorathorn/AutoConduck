@@ -33,7 +33,7 @@ def _entry_effective_value(model, config):
     entry = _entry(model, config); ema = _ema.get(str(model))
     minimum = getattr(getattr(config, "selection", None), "ema_min_samples", 3)
     if ema and ema["samples"] >= minimum:
-        return float(entry.get("price_in", 0)) * ema["prompt"] / 1000 + float(entry.get("price_out", 0)) * ema["completion"] / 1000
+        return float(entry.get("price_in", 0)) * ema["prompt"] / 1_000_000 + float(entry.get("price_out", 0)) * ema["completion"] / 1_000_000
     return float(entry.get("price_in", 0)) + float(entry.get("price_out", 0))
 def scaled_cost(model, config=None, *, use_ema=True):
     # Compute entries once per model instead of calling _entry() separately for price_in and price_out.

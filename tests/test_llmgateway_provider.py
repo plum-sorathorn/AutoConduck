@@ -7,7 +7,7 @@ from autoconduck.tui.onboarding import ModelSourceScreen
 def test_llmgateway_preset_shape_and_discovery():
  rows=model_presets.PRESETS["llmgateway"]; assert len(rows)==108
  q=next(x for x in rows if x["id"]=="qwen3.7-flash"); assert (q["price_in"],q["price_out"])==(0.03,0.13)
- assert all(x["base_url"]=="https://devpass.llmgateway.io" and x["api_key_env"]=="LLMGATEWAY_API_KEY" for x in rows)
+ assert all(x["base_url"]=="https://api.llmgateway.io" and x["api_key_env"]=="LLMGATEWAY_API_KEY" for x in rows)
  assert len(model_presets.discover_models(preset_keys=["llmgateway"],use_litellm=False))==108
  checks={x["id"]: x for x in rows}
  assert (checks["qwen3.6-flash"]["price_in"],checks["qwen3.6-flash"]["price_out"]) == (0.17,0.99)
@@ -26,7 +26,7 @@ def test_llmgateway_catalog_and_fallback(monkeypatch):
  assert any(x["id"]=="gpt-oss-120b" and x["price_in"]==0.05 for x in model_presets.curated_model_catalog())
 
 def test_model_list_entry_supplies_gateway_params():
- cfg=types.SimpleNamespace(model_list=[{"id":"llm-gw-model","base_url":"https://devpass.llmgateway.io","api_key_env":"LLMGATEWAY_API_KEY","enabled":True}],custom_models=[])
- assert litellm_params_for("llm-gw-model",cfg)=={"model":"openai/llm-gw-model","api_base":"https://devpass.llmgateway.io/v1","api_key":"LLMGATEWAY_API_KEY"}
+ cfg=types.SimpleNamespace(model_list=[{"id":"llm-gw-model","base_url":"https://api.llmgateway.io","api_key_env":"LLMGATEWAY_API_KEY","enabled":True}],custom_models=[])
+ assert litellm_params_for("llm-gw-model",cfg)=={"model":"openai/llm-gw-model","api_base":"https://api.llmgateway.io/v1"}
 
 def test_onboarding_exposes_llmgateway(): assert "LLM Gateway" in ModelSourceScreen.SOURCES

@@ -5,12 +5,12 @@
     "provider": "llmgateway"
   },
   "claude-fable-5": {
-    "price_in": 5.0,
-    "price_out": 25.0
+    "price_in": 10.0,
+    "price_out": 50.0
   },
   "claude-haiku-4-5": {
-    "price_in": 0.8,
-    "price_out": 4.0
+    "price_in": 1.0,
+    "price_out": 5.0
   },
   "deepseek-chat": {
     "price_in": 0.14,
@@ -86,8 +86,8 @@
     "provider": "llmgateway"
   },
   "gpt-5": {
-    "price_in": 5.0,
-    "price_out": 15.0
+    "price_in": 1.25,
+    "price_out": 10.0
   },
   "gpt-5-mini": {
     "price_in": 0.25,
@@ -279,8 +279,8 @@
     "provider": "llmgateway"
   },
   "qwen3.6-flash": {
-    "price_in": 0.25,
-    "price_out": 1.5,
+    "price_in": 0.17,
+    "price_out": 0.99,
     "provider": "llmgateway"
   },
   "qwen3.6-max-preview": {
@@ -309,8 +309,8 @@
     "provider": "llmgateway"
   },
   "qwen3.8-max": {
-    "price_in": 2,
-    "price_out": 6,
+    "price_in": 1.81,
+    "price_out": 5.45,
     "provider": "llmgateway"
   },
   "seed-1-6-250615": {

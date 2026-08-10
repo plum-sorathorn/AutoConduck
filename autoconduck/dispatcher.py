@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from typing import Literal
+import os
+from urllib.parse import urlsplit
 from . import semantic_router, evaluator, pricing
 
 def _user_messages(messages: list) -> list:
@@ -17,11 +19,31 @@ class RoutingDecision:
 def _default_tiebreaker(message, pseudo_model, config):
     try:
         import litellm
-        from .config import get_config, orchestrator_litellm_params
+        from .config import get_config, normalize_api_base, qualify_model, resolve_api_key
         cfg = config or get_config()
         content = getattr(message, "content", str(message))
-        params = orchestrator_litellm_params(cfg)
-        result = litellm.completion(messages=[{"role":"user", "content": f"Reply with FAST or SLOW, then a space, then a complexity digit 1-9 (1=trivial, 9=very complex). Example: 'FAST 3'. Classify: {content}"}], max_tokens=3, **params)
+        model = pricing.cheapest_enabled(cfg)
+        if not model:
+            return "fast"
+        entry = next((e for source in (getattr(cfg, "model_list", []) or [], getattr(cfg, "custom_models", []) or []) for e in source if isinstance(e, dict) and str(e.get("id") or e.get("model_name") or e.get("model") or "").removeprefix("openai/") == str(model).removeprefix("openai/")), {})
+        source = entry.get("litellm_params") if isinstance(entry.get("litellm_params"), dict) else entry
+        base = source.get("base_url") or source.get("api_base")
+        if base:
+            base = normalize_api_base(base)
+            parsed = urlsplit(base)
+            try:
+                local_port = int(os.environ.get("AUTOCONDUCK_PORT", getattr(cfg, "port", 11434)))
+            except ValueError:
+                local_port = getattr(cfg, "port", 11434)
+            if parsed.hostname in {"127.0.0.1", "localhost", "::1"} and (parsed.port or 80) == local_port:
+                return "fast"
+        params = {"model": qualify_model(model)}
+        if base:
+            params["api_base"] = base
+        api_key = resolve_api_key(source)
+        if api_key:
+            params["api_key"] = api_key
+        result = litellm.completion(messages=[{"role":"user", "content": f"Reply with FAST or SLOW, then a space, then a complexity digit 1-9 (1=trivial, 9=very complex). Example: 'FAST 3'. Classify: {content}"}], max_tokens=3, timeout=3.0, **params)
         answer = result.choices[0].message.content.strip().upper()
         match = __import__("re").match(r"^(FAST|SLOW)\s*(\d)?", answer)
         return answer if match else "FAST"

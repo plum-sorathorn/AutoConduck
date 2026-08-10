@@ -27,3 +27,17 @@ def test_orchestrator_params_use_configured_model(monkeypatch):
         "api_base": "https://api.example/v1",
         "api_key": "secret",
     }
+
+def test_messages_params_use_literal_api_key_without_environment_name():
+    cfg = Config(model_list=[{"id": "literal-model", "api_key": "sk-lit"}])
+    assert litellm_params_for("literal-model", cfg) == {
+        "model": "openai/literal-model",
+        "api_key": "sk-lit",
+    }
+
+def test_orchestrator_params_use_literal_api_key_without_environment_name():
+    cfg = Config(model_list=[{"id": "literal-model", "api_key": "sk-lit"}])
+    assert orchestrator_litellm_params(cfg) == {
+        "model": "openai/literal-model",
+        "api_key": "sk-lit",
+    }

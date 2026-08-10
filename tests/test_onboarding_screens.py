@@ -2,6 +2,7 @@ from autoconduck.tui.onboarding import (
     CustomProvidersScreen,
     LauncherIntegrationScreen,
     ModelSelectionScreen,
+    ApiKeyScreen,
     MODELS_PLACEHOLDER,
     ProviderFormScreen,
     render_check_rows,
@@ -19,6 +20,9 @@ def test_onboarding_screens_do_not_override_textual_render_hook():
         ProviderFormScreen,
     ):
         assert "_render" not in cls.__dict__
+
+def test_api_key_screen_has_ctrl_s_save_binding():
+    assert ("ctrl+s", "save", "Save") in ApiKeyScreen.BINDINGS
 
 
 def test_onboarding_render_helpers_return_expected_markup():

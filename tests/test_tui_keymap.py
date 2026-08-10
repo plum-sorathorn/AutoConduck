@@ -10,8 +10,10 @@ def test_shared_keymap_bindings():
     assert KEYMAP["up"][0] == "move_up"
     assert "j" not in KEYMAP
     assert "k" not in KEYMAP
-    assert KEYMAP["enter"][0] == "select"
-    assert KEYMAP["esc"][0] == "back"
+    assert KEYMAP["right"][0] == "forward"
+    assert KEYMAP["left"][0] == "back"
+    assert KEYMAP["space"][0] == "toggle"
+    assert KEYMAP["ctrl+s"][0] == "save"
     assert KEYMAP["/"][0] == "filter"
     assert KEYMAP["?"][0] == "help"
     assert KEYMAP["p"][0] == "pause"

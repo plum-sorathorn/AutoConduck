@@ -111,6 +111,7 @@ def test_claude_env_contains_router_settings():
     assert env["ANTHROPIC_MODEL"] == "autoconduck"
     assert env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
     assert env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] == "1"
+    assert env["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"] == "1"
 
 
 def test_claude_shims_render_base_url():
