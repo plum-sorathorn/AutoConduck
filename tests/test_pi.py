@@ -34,6 +34,7 @@ def test_pi_adapter_patch_writes_extension_file(pi_dir):
     assert '"id": "autoconduck"' in extension_content
     assert '"id": "autoconduck-budget"' in extension_content
     assert '"id": "autoconduck-expensive"' in extension_content
+    assert '"contextWindow": 1000000' in extension_content
 
     settings_path = pi_dir / "settings.json"
     data = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -41,6 +42,17 @@ def test_pi_adapter_patch_writes_extension_file(pi_dir):
     assert data.get("defaultProvider") == "autoconduck"
     assert data.get("defaultModel") == "autoconduck"
     assert "providers" not in data or "autoconduck" not in data.get("providers", {})
+
+
+def test_pi_adapter_custom_context_window(pi_dir):
+    adapter = PiAdapter()
+    cfg = Config()
+    cfg.pi.context_window = 2000000
+    adapter.patch(cfg)
+
+    extension_file = pi_dir / "extensions" / "autoconduck.ts"
+    extension_content = extension_file.read_text(encoding="utf-8")
+    assert '"contextWindow": 2000000' in extension_content
 
 
 def test_pi_adapter_patch_with_custom_model(pi_dir):

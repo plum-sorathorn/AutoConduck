@@ -46,14 +46,33 @@ def complexity_of(text: str, config=None) -> float:
     value = sum(weights[k] * v for k, v in {"length": length, "refs": refs, "structural": structural, "files": files, "keyword_domain": keyword_domain, "edit_intent": edit_intent, "multi_step": multi_step}.items())
     return min(1.0, value + (STACK_TRACE_BOOST if has_stack_trace(t) else 0))
 
+def is_tool_loop(messages: list) -> bool:
+    """Return True if the message sequence represents an interactive agent tool loop."""
+    if not isinstance(messages, list):
+        return False
+    for msg in messages:
+        if isinstance(msg, dict):
+            if msg.get("role") in ("tool", "function"):
+                return True
+            if "tool_calls" in msg or "function_call" in msg:
+                return True
+            content = msg.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result"):
+                        return True
+    return False
+
 def _last(messages: list) -> str:
-    if not messages: return ""
-    item = messages[-1]
-    content = item.get("content", "") if isinstance(item, dict) else getattr(item, "content", item)
-    # Dispatcher already calls clean_routing_text on the text before scoring; skip re-clean unless present.
-    if "<system-reminder>" not in content:
-        return str(content or "")
-    return clean_routing_text(content)
+    if not isinstance(messages, list) or not messages:
+        return ""
+    for item in reversed(messages):
+        if not isinstance(item, dict) or item.get("role", "user") == "user":
+            content = item.get("content", "") if isinstance(item, dict) else getattr(item, "content", item)
+            if "<system-reminder>" not in content:
+                return str(content or "")
+            return clean_routing_text(content)
+    return ""
 
 def score(messages: list, history, match: RouteMatch, pseudo_model: str = "autoconduck", config=None) -> Score:
     # Hoist all getattr(cfg, ...) calls to top — avoids repeated attr lookups inside conditionals.
@@ -67,6 +86,11 @@ def score(messages: list, history, match: RouteMatch, pseudo_model: str = "autoc
     complexity = complexity_of(text, cfg)
     trace = has_stack_trace(text)
     confidence = min(1.0, max(float(match.confidence), complexity * 0.75) + (stack_trace_boost if trace else 0))
+
+    # Active tool loops in CLI agents (Claude Code, Pi, Aider) must always stay on the fast path
+    if is_tool_loop(messages):
+        return Score("fast", "fast", confidence, complexity, "interactive agent tool loop")
+
     previous = history[-1] if isinstance(history, list) and history else history
     escalated = bool(getattr(previous, "complexity", 0) >= ESCALATION_THRESHOLD or (isinstance(previous, dict) and (previous.get("complexity", 0) >= ESCALATION_THRESHOLD or previous.get("confidence", 0) >= ESCALATION_THRESHOLD)))
     if escalated and not trace:
@@ -79,5 +103,7 @@ def score(messages: list, history, match: RouteMatch, pseudo_model: str = "autoc
     boundary_low, boundary_high = min(1.0, low * multiplier), min(1.0, high * multiplier)
     if confidence < boundary_low or (boundary_low <= confidence <= boundary_high):
         return Score("ambiguous", "fast", confidence, complexity, "confidence is in the ambiguous zone")
-    slow = complexity >= 0.6 or (match.route == "slow_path" and confidence >= boundary_high)
+    sel = getattr(cfg, "selection", cfg)
+    slow_threshold = float(getattr(sel, "slow_threshold", 0.75) if sel else 0.75)
+    slow = complexity >= slow_threshold or (match.route == "slow_path" and confidence >= boundary_high)
     return Score("slow" if slow else "fast", "slow" if slow else "fast", confidence, complexity, "stack trace boost" if trace else "semantic route and complexity")

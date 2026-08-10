@@ -65,7 +65,7 @@ def test_pressure_clamped_low_for_huge_budget():
 
 def test_fixed_pool_linear_formulas_exact():
     result = compute_tuning(_fixed_inputs(), POOL)
-    delta = 1 - result.pressure
+    p = result.pressure
 
     # Sanity: analytically-derived pressure for this exact fixture (hand
     # verified against blended prices 0.175/0.95/6.0/7.5 and target=$65.25
@@ -73,13 +73,12 @@ def test_fixed_pool_linear_formulas_exact():
     assert result.pressure == pytest.approx(0.48343236005114476, rel=1e-9)
 
     tunables = result.tunables
-    assert tunables["value_to_cost_gamma"][1] == pytest.approx(1.0 + delta * 1.5)
-    assert tunables["pseudo_bias_budget"][1] == pytest.approx(-0.20 - delta * 0.15)
-    assert tunables["pseudo_bias_expensive"][1] == pytest.approx(0.20 - delta * 0.15)
-    assert tunables["ambiguous_low"][1] == pytest.approx(0.55 - delta * 0.05)
-    assert tunables["ambiguous_high"][1] == pytest.approx(0.70 + delta * 0.05)
-    assert tunables["ema_alpha"][1] == pytest.approx(0.10 + delta * 0.10)
-    assert tunables["quality_min_success_rate"][1] == pytest.approx(0.5 - delta * 0.05)
+    assert tunables["value_to_cost_gamma"][1] == pytest.approx(1.0 + p * 2.0)
+    assert tunables["pseudo_bias_budget"][1] == pytest.approx(-0.20 - p * 0.20)
+    assert tunables["pseudo_bias_expensive"][1] == pytest.approx(0.20 - p * 0.35)
+    assert tunables["ambiguous_low"][1] == pytest.approx(0.55 + p * 0.05)
+    assert tunables["ambiguous_high"][1] == pytest.approx(0.70 + p * 0.05)
+    assert tunables["ema_alpha"][1] == pytest.approx(0.10 + p * 0.10)
 
     rate = 65.25 / (160 * 60)
     assert result.rate_per_min == pytest.approx(rate)
@@ -106,18 +105,18 @@ def test_fixed_pool_per_model_limits_weighted_by_price():
 
 def test_fixed_pool_phase_bands_shift_and_min_width():
     result = compute_tuning(_fixed_inputs(), POOL)
-    delta = 1 - result.pressure
+    p = result.pressure
     bands = result.tunables["phase_bands"][1]
-    shifts = {"planner": 0.15, "subagent": 0.30, "executor": 0.20}
+    shifts = {"planner": 0.20, "subagent": 0.20, "executor": 0.25}
     for name, band in DEFAULT_BANDS.items():
-        lo_expected = max(0.02, band[0] - delta * shifts[name])
-        hi_expected = max(0.02 + 0.05, band[1] - delta * shifts[name])
+        lo_expected = max(0.02, band[0] - p * shifts[name])
+        hi_expected = max(0.02 + 0.05, band[1] - p * shifts[name])
         if hi_expected - lo_expected < 0.05:
             hi_expected = min(1.0, lo_expected + 0.05)
             lo_expected = max(0.02, hi_expected - 0.05)
         lo, hi = bands[name]
-        assert lo == pytest.approx(lo_expected)
-        assert hi == pytest.approx(hi_expected)
+        assert lo == pytest.approx(round(lo_expected, 3))
+        assert hi == pytest.approx(round(hi_expected, 3))
         assert hi - lo >= 0.05 - 1e-9, "band width must never fall below 0.05"
 
 

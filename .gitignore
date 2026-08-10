@@ -106,5 +106,4 @@ Desktop.ini
 # ============================================================
 
 /graphify-out
-/sandbox/home/
-/sandbox/work/
+/.pi-subagents

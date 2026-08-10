@@ -21,9 +21,16 @@ def test_scaled_cost_is_monotonic():
 
 
 def test_select_closest_matches_target():
-    cfg = SimpleNamespace(degraded_window_s=300, degraded_error_rate=.2, value_to_cost_gamma=1.0,
-                          pseudo_bias_budget=-.2, pseudo_bias_expensive=.2, pseudo_bias_enabled=True,
-                          ema_min_samples=3, closeness_epsilon=.02)
+    cfg = SimpleNamespace(
+        degraded_window_s=300,
+        degraded_error_rate=0.2,
+        value_to_cost_gamma=1.0,
+        pseudo_bias_budget=-0.2,
+        pseudo_bias_expensive=0.2,
+        pseudo_bias_enabled=True,
+        ema_min_samples=3,
+        closeness_epsilon=0.02,
+    )
     assert pricing.select_closest(["mid", "cheap"], 0.7, cfg) == "cheap"
 
 
@@ -34,18 +41,49 @@ def test_subscription_flag_and_ema_correction():
     assert pricing._ema["cheap"]["samples"] == 2
 
 
+def test_ema_effective_value_keeps_price_units():
+    cfg = SimpleNamespace(
+        model_list=[{"id": "cheap", "price_in": 1, "price_out": 1}],
+        selection=SimpleNamespace(ema_min_samples=1, quality_min_success_rate=0.5),
+    )
+    pricing.record_usage("cheap", 750_000, 250_000, cost=1.0)
+    assert pricing._entry_effective_value("cheap", cfg) == 1.0
+
+
+def test_scaled_costs_compute_pool_once(monkeypatch):
+    cfg = SimpleNamespace(
+        model_list=[
+            {"id": "cheap", "price_in": 1, "price_out": 1},
+            {"id": "mid", "price_in": 2, "price_out": 2},
+        ]
+    )
+    calls = []
+    original = pricing._entry_effective_value
+    monkeypatch.setattr(
+        pricing,
+        "_entry_effective_value",
+        lambda model, config: calls.append(model) or original(model, config),
+    )
+    pricing.select_closest(pricing.pool_ids(cfg), 0.5, cfg)
+    assert calls == ["cheap", "mid"]
+
+
 def test_select_dict_pool_matches_closest_target():
     pool = [
         {"id": "a", "price_in": 0.1, "price_out": 0.1},
         {"id": "b", "price_in": 0.01, "price_out": 0.01},
     ]
-    cfg = SimpleNamespace(degraded_window_s=300, degraded_error_rate=.2, model_list=pool)
+    cfg = SimpleNamespace(
+        degraded_window_s=300, degraded_error_rate=0.2, model_list=pool
+    )
     assert pricing.select_closest(pool, 0.0, cfg) == "b"
     assert pricing.select_closest(pool, 1.0, cfg) == "a"
 
 
 def test_select_closest_dict_pool_does_not_raise():
-    cfg = SimpleNamespace(degraded_window_s=300, degraded_error_rate=.2, model_list=[{"id": "x"}])
+    cfg = SimpleNamespace(
+        degraded_window_s=300, degraded_error_rate=0.2, model_list=[{"id": "x"}]
+    )
     assert pricing.select_closest([{"id": "x"}], 0.15, cfg) == "x"
 
 

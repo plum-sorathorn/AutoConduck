@@ -60,7 +60,7 @@ class PiAdapter(BaseAdapter):
         return self._agent_dir() / "extensions" / "autoconduck.ts"
 
     @staticmethod
-    def _model_definition(model: str) -> dict[str, object]:
+    def _model_definition(model: str, context_window: int = 1000000) -> dict[str, object]:
         """Build the minimum model description accepted by Pi.
 
         Unlike the OpenAI proxy API, Pi's provider configuration expects model
@@ -73,7 +73,7 @@ class PiAdapter(BaseAdapter):
             "reasoning": False,
             "input": ["text", "image"],
             "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-            "contextWindow": 128000,
+            "contextWindow": context_window,
             "maxTokens": 16384,
         }
 
@@ -94,8 +94,8 @@ class PiAdapter(BaseAdapter):
                 return env_value
         return "autoconduck-local"
 
-    def _render_extension(self, base_url: str, api_key: str) -> str:
-        models = [self._model_definition(model) for model in self.PSEUDO_MODELS]
+    def _render_extension(self, base_url: str, api_key: str, context_window: int = 1000000) -> str:
+        models = [self._model_definition(model, context_window) for model in self.PSEUDO_MODELS]
         models_json = json.dumps(models, indent=6)
         # Re-indent so the array sits correctly inside the object literal.
         indented_models = "\n".join(
@@ -126,10 +126,11 @@ class PiAdapter(BaseAdapter):
 
         base_url = self._resolve_base_url(pi_settings, port)
         api_key = self._resolve_api_key(pi_settings)
+        context_window = int(getattr(pi_settings, "context_window", 1000000)) if pi_settings else 1000000
 
         extension_file = self._extension_path()
         extension_file.parent.mkdir(parents=True, exist_ok=True)
-        extension_file.write_text(self._render_extension(base_url, api_key), encoding="utf-8")
+        extension_file.write_text(self._render_extension(base_url, api_key, context_window), encoding="utf-8")
 
         def update(data: dict) -> None:
             data["defaultProvider"] = self.provider_name

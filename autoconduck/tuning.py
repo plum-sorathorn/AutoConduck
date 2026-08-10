@@ -82,21 +82,22 @@ def compute_tuning(inputs: SimpleInputs, pool: list[Any], *, stats_records=None,
     if target < cheapest_rate * hours * 60: warnings.append("Target is unreachable: even continuous use of the cheapest model exceeds it; using tightest best-effort guard.")
     if not entries: warnings.append("No enabled models with prices; using epsilon assumptions.")
     old = _defaults(); current = current or old
-    delta = 1 - pressure
+    # High pressure (tight budget) -> steep gamma (favors cheap models), negative bias, lower phase bands
     new = {"spend_guard_max_usd_per_min": max(.001, rate * inputs.burst_factor),
-           "value_to_cost_gamma": 1 + delta * 1.5,
-           "pseudo_bias_budget": -.20 - delta * .15,
-           "pseudo_bias_expensive": .20 - delta * .15,
-           "ema_alpha": .10 + delta * .10,
-           "quality_min_success_rate": .5 - delta * .05,
-           "ambiguous_low": .55 - delta * .05, "ambiguous_high": .70 + delta * .05}
+           "value_to_cost_gamma": 1.0 + pressure * 2.0,
+           "pseudo_bias_budget": -.20 - pressure * .20,
+           "pseudo_bias_expensive": .20 - pressure * .35,
+           "ema_alpha": .10 + pressure * .10,
+           "quality_min_success_rate": .5,
+           "ambiguous_low": .55 + pressure * .05,
+           "ambiguous_high": .70 + pressure * .05}
     bands = {}
-    shifts = {"planner": .15, "subagent": .30, "executor": .20}
+    shifts = {"planner": .20, "subagent": .20, "executor": .25}
     for k, band in DEFAULT_BANDS.items():
-        lo, hi = band[0] - delta * shifts[k], band[1] - delta * shifts[k]
+        lo, hi = band[0] - pressure * shifts[k], band[1] - pressure * shifts[k]
         lo, hi = max(.02, lo), max(.02 + .05, hi)
         if hi - lo < .05: hi = min(1.0, lo + .05); lo = max(.02, hi - .05)
-        bands[k] = [lo, hi]
+        bands[k] = [round(lo, 3), round(hi, 3)]
     if len(entries) == 1:
         warnings.append("Single-model pool: pool-relative tunables remain at defaults and no per-model override is written.")
         new.update({"value_to_cost_gamma": old["value_to_cost_gamma"], "pseudo_bias_budget": old["pseudo_bias_budget"], "pseudo_bias_expensive": old["pseudo_bias_expensive"], "phase_bands": old["phase_bands"]})

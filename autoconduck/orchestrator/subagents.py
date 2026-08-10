@@ -7,10 +7,19 @@ from .planner import SubTask
 import math
 from autoconduck.evaluator import complexity_of
 
+
 def subagent_target(subtask_prompt, role, plan_breadth, budget_hint, config):
-    weight = {"read": .3, "analysis": .6, "write": .9}.get(role, .9)
-    hint = budget_hint if isinstance(budget_hint, (int, float)) and 0 <= budget_hint <= 1 else .5
-    raw = .4 * complexity_of(subtask_prompt, config) + .3 * hint * weight + .3 / math.sqrt(max(1, plan_breadth))
+    weight = {"read": 0.3, "analysis": 0.6, "write": 0.9}.get(role, 0.9)
+    hint = (
+        budget_hint
+        if isinstance(budget_hint, (int, float)) and 0 <= budget_hint <= 1
+        else 0.5
+    )
+    raw = (
+        0.4 * complexity_of(subtask_prompt, config)
+        + 0.3 * hint * weight
+        + 0.3 / math.sqrt(max(1, plan_breadth))
+    )
     lo, hi = config.selection.phase_bands["subagent"]
     return lo + (hi - lo) * max(0, min(1, raw))
 
@@ -45,26 +54,55 @@ def _text(response: Any) -> str:
     return str(response.choices[0].message.content)
 
 
-async def run_subagent(task: SubTask, upstream_summaries: str, client=None, cfg=None) -> str:
+async def run_subagent(
+    task: SubTask,
+    upstream_summaries: str,
+    client=None,
+    cfg=None,
+    *,
+    plan_breadth: int = 1,
+    budget_hint: float | None = None,
+) -> str:
     try:
         import asyncio
-        from autoconduck.config import qualify_model
+        from typing import Any
+        from autoconduck.config import get_config, qualify_model
+
+        cfg = cfg or get_config()
         from autoconduck import pricing
         from autoconduck.config import orchestrator_litellm_params
-        params = orchestrator_litellm_params(cfg)
-        params["model"] = qualify_model(pricing.select_closest(pricing.pool_ids(cfg), subagent_target(build_subagent_prompt(task, upstream_summaries), "read", 1, None, cfg), cfg, band=cfg.selection.phase_bands["subagent"]))
+
+        params: Any = orchestrator_litellm_params(cfg)
+        prompt = build_subagent_prompt(task, upstream_summaries)
+        target = subagent_target(
+            prompt, getattr(task, "role", "read"), plan_breadth, budget_hint, cfg
+        )
+        params["model"] = qualify_model(
+            pricing.select_closest(
+                pricing.pool_ids(cfg),
+                target,
+                cfg,
+                band=cfg.selection.phase_bands["subagent"],
+            )
+        )
         params["_path"] = "orchestrator-subagent"
         params["_pseudo"] = "autoconduck"
-        prompt = build_subagent_prompt(task, upstream_summaries)
         logging.getLogger("autoconduck.orchestrator").debug(
             "SUBAGENT PROMPT [%s]:\n%s", task.id, prompt
         )
         messages = [{"role": "user", "content": prompt}]
         if client is not None and hasattr(client, "completion"):
-            return _text(await asyncio.to_thread(client.completion, messages=messages, **params))
+            return _text(
+                await asyncio.to_thread(client.completion, messages=messages, **params)
+            )
         if client is not None and hasattr(client, "chat"):
-            return _text(await asyncio.to_thread(client.chat.completions.create, messages=messages, **params))
+            return _text(
+                await asyncio.to_thread(
+                    client.chat.completions.create, messages=messages, **params
+                )
+            )
         import litellm
+
         return _text(await litellm.acompletion(messages=messages, **params))
     except Exception as exc:
         return f"Subagent error: {exc}"

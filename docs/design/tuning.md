@@ -21,12 +21,7 @@ from the maximum and receive weight 1.0. The guard is `rate * burst_factor`,
 with a `.001` floor. Per-model guards are `guard * (.3 + .7 * weight)`, where
 `weight = 1 - (log1p(blended) - log1p(c_min))/(log1p(c_max)-log1p(c_min))`.
 
-With `δ = 1-p`, gamma is `1 + 1.5δ`, biases are `-.20-.15δ` and
-`.20-.15δ`, and phase bands shift down by respectively `.15δ`, `.30δ`, and
-`.20δ` (minimum width `.05`, lower bound `.02`). Ambiguity expands to
-`(.55-.05δ, .70+.05δ)`. EMA alpha is `.10+.10δ` and the quality floor is
-`.5-.05δ`. Single-model pools retain pool-relative defaults and receive no
-override.
+Under budget pressure `p`, `gamma` is `1 + 2.0p` (curving cost targets steeply towards cheaper models under high pressure), budget bias is `-.20-.20p`, expensive bias is `.20-.35p`, and phase bands shift down by respectively `.20p` (planner), `.20p` (subagent), and `.25p` (executor), with minimum width `.05` and lower bound `.02`. Ambiguity bounds become `(.55+.05p, .70+.05p)`. EMA alpha is `.10+.10p` and the quality floor is `.5`. Single-model pools retain pool-relative defaults and receive no override.
 
 Projected spend is explicitly an estimate: demand and future mix are not
 observable, so the tool reports an open-loop caveat. Stats seed request shares
@@ -37,5 +32,20 @@ For example, `$87` with `25%` headroom gives a `$65.25` target. The resulting
 pressure and controls depend on the four configured model prices; the tool
 prints the per-model breakdown and warns if the target is unreachable.
 
+Runtime safeguards complement the open-loop profile:
+
+- The realized spend guard uses a 300-second rolling window by default, reducing
+  one-request oscillation while preserving per-model `max_usd_per_min` limits.
+- Ambiguous prompts only invoke the paid LLM tiebreaker when heuristic complexity
+  is at least `0.45`; `autoconduck-budget` raises this floor to `0.65`. Lower-value
+  ambiguous work stays on the deterministic fast path, which saves both time and
+  the extra classification call.
+- The budget pseudo-model still applies its negative closest-cost bias; the
+  tiebreaker floor is a latency/cost gate, not a second model-price adjustment.
+- Realized request cost is normalized back to USD per million observed tokens
+  before it is compared with configured model prices. This prevents EMA warm-up
+  from making a model appear artificially cheap because of mixed units.
+
 Deferred from v1: closed-loop re-pacing, subscription auto-detection, and
-multiple named profiles.
+multiple named profiles. Until closed-loop pacing exists, the simple tuner is a
+calibration aid rather than a hard monthly-budget guarantee.

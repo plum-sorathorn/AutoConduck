@@ -118,3 +118,17 @@ def test_high_complexity_with_stack_trace_esculates():
     assert result.complexity >= 0.6
     assert has_stack_trace(complex_with_error)
     assert result.confidence > 0.8  # boosted by stack trace
+
+
+def test_tool_loop_in_dispatcher_route_preserves_fast_path():
+    """Verify tool calls in message history force fast path in dispatcher route."""
+    messages = [
+        {"role": "user", "content": "refactor the entire codebase"},
+        {"role": "assistant", "content": "I will inspect files.", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "read_file"}}]},
+        {"role": "tool", "content": "file contents...", "tool_call_id": "call_1"},
+        {"role": "user", "content": "refactor the entire codebase"},
+    ]
+    decision = route(messages, [], config=Config())
+    assert decision.path == "fast"
+    assert decision.reason == "interactive agent tool loop"
+

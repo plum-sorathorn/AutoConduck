@@ -26,6 +26,7 @@ class SubTask(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     verified_context: list[str] = Field(default_factory=list)
     read_budget: int = 5
+    role: str = "read"
 
     @field_validator("output_contract", mode="before")
     @classmethod
@@ -130,25 +131,41 @@ def _format_file_contents(files: dict[str, str]) -> str:
 def _model_name(cfg=None, task_value=0.5, config=None) -> str:
     try:
         from autoconduck import pricing
+
         config = config or cfg
+        if config is None:
+            from autoconduck.config import get_config
+
+            config = get_config()
         lo, hi = config.selection.phase_bands["planner"]
-        return pricing.select_closest(pricing.pool_ids(config), lo + (hi - lo) * task_value, config, band=(lo, hi))
+        return pricing.select_closest(
+            pricing.pool_ids(config), lo + (hi - lo) * task_value, config, band=(lo, hi)
+        )
     except Exception:
         pass
     return "gpt-4o"
 
 
-def _completion(client: Any, messages: list[dict[str, str]], cfg=None, **kwargs: Any) -> Any:
+def _completion(
+    client: Any,
+    messages: list[dict[str, str]],
+    cfg=None,
+    task_value: float = 0.5,
+    **kwargs: Any,
+) -> Any:
     from autoconduck.config import orchestrator_litellm_params
+
     kwargs = {**orchestrator_litellm_params(cfg), **kwargs}
     from autoconduck.config import qualify_model
-    kwargs["model"] = qualify_model(_model_name(cfg))
+
+    kwargs["model"] = qualify_model(_model_name(cfg, task_value=task_value))
     if client is not None:
         if hasattr(client, "completion"):
             return client.completion(messages=messages, **kwargs)
         if hasattr(client, "chat") and hasattr(client.chat, "completions"):
             return client.chat.completions.create(messages=messages, **kwargs)
     import litellm
+
     return litellm.completion(messages=messages, **kwargs)
 
 
@@ -160,7 +177,9 @@ def _content(response: Any) -> str:
     return str(response.choices[0].message.content)
 
 
-def build_task_plan(messages: list, client=None, cfg=None) -> TaskPlan | None:
+def build_task_plan(
+    messages: list, client=None, cfg=None, task_value: float = 0.5
+) -> TaskPlan | None:
     """Ask the fast model for a plan; tolerate unavailable dependencies and bad models."""
     try:
         schema = TaskPlan.model_json_schema()
@@ -169,7 +188,8 @@ def build_task_plan(messages: list, client=None, cfg=None) -> TaskPlan | None:
         system_content = PLANNER_SYSTEM_PROMPT + file_block
         prompt_messages = [{"role": "system", "content": system_content}, *messages]
         user_msg = "\n".join(
-            str(message.get("content", "")) for message in messages
+            str(message.get("content", ""))
+            for message in messages
             if isinstance(message, dict)
         )
         for _ in range(2):
@@ -177,9 +197,20 @@ def build_task_plan(messages: list, client=None, cfg=None) -> TaskPlan | None:
                 logging.getLogger("autoconduck.orchestrator").debug(
                     "PLANNER PROMPT:\n%s\n---\n%s", system_content, user_msg
                 )
-                response = _completion(client, prompt_messages, cfg=cfg, response_format={
-                    "type": "json_schema", "json_schema": {"name": "TaskPlan", "schema": schema, "strict": True}
-                })
+                response = _completion(
+                    client,
+                    prompt_messages,
+                    cfg=cfg,
+                    task_value=task_value,
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "TaskPlan",
+                            "schema": schema,
+                            "strict": True,
+                        },
+                    },
+                )
                 raw = _content(response)
                 return TaskPlan.model_validate(json.loads(raw))
             except Exception:
