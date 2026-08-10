@@ -40,13 +40,19 @@ class SelectionConfig(BaseModel):
     )
     complexity_weights: dict[str, float] = Field(
         default_factory=lambda: {
-            "length": 0.15,
-            "refs": 0.10,
-            "structural": 0.25,
-            "files": 0.10,
-            "keyword_domain": 0.15,
-            "edit_intent": 0.15,
-            "multi_step": 0.10,
+            # Layer 1 — surface signals
+            "length":              0.08,
+            "structural":          0.12,
+            "scope_breadth":       0.12,
+            "code_density":        0.05,
+            # Layer 2 — domain-agnostic semantic signals
+            "abstraction_level":   0.12,
+            "uncertainty_hedge":   0.08,
+            "cross_domain":        0.12,
+            "task_novelty":        0.08,
+            "imperative_strength": 0.15,
+            "multi_step":          0.08,
+            # weights sum to 1.00
         }
     )
     ema_alpha: float = 0.1
