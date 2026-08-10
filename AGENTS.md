@@ -37,7 +37,7 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
 - `launcher.py`: launcher shims, `ensure_server`/`release_server` refcounting, PATH integration, `real_binary_path`, and `stop_server`.
 - `orchestrator/`: LangGraph `graph.py` (owns `PHASE_BANDS`) → Send-based `subagents.py` → `compactor.py` → executor; `planner.py` owns `TaskPlan`.
 - `model_presets.py`: runtime catalog ingested from the installed litellm registry (`litellm.model_cost` via `_ingest_litellm_costs`).
-- `agents/`: agent adapters (`opencode.py`, `claude_code.py`, `cursor.py`, `continue_dev.py`, `aider.py`, `generic_openai.py`, `kilocode.py`, `pi.py`).
+- `agents/`: agent adapters (`opencode.py`, `claude_code.py`, `pi.py`).
 - `messages_api.py`, `main.py`, and Textual `tui/` (Ctrl+C is the single quit chord per `tui/keymap.py`; Textual Ctrl+Q is disabled) provide the shim, CLI, and onboarding/monitoring.
 
 ## State, environment, and scope

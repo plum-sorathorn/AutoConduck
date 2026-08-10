@@ -28,14 +28,14 @@ def test_api_key_screen_has_ctrl_s_save_binding():
 def test_onboarding_render_helpers_return_expected_markup():
     model_rows = render_model_rows([{"id": "model-a", "tier": "fast"}], {"model-a"}, 0)
     provider_rows = render_provider_rows([{"provider": "custom-provider", "enabled": True}], 0)
-    check_rows = render_check_rows(["opencode", "aider"], {"opencode"}, 0)
+    check_rows = render_check_rows(["opencode", "pi"], {"opencode"}, 0)
 
     assert isinstance(model_rows, str)
     assert "model-a" in model_rows
     assert "custom-provider" in provider_rows
     assert "\u2713" in provider_rows  # enabled checkmark
     assert "opencode" in check_rows
-    assert "  aider" in check_rows
+    assert "  pi" in check_rows
     assert "[reverse]" in check_rows
 
 

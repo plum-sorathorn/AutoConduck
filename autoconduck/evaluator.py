@@ -87,7 +87,7 @@ def score(messages: list, history, match: RouteMatch, pseudo_model: str = "autoc
     trace = has_stack_trace(text)
     confidence = min(1.0, max(float(match.confidence), complexity * 0.75) + (stack_trace_boost if trace else 0))
 
-    # Active tool loops in CLI agents (Claude Code, Pi, Aider) must always stay on the fast path
+    # Active tool loops in CLI agents (Claude Code, OpenCode, Pi) must always stay on the fast path
     if is_tool_loop(messages):
         return Score("fast", "fast", confidence, complexity, "interactive agent tool loop")
 

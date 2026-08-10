@@ -125,7 +125,7 @@ class RoutingDecision:
 
 - **dispatcher.route()**: after resolving `path == "fast"`, compute `decision.model = pricing.select_closest(pool_ids(config), decision.complexity, config, pseudo_model=pseudo_model)` (dispatcher owns pool/config context already — single source of truth, no duplication in resolver).
 - **resolver.py**: drop its own `pricing.select(...)` call; just consume `decision.model` (already safe/non-None by construction of `select_closest`).
-- **Interactive tool loop fast-path**: Requests containing tool definitions (`tools`), `tool_calls`, or `tool_result` (e.g. from Claude Code, Pi, or Aider multi-turn tool steps) are automatically forced to the fast path. This eliminates multi-agent orchestration overhead within CLI agent tool loops, preserving low latency (<5ms routing) and direct tool execution contracts.
+- **Interactive tool loop fast-path**: Requests containing tool definitions (`tools`), `tool_calls`, or `tool_result` (e.g. from Claude Code, OpenCode, or Pi multi-turn tool steps) are automatically forced to the fast path. This eliminates multi-agent orchestration overhead within CLI agent tool loops, preserving low latency (<5ms routing) and direct tool execution contracts.
 - **Ambiguous tiebreaker**: low-value ambiguous work stays deterministic: the
   LLM call is enabled only at complexity `>=0.45`, or `>=0.65` for
   `autoconduck-budget`. Injected test/custom tiebreakers still run explicitly.

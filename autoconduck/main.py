@@ -705,10 +705,6 @@ def cmd_start(args):
         getattr(args, "claude", False),
         getattr(args, "opencode", False),
         getattr(args, "pi", False),
-        getattr(args, "aider", False),
-        getattr(args, "cursor", False),
-        getattr(args, "continue_dev", False),
-        getattr(args, "kilocode", False),
     ]
     if sum(1 for f in flags if f) > 1:
         print("--claude, --opencode, and --pi cannot be used together", file=sys.stderr)
@@ -719,14 +715,6 @@ def cmd_start(args):
         raise SystemExit(cmd_launch_agent("opencode"))
     if getattr(args, "pi", False):
         raise SystemExit(cmd_launch_agent("pi"))
-    if getattr(args, "aider", False):
-        raise SystemExit(cmd_launch_agent("aider"))
-    if getattr(args, "cursor", False):
-        raise SystemExit(cmd_launch_agent("cursor"))
-    if getattr(args, "continue_dev", False):
-        raise SystemExit(cmd_launch_agent("continue_dev"))
-    if getattr(args, "kilocode", False):
-        raise SystemExit(cmd_launch_agent("kilocode"))
 
     cfg = load_config()
     port = args.port or cfg.port or DEFAULT_PORT
@@ -1172,10 +1160,6 @@ def main(argv: list[str] | None = None):
     start.add_argument("--claude", action="store_true")
     start.add_argument("--opencode", action="store_true")
     start.add_argument("--pi", action="store_true")
-    start.add_argument("--aider", action="store_true")
-    start.add_argument("--cursor", action="store_true")
-    start.add_argument("--continue-dev", "--continue_dev", action="store_true", dest="continue_dev")
-    start.add_argument("--kilocode", action="store_true")
     for name, func in (
         ("ensure", cmd_ensure),
         ("release", cmd_release),
