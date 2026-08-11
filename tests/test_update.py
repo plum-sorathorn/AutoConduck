@@ -7,8 +7,8 @@ def test_upgrade_command_mapping():
     assert update.upgrade_command("uv-tool") == "uv tool upgrade autoconduck"
     assert update.upgrade_command("npm") == "npm install -g autoconduck@latest"
     assert update.upgrade_command("pip") == "pip install --upgrade autoconduck"
-    assert update.upgrade_command("uv-tool-editable") is None
-    assert update.upgrade_command("pip-editable") is None
+    assert update.upgrade_command("uv-tool-editable") == "uv tool install --editable ."
+    assert update.upgrade_command("pip-editable") == "pip install -e ."
     assert update.upgrade_command("unknown") is None
 
 

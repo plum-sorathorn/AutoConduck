@@ -44,6 +44,8 @@ def detect_install_method() -> str:
 def upgrade_command(method: str) -> str | None:
     return {
         "uv-tool": "uv tool upgrade autoconduck",
+        "uv-tool-editable": "uv tool install --editable .",
+        "pip-editable": "pip install -e .",
         "npm": "npm install -g autoconduck@latest",
         "pip": "pip install --upgrade autoconduck",
     }.get(method)

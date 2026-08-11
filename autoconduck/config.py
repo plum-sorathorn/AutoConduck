@@ -171,7 +171,15 @@ def resolve_api_key(entry: dict, provider=None) -> str:
 def qualify_model(model_id: str) -> str:
     """Return a LiteLLM provider-qualified model name."""
     value = str(model_id or "")
-    return value if "/" in value else f"openai/{value}"
+    if "/" in value:
+        provider = value.split("/", 1)[0]
+        try:
+            from litellm import provider_list
+            if provider in provider_list:
+                return value
+        except Exception:
+            pass
+    return value if value.startswith("openai/") else f"openai/{value}"
 
 
 def normalize_api_base(base_url: str) -> str:

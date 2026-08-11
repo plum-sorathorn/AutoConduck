@@ -72,7 +72,7 @@ if _TEXTUAL:
             for i, (path, name, desc, _) in enumerate(self.SETTINGS_DEFS):
                 val = self._get_val(path)
                 mark = ">> " if i == self.cursor else "   "
-                row = f"{mark}{name}  [{val}]"
+                row = f"{mark}{name}  \\[{val}]"
                 lines.append(
                     f"[reverse]{row}[/reverse]" if i == self.cursor else row
                 )
@@ -88,6 +88,7 @@ if _TEXTUAL:
                 Static(
                     "[up/down] navigate  [e/enter] edit  [left/esc] back  [ctrl+c] quit",
                     id="footer",
+                    markup=False,
                 ),
             )
 

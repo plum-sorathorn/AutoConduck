@@ -937,24 +937,15 @@ def purge_home_dir(home: Path) -> None:
 
 
 def cmd_update(args):
-    from . import __version__, update
+    from . import __version__, update, launcher
 
     method = update.detect_install_method()
     command = update.upgrade_command(method)
     print(f"Current version: {__version__}")
     if command is None:
-        if method == "uv-tool-editable":
-            print(
-                "Editable checkout detected; update it manually (git pull), then reinstall with: uv tool install --editable ."
-            )
-        elif method == "pip-editable":
-            print(
-                "Editable checkout detected; update it manually (git pull), then reinstall with: pip install -e ."
-            )
-        else:
-            print(
-                "No managed installation detected; update the checkout manually (git pull) and reinstall."
-            )
+        print(
+            "No managed installation detected; update the checkout manually (git pull) and reinstall."
+        )
         return
     if args.dry_run:
         print(f"Would run: {command}")
@@ -965,7 +956,20 @@ def cmd_update(args):
             f"Error: required package manager '{command.split()[0]}' was not found on PATH."
         )
         return
-    subprocess.call([tool, *command.split()[1:]])
+
+    cwd = None
+    if "editable" in method:
+        source_dir = update._module_path().parent.parent
+        if (source_dir / "pyproject.toml").exists():
+            cwd = str(source_dir)
+        elif (Path.cwd() / "pyproject.toml").exists():
+            cwd = str(Path.cwd())
+
+    subprocess.call([tool, *command.split()[1:]], cwd=cwd)
+    try:
+        launcher.stop_server()
+    except Exception:
+        pass
     try:
         import importlib.metadata
 

@@ -29,33 +29,31 @@ def _pool_id(entry):
 
 
 def _configured_entry(model, config):
+    from .config import _configured_model_sources
+
     wanted = str(model).removeprefix("openai/")
-    for source in (
-        getattr(config, "model_list", []) or [],
-        getattr(config, "custom_models", []) or [],
-    ):
-        for entry in source:
-            if not isinstance(entry, dict):
-                continue
-            name = entry.get("id") or entry.get("model_name") or entry.get("model")
-            if isinstance(entry.get("litellm_params"), dict):
-                name = name or entry["litellm_params"].get("model")
-            if str(name or "").removeprefix("openai/") == wanted:
-                params = (
-                    entry.get("litellm_params")
-                    if isinstance(entry.get("litellm_params"), dict)
-                    else entry
+    for entry in _configured_model_sources(config):
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("id") or entry.get("model_name") or entry.get("model")
+        if isinstance(entry.get("litellm_params"), dict):
+            name = name or entry["litellm_params"].get("model")
+        if str(name or "").removeprefix("openai/") == wanted:
+            params = (
+                entry.get("litellm_params")
+                if isinstance(entry.get("litellm_params"), dict)
+                else entry
+            )
+            if isinstance(params, dict) and any(
+                key in params
+                for key in (
+                    "price_in",
+                    "price_out",
+                    "quality_score",
+                    "max_usd_per_min",
                 )
-                if isinstance(params, dict) and any(
-                    key in params
-                    for key in (
-                        "price_in",
-                        "price_out",
-                        "quality_score",
-                        "max_usd_per_min",
-                    )
-                ):
-                    return params
+            ):
+                return params
     return None
 
 
@@ -231,9 +229,11 @@ def select_model_by_tier(tier, config):
 
 
 def pool_ids(config):
+    from .config import _configured_model_sources
+
     return [
         str(n)
-        for e in (getattr(config, "model_list", []) or [])
+        for e in _configured_model_sources(config)
         if (n := _pool_id(e))
         and (not isinstance(e, dict) or e.get("enabled", True) is not False)
     ]

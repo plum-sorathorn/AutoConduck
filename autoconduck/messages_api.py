@@ -206,36 +206,66 @@ def serve_model_ids(cfg) -> list[str]:
 
 
 def custom_entry(cfg, model_id: str) -> dict | None:
+    from .config import _configured_model_sources
+
     def matches(entry: dict) -> bool:
         candidate = entry.get("id") or entry.get("model_name") or entry.get("model")
-        return bool(candidate) and str(candidate).removeprefix("openai/") == model_id.removeprefix("openai/")
+        params = entry.get("litellm_params")
+        if not candidate and isinstance(params, dict):
+            candidate = params.get("model") or params.get("model_name")
+        return bool(candidate) and str(candidate).removeprefix("openai/") == str(model_id).removeprefix("openai/")
 
-    for entry in getattr(cfg, "model_list", None) or []:
-        if isinstance(entry, dict) and entry.get("enabled", True) and matches(entry):
-            return entry
-    for entry in getattr(cfg, "custom_models", None) or []:
-        if isinstance(entry, dict) and matches(entry):
+    for entry in _configured_model_sources(cfg):
+        if isinstance(entry, dict) and entry.get("enabled", True) is not False and matches(entry):
             return entry
     return None
 
 
 def litellm_params_for(model_id: str, cfg) -> dict:
+    from .config import provider_for
+
     entry = custom_entry(cfg, model_id)
-    if entry and entry.get("base_url"):
-        result = {
-            "model": qualify_model(model_id),
-            "api_base": normalize_api_base(entry["base_url"]),
-        }
-        api_key = resolve_api_key(entry)
-        if api_key:
-            result["api_key"] = api_key
-        return result
-    result = {"model": qualify_model(model_id)}
-    if entry and (entry.get("api_key_env") or entry.get("api_key")):
-        api_key = resolve_api_key(entry)
-        if api_key:
-            result["api_key"] = api_key
+    if not entry:
+        return {"model": qualify_model(model_id)}
+
+    params = (
+        entry.get("litellm_params")
+        if isinstance(entry.get("litellm_params"), dict)
+        else entry
+    )
+
+    provider = params.get("provider") or entry.get("provider")
+    base_url = (
+        params.get("base_url")
+        or params.get("api_base")
+        or entry.get("base_url")
+        or entry.get("api_base")
+    )
+
+    raw_model = (
+        params.get("model")
+        or params.get("id")
+        or params.get("model_name")
+        or entry.get("id")
+        or model_id
+    )
+    if "/" in str(raw_model):
+        qual_model = str(raw_model)
+    elif provider:
+        qual_model = f"{provider}/{model_id}"
+    else:
+        qual_model = qualify_model(model_id)
+
+    result = {"model": qual_model}
+    if base_url:
+        result["api_base"] = normalize_api_base(base_url)
+
+    api_key = resolve_api_key(params, provider_for(entry, cfg))
+    if api_key:
+        result["api_key"] = api_key
+
     return result
+
 
 def messages_litellm_kwargs(model_id: str, extra: dict | None = None) -> dict:
     from .config import qualify_model

@@ -79,6 +79,7 @@ if _TEXTUAL:
                 Static(
                     "[up/down] navigate  [enter] open  [key] shortcut  [ctrl+c] quit",
                     id="footer",
+                    markup=False,
                 ),
             )
 
@@ -121,8 +122,11 @@ if _TEXTUAL:
             lines = ["", "  Navigate to:", ""]
             for i, (key, title, desc) in enumerate(self.MENU_ITEMS):
                 mark = ">> " if i == self.cursor else "   "
-                row = f"{mark}[{key}] [bold]{title}[/bold]  [dim]{desc}[/dim]"
-                lines.append(f"[reverse]{row}[/reverse]" if i == self.cursor else row)
+                if i == self.cursor:
+                    row = f"{mark}[{key}] [bold cyan]{title}[/bold cyan]  [dim]{desc}[/dim]"
+                else:
+                    row = f"{mark}[{key}] [bold]{title}[/bold]  [dim]{desc}[/dim]"
+                lines.append(row)
             return "\n".join(lines)
 
         def _navigate(self, idx: int):
@@ -201,6 +205,7 @@ if _TEXTUAL:
                 Static(
                     "[up/down] navigate  [enter] launch  [left] back  [ctrl+c] quit",
                     id="footer",
+                    markup=False,
                 ),
             )
 
@@ -260,7 +265,7 @@ if _TEXTUAL:
                 Static(self._stats_summary(), id="stats", markup=True),
                 Static("recent routing decisions\n" + render_log_rows(self.records, self.cursor), id="log", markup=True),
                 Static("active agents: none", id="agents"),
-                Static("[up/down] move  [d] details  [/] filter  [p] pause  [left] back  [ctrl+c] quit", id="footer"),
+                Static("[up/down] move  [d] details  [/] filter  [p] pause  [left] back  [ctrl+c] quit", id="footer", markup=False),
             )
 
         def on_mount(self):
@@ -287,9 +292,10 @@ if _TEXTUAL:
                 pass
 
         def _mascot_header(self):
-            status = "[yellow]PAUSED[/yellow]" if self.paused else "[green]RUNNING[/green]"
+            status_label = "PAUSED" if self.paused else "RUNNING"
+            status_color = "yellow" if self.paused else "green"
             duck = self.DUCK_FRAMES[self.duck_frame]
-            return f"{duck} [{status}]\n  \\___)"
+            return f"{duck} [{status_color}][{status_label}][/{status_color}]\n  \\___)"
 
         def _stats_summary(self):
             t = self.totals
@@ -332,7 +338,7 @@ if _TEXTUAL:
                 + "\n".join(f"{k}: {v}" for k, v in self.decision.items())
                 + "\n\n[left] back  [c] copy JSON  [ctrl+c] quit"
             )
-            yield Static(content)
+            yield Static(content, markup=False)
 
         def on_key(self, event):
             if event.key == "left":

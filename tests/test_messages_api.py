@@ -114,6 +114,47 @@ def test_custom_entry_and_litellm_params_use_base_url_and_env(monkeypatch):
     default_params = m.litellm_params_for("autoconduck", cfg)
     assert default_params == {"model": "openai/autoconduck"}
 
+
+def test_custom_entry_supports_pi_and_nested_litellm_params(monkeypatch):
+    from autoconduck.config import Config, ModelEntry
+    monkeypatch.setenv("PI_MODEL_KEY", "pi-secret")
+    cfg = Config()
+    cfg.pi.enabled = True
+    cfg.pi.model_entries = [
+        ModelEntry(
+            id="gpt-5-6-luna",
+            provider="openai",
+            base_url="https://custom.luna-api.com/v1",
+            api_key_env="PI_MODEL_KEY",
+        )
+    ]
+
+    entry = m.custom_entry(cfg, "gpt-5-6-luna")
+    assert entry is not None
+    params = m.litellm_params_for("gpt-5-6-luna", cfg)
+    assert params["model"] == "openai/gpt-5-6-luna"
+    assert params["api_base"] == "https://custom.luna-api.com/v1"
+    assert params["api_key"] == "pi-secret"
+
+
+def test_litellm_params_for_custom_provider_and_api_base():
+    from autoconduck.config import Config
+    cfg = Config()
+    cfg.custom_models = [
+        {
+            "id": "llama3-70b",
+            "provider": "ollama",
+            "api_base": "http://localhost:11434/v1",
+            "enabled": True,
+        }
+    ]
+
+    entry = m.custom_entry(cfg, "llama3-70b")
+    assert entry is not None
+    params = m.litellm_params_for("llama3-70b", cfg)
+    assert params["model"] == "ollama/llama3-70b"
+    assert params["api_base"] == "http://localhost:11434/v1"
+
 def test_messages_kwargs_do_not_clobber_qualified_model():
     assert m.messages_litellm_kwargs("deepseek-v4-flash", {"model": "openai/deepseek-v4-flash"})["model"] == "openai/deepseek-v4-flash"
 

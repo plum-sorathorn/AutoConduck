@@ -56,3 +56,13 @@ def test_dashboard_mascot_header_rich_markup_validity():
         # Ensure rich can parse markup without raising MarkupError
         render(header_text)
 
+
+def test_main_menu_screen_no_reverse_highlighting():
+    from autoconduck.tui.dashboard import MainMenuScreen
+    from rich.markup import render
+    screen = MainMenuScreen()
+    menu_text = screen._menu()
+    assert "[reverse]" not in menu_text
+    render(menu_text)
+
+
