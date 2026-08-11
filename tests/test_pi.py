@@ -198,11 +198,11 @@ def test_config_default_pseudo_model():
 
 
 def test_cli_pi_flag_parser():
-    # Test that the --pi flag dispatches to pi agent
+    # Test that the --pi flag dispatches to pi agent (via `start` subcommand)
     with patch.object(cli, "cmd_launch_agent", return_value=0) as launch:
-        with patch.object(sys, "argv", ["autoconduck", "--pi"]):
+        with patch.object(sys, "argv", ["autoconduck", "start", "--pi"]):
             try:
                 cli.main()
             except SystemExit as exc:
                 assert exc.code == 0
-    launch.assert_called_once_with("pi")
+    launch.assert_called_once_with("pi", new_terminal=None)

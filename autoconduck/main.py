@@ -553,9 +553,34 @@ def _run_proxy(port: int, log_level: str = "info", host: str = "127.0.0.1"):
     )
     import uvicorn
 
-    uvicorn.run(
-        _get_app(), host=host, port=port, log_level=log_level.lower(), access_log=False
+    # Write a readiness sentinel so cmd_launch_agent detects startup via filesystem
+    # rather than HTTP polling (faster on machines where the first TCP connect is slow).
+    def _write_ready():
+        try:
+            marker = home_dir() / "run" / f"server_{port}.ready"
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text("ready")
+        except Exception:
+            pass
+
+    config = uvicorn.Config(
+        _get_app(),
+        host=host,
+        port=port,
+        log_level=log_level.lower(),
+        access_log=False,
     )
+    server = uvicorn.Server(config)
+    # Hook into uvicorn's startup lifecycle to write the marker as soon as
+    # the server is listening (before the first request is processed).
+    _orig_startup = server.startup
+
+    async def _patched_startup(sockets=None):
+        await _orig_startup(sockets=sockets)
+        _write_ready()
+
+    server.startup = _patched_startup
+    server.run()
 
 
 SUPERVISOR_MAX_RAPID_FAILURES = 5
@@ -722,12 +747,13 @@ def cmd_start(args):
     if sum(1 for f in flags if f) > 1:
         print("--claude, --opencode, and --pi cannot be used together", file=sys.stderr)
         raise SystemExit(2)
+    new_terminal = getattr(args, "new_terminal", None)
     if getattr(args, "claude", False):
-        raise SystemExit(cmd_launch_agent("claude_code"))
+        raise SystemExit(cmd_launch_agent("claude_code", new_terminal=new_terminal))
     if getattr(args, "opencode", False):
-        raise SystemExit(cmd_launch_agent("opencode"))
+        raise SystemExit(cmd_launch_agent("opencode", new_terminal=new_terminal))
     if getattr(args, "pi", False):
-        raise SystemExit(cmd_launch_agent("pi"))
+        raise SystemExit(cmd_launch_agent("pi", new_terminal=new_terminal))
 
     cfg = load_config()
     port = args.port or cfg.port or DEFAULT_PORT
@@ -1027,13 +1053,87 @@ def cmd_install(args):
         print(f"PATH: {modified}")
 
 
-def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
+def _open_new_terminal(cmd: list[str], log: "Path") -> None:  # noqa: F821
+    """Open the proxy daemon in a new visible terminal window (best effort).
+
+    Tries Windows Terminal, then conhost, then falls back to a windowless
+    background process with output redirected to *log*.
+    """
+    if sys.platform == "win32":
+        import subprocess as _sp
+
+        # Prefer Windows Terminal (wt.exe) if available — provides a proper tab.
+        if shutil.which("wt"):
+            try:
+                _sp.Popen(
+                    ["wt", "new-tab", "--title", "AutoConduck", "--"] + cmd,
+                    creationflags=_sp.CREATE_NEW_PROCESS_GROUP,
+                    close_fds=True,
+                )
+                return
+            except Exception:
+                pass
+        # Fall back to a plain cmd.exe window.
+        try:
+            _sp.Popen(
+                ["cmd", "/c", "start", "AutoConduck proxy"] + cmd,
+                creationflags=_sp.CREATE_NEW_PROCESS_GROUP,
+                close_fds=True,
+            )
+            return
+        except Exception:
+            pass
+    elif sys.platform == "darwin":
+        import subprocess as _sp
+
+        try:
+            script = "tell application \"Terminal\" to do script \"" + " ".join(cmd) + "\""
+            _sp.Popen(["osascript", "-e", script], close_fds=True)
+            return
+        except Exception:
+            pass
+    else:
+        import subprocess as _sp
+
+        for term in ("gnome-terminal", "xterm", "konsole", "xfce4-terminal"):
+            if shutil.which(term):
+                try:
+                    _sp.Popen(
+                        [term, "--"] + cmd,
+                        close_fds=True,
+                    )
+                    return
+                except Exception:
+                    continue
+    # Fallback: background process, log redirected (same as normal mode)
+    import subprocess as _sp
+    with log.open("ab") as stream:
+        flags = (
+            (_sp.DETACHED_PROCESS | _sp.CREATE_NEW_PROCESS_GROUP | _sp.CREATE_NO_WINDOW)
+            if sys.platform == "win32"
+            else 0
+        )
+        _sp.Popen(
+            cmd,
+            stdout=stream,
+            stderr=stream,
+            start_new_session=sys.platform != "win32",
+            creationflags=flags,
+            close_fds=True,
+        )
+
+
+def cmd_launch_agent(agent_id: str, port: int | None = None, new_terminal: bool | None = None) -> int:
     """Launch an agent by ID through the AutoConduck proxy server.
 
     Strategy: always kill any existing process on the port, start a fresh
     daemon, wait for readiness with exponential-backoff polling, then launch
     the agent binary.  Heavy imports (fastapi, litellm, textual) are deferred
     into the daemon child so this parent process stays lean.
+
+    When *new_terminal* is True (or config.launch_in_new_terminal is True),
+    the proxy daemon is launched in a new visible terminal window so the
+    caller's terminal stays clean for the agent.
     """
     from . import launcher
     from .agents import all_adapters
@@ -1047,6 +1147,11 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
     cfg = load_config()
     port = int(port or getattr(cfg, "port", None) or DEFAULT_PORT)
 
+    # Resolve new-terminal setting: CLI flag > config value
+    use_new_terminal = (
+        new_terminal if new_terminal is not None else bool(getattr(cfg, "launch_in_new_terminal", False))
+    )
+
     # Reuse a healthy manual daemon; otherwise preserve the existing fresh-start behavior.
     if launcher.server_alive(port):
         launcher._write_claim(False)
@@ -1056,40 +1161,56 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
     log = home_dir() / "run" / "server.log"
     log.parent.mkdir(parents=True, exist_ok=True)
 
+    # Readiness sentinel: proxy writes this file when it is serving.
+    ready_marker = home_dir() / "run" / f"server_{port}.ready"
+    try:
+        ready_marker.unlink(missing_ok=True)
+    except Exception:
+        pass
+
     python_bin = launcher.daemon_python()
     cmd = [python_bin, "-m", "autoconduck", "start", "--headless", "--port", str(port)]
 
-    import subprocess as _sp
+    if use_new_terminal:
+        print(f"AutoConduck: launching proxy in a new terminal window (port {port})…")
+        _open_new_terminal(cmd, log)
+        proc = None
+    else:
+        import subprocess as _sp
 
-    flags = (
-        (_sp.DETACHED_PROCESS | _sp.CREATE_NEW_PROCESS_GROUP | _sp.CREATE_NO_WINDOW)
-        if sys.platform == "win32"
-        else 0
-    )
-    with log.open("ab") as stream:
-        proc = _sp.Popen(
-            cmd,
-            stdout=stream,
-            stderr=stream,
-            start_new_session=sys.platform != "win32",
-            creationflags=flags,
-            close_fds=True,
+        flags = (
+            (_sp.DETACHED_PROCESS | _sp.CREATE_NEW_PROCESS_GROUP | _sp.CREATE_NO_WINDOW)
+            if sys.platform == "win32"
+            else 0
         )
+        with log.open("ab") as stream:
+            proc = _sp.Popen(
+                cmd,
+                stdout=stream,
+                stderr=stream,
+                start_new_session=sys.platform != "win32",
+                creationflags=flags,
+                close_fds=True,
+            )
 
     # Exponential-backoff health poll with a configurable cold-start budget.
+    # On first install, LiteLLM's model registry import can take 30–90 s.
+    # We first check the cheap marker file, then fall back to HTTP polling.
     server_ready = False
-    # LiteLLM's first import can be expensive on a fresh installation. Keep
-    # the documented 30-second minimum while giving cold starts a 60-second
-    # default budget; callers may still choose a longer timeout explicitly.
     try:
         ready_budget = max(
-            30.0, float(os.environ.get("AUTOCONDUCK_READY_TIMEOUT", "60.0"))
+            30.0, float(os.environ.get("AUTOCONDUCK_READY_TIMEOUT", "90.0"))
         )
     except ValueError:
-        ready_budget = 60.0
+        ready_budget = 90.0
     deadline = time.monotonic() + ready_budget
     attempt = 0
     while time.monotonic() < deadline:
+        # Fast check: sentinel file written by the proxy at startup
+        if ready_marker.exists():
+            server_ready = True
+            break
+        # HTTP fallback: covers cases where the proxy started but did not write the file
         try:
             from urllib.request import urlopen
 
@@ -1101,6 +1222,8 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
                 break
         except Exception:
             pass
+        if proc is not None and proc.poll() is not None:
+            break
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
@@ -1109,20 +1232,24 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
 
     if not server_ready:
         # Do not leave a detached cold-start daemon behind when readiness fails.
-        if sys.platform == "win32":
-            _sp.run(
-                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                check=False,
-                capture_output=True,
-                creationflags=_sp.CREATE_NO_WINDOW,
-            )
-        else:
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-            except (OSError, AttributeError):
-                proc.terminate()
+        if proc is not None:
+            import subprocess as _sp
+
+            if sys.platform == "win32":
+                _sp.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    check=False,
+                    capture_output=True,
+                    creationflags=_sp.CREATE_NO_WINDOW,
+                )
+            else:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except (OSError, AttributeError):
+                    proc.terminate()
         print(
-            f"error: server did not become ready within {ready_budget:.0f} s (daemon PID {proc.pid})",
+            f"error: server did not become ready within {ready_budget:.0f} s — "
+            f"check {log} for details",
             file=sys.stderr,
         )
         return 1
@@ -1157,6 +1284,8 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
         # Pi doesn't need special environment variables - settings.json handles configuration
         pass
 
+    import subprocess as _sp
+
     print(
         f"AutoConduck ready at http://127.0.0.1:{port} — launching {adapter.binary_name}"
     )
@@ -1164,6 +1293,7 @@ def cmd_launch_agent(agent_id: str, port: int | None = None) -> int:
         return _sp.run([real_bin], env=env).returncode
     finally:
         launcher.release_server(port)
+
 
 
 def cmd_tune(args):
@@ -1183,9 +1313,6 @@ def cmd_tune(args):
 def main(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(prog="autoconduck")
     parser.add_argument("--version", action="store_true")
-    parser.add_argument("--claude", action="store_true")
-    parser.add_argument("--opencode", action="store_true")
-    parser.add_argument("--pi", action="store_true")
     sub = parser.add_subparsers(dest="cmd")
     start = sub.add_parser("start")
     start.add_argument("--headless", action="store_true")
@@ -1196,6 +1323,12 @@ def main(argv: list[str] | None = None):
     start.add_argument("--claude", action="store_true")
     start.add_argument("--opencode", action="store_true")
     start.add_argument("--pi", action="store_true")
+    start.add_argument(
+        "--new-terminal",
+        action="store_true",
+        default=None,
+        help="Launch proxy in a new terminal window (overrides config launch_in_new_terminal)",
+    )
     for name, func in (
         ("ensure", cmd_ensure),
         ("release", cmd_release),
@@ -1231,22 +1364,6 @@ def main(argv: list[str] | None = None):
         from . import __version__
 
         print(__version__)
-    elif (
-        args.claude
-        and args.opencode
-        or args.claude
-        and args.pi
-        or args.opencode
-        and args.pi
-    ):
-        print("--claude, --opencode, and --pi cannot be used together", file=sys.stderr)
-        raise SystemExit(2)
-    elif args.claude:
-        raise SystemExit(cmd_launch_agent("claude_code"))
-    elif args.opencode:
-        raise SystemExit(cmd_launch_agent("opencode"))
-    elif args.pi:
-        raise SystemExit(cmd_launch_agent("pi"))
     elif args.cmd == "start":
         cmd_start(args)
     elif args.cmd == "edit":

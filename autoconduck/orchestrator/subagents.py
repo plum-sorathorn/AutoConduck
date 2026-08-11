@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from .planner import SubTask
+from .planner import OutputContract, SubTask
 import math
 from autoconduck.evaluator import complexity_of
 

@@ -18,6 +18,13 @@ from .planner import TaskPlan, build_task_plan
 from .subagents import run_subagent
 
 
+PHASE_BANDS = {
+    "planner": [0.55, 0.85],
+    "subagent": [0.10, 0.55],
+    "executor": [0.35, 0.70],
+}
+
+
 class State(BaseModel):
     messages: list = Field(default_factory=list)
     history: Any = None
@@ -96,6 +103,152 @@ def _executor_model(
     return select_model_by_tier("expensive", cfg)
 
 
+class FileClaimRegistry:
+    """Prevent two executor subagents from drafting changes for the same file.
+
+    Each file path can only be claimed by one group. Claims are held for the
+    lifetime of the registry (one executor invocation). The registry is used
+    before concurrent drafting begins so conflicts are detected eagerly and
+    merged into the first-claiming group.
+    """
+
+    def __init__(self) -> None:
+        self._owners: dict[str, str] = {}
+
+    def claim(self, group_id: str, scope: list[str]) -> bool:
+        """Attempt to claim scope for group_id.
+
+        Returns True if every file is unclaimed or already owned by group_id.
+        Returns False (and claims nothing) if any file is owned by a different group.
+        """
+        conflicts = [f for f in scope if self._owners.get(f, group_id) != group_id]
+        if conflicts:
+            return False
+        for f in scope:
+            self._owners[f] = group_id
+        return True
+
+    def merge_into(self, owner_id: str, scope: list[str]) -> None:
+        """Silently transfer unclaimed files in scope to owner_id."""
+        for f in scope:
+            self._owners.setdefault(f, owner_id)
+
+
+async def _run_executor_subagents(
+    *,
+    plan: TaskPlan,
+    subagent_outputs: dict,
+    compacted: str,
+    user_text: str,
+    client: Any,
+    cfg: Any,
+    pseudo_model: str,
+    task_value: float,
+) -> str:
+    """Fan the executor work into semantically-scoped write-draft subagents.
+
+    Constraints:
+    - Subagents only draft (read-only against real files); they do not write.
+    - FileClaimRegistry ensures each file belongs to exactly one group.
+    - Conflicting scopes are merged into the first-claiming group.
+    - The executor LLM synthesizes all drafts sequentially.
+    """
+    import asyncio
+    import logging
+
+    log = logging.getLogger("autoconduck.orchestrator")
+
+    registry = FileClaimRegistry()
+    groups: dict[str, dict] = {}
+
+    for task in plan.subtasks:
+        gid = task.id
+        scope = task.scope or []
+        if registry.claim(gid, scope):
+            groups[gid] = {"scope": list(scope), "subtask_ids": [task.id]}
+        else:
+            # Find the owning group for the first conflicting file and merge into it
+            owner_id = None
+            for f in scope:
+                owner_id = registry._owners.get(f)
+                if owner_id and owner_id in groups:
+                    break
+            if owner_id and owner_id in groups:
+                for f in scope:
+                    if f not in groups[owner_id]["scope"]:
+                        groups[owner_id]["scope"].append(f)
+                groups[owner_id]["subtask_ids"].append(task.id)
+                registry.merge_into(owner_id, scope)
+
+    if not groups:
+        return await _call(
+            client,
+            _executor_model(pseudo_model, cfg, task_value, compacted, 0),
+            [{"role": "user", "content": f"Original request:\n{user_text}\n\nAnalyst summary:\n{compacted}"}],
+        )
+
+    async def _draft_for_group(group_id: str, group: dict) -> tuple:
+        scope_files = ", ".join(group["scope"]) if group["scope"] else "general"
+        relevant_outputs = "\n\n".join(
+            f"[{sid}]\n{subagent_outputs.get(sid, '')}"
+            for sid in group["subtask_ids"]
+        )
+        from .subagents import SubTask, OutputContract, run_subagent as _rs
+        draft_task = SubTask(
+            id=group_id,
+            goal=f"Draft changes for: {scope_files}",
+            scope=group["scope"],
+            output_contract=OutputContract(
+                description="Proposed changes per file with precise line-level details"
+            ),
+            constraints=["Do not modify files outside the listed scope"],
+            role="write",
+        )
+        log.debug("EXECUTOR SUBAGENT DRAFT [%s] scope=%s", group_id, scope_files)
+        result = await _rs(
+            draft_task,
+            relevant_outputs,
+            client=client,
+            cfg=cfg,
+            plan_breadth=len(groups),
+            budget_hint=task_value,
+        )
+        return group_id, result
+
+    draft_tasks = [_draft_for_group(gid, g) for gid, g in groups.items()]
+    draft_results_list = await asyncio.gather(*draft_tasks, return_exceptions=True)
+
+    drafts: dict[str, str] = {}
+    for item in draft_results_list:
+        if isinstance(item, Exception):
+            log.warning("Executor draft subagent failed: %s", item)
+            continue
+        gid, text = item
+        drafts[gid] = text
+
+    if not drafts:
+        return await _call(
+            client,
+            _executor_model(pseudo_model, cfg, task_value, compacted, 0),
+            [{"role": "user", "content": f"Original request:\n{user_text}\n\nAnalyst summary:\n{compacted}"}],
+        )
+
+    drafts_text = "\n\n".join(
+        f"=== GROUP {gid} (scope: {', '.join(groups[gid]['scope'])}) ===\n{text}"
+        for gid, text in sorted(drafts.items())
+    )
+    synthesis_prompt = (
+        "You are the final executor. Below are proposed change drafts from per-file analysts. "
+        "Synthesize them into a single coherent response to the original request. "
+        "If drafts overlap for the same file, merge them intelligently.\n\n"
+        f"ORIGINAL REQUEST:\n{user_text}\n\n"
+        f"ANALYST SUMMARY:\n{compacted}\n\n"
+        f"PROPOSED CHANGE DRAFTS:\n{drafts_text}"
+    )
+    executor_model = _executor_model(pseudo_model, cfg, task_value, compacted, len(drafts))
+    return await _call(client, executor_model, [{"role": "user", "content": synthesis_prompt}])
+
+
 async def run(
     messages: list,
     history,
@@ -131,7 +284,6 @@ async def run(
                 return {"fallback": True}
             completed: dict[str, str] = {}
             pending = list(state.plan.subtasks)
-            # This is the Send fan-out boundary; dependency waves preserve context.
             while pending:
                 if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
                     return {"fallback": True}
@@ -142,8 +294,6 @@ async def run(
                 ]
                 if not ready:
                     return {"fallback": True}
-                # Construct Send envelopes so the pool remains compatible with the
-                # native map/reduce API while keeping injectable clients deterministic.
                 import asyncio
                 import inspect
 
@@ -197,8 +347,32 @@ async def run(
                 for m in state.messages
                 if not isinstance(m, dict) or m.get("role", "user") == "user"
             )
-            prompt = f"Original request:\n{user_text}\n\nAnalyst summary:\n{state.compacted}"
             task_value = getattr(state, "task_value", 0.5)
+
+            # Use executor subagents when the plan has multiple subtasks with file scope
+            plan = state.plan
+            use_subagents = (
+                plan is not None
+                and len(plan.subtasks) >= 2
+                and any(len(t.scope) > 0 for t in plan.subtasks)
+            )
+            if use_subagents:
+                try:
+                    result = await _run_executor_subagents(
+                        plan=plan,
+                        subagent_outputs=state.subagent_outputs,
+                        compacted=state.compacted,
+                        user_text=user_text,
+                        client=client,
+                        cfg=cfg,
+                        pseudo_model=state.pseudo_model,
+                        task_value=task_value,
+                    )
+                    return {"result": result}
+                except Exception:
+                    pass  # fall through to single-executor
+
+            prompt = f"Original request:\n{user_text}\n\nAnalyst summary:\n{state.compacted}"
             return {
                 "result": await _call(
                     client,

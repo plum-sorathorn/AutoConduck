@@ -369,7 +369,24 @@ def complexity_of(text: str, config=None) -> float:
     return min(1.0, value + trace_boost + escalation_boost)
 
 
-def is_tool_loop(messages: list) -> bool:
+def _first_user_complexity(messages: list, config=None) -> float:
+    """Compute complexity of the *first* user message in the conversation.
+
+    Used to prevent the tool-loop fast-path from suppressing a SLOW routing
+    decision when the original request was genuinely complex.  Returns 0.0 if
+    no user message is found.
+    """
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role", "user")
+        content = str(msg.get("content", ""))
+        if role == "user" and "<system-reminder>" not in content and content.strip():
+            return complexity_of(clean_routing_text(content), config)
+    return 0.0
+
+
+def is_tool_loop(messages: list, config=None) -> bool:
     """Return True if the message sequence is an in-flight tool loop turn.
 
     A turn is an active tool loop if the latest non-system message is a tool
@@ -380,6 +397,8 @@ def is_tool_loop(messages: list) -> bool:
       - Explicit escalation signal in the tool result.
       - Stack trace / fatal error in the tool result.
       - Tool chain length > 12 (long-running tool loops may need more capability).
+      - First user message complexity >= slow_threshold (the original task was
+        complex — don't suppress slow-path routing mid-flight).
     """
     if not isinstance(messages, list) or not messages:
         return False
@@ -431,6 +450,16 @@ def is_tool_loop(messages: list) -> bool:
         )
     )
     if tool_turn_count > 12:
+        return False
+
+    # KEY FIX: if the *original* user request was already complex enough to
+    # warrant the slow path, do not suppress it just because we are now
+    # mid-tool-loop.  This prevents coding agents (Pi, Claude, opencode) from
+    # being permanently stuck on the fast path after their first response.
+    cfg_sel = getattr(config, "selection", config) if config else None
+    slow_threshold = float(getattr(cfg_sel, "slow_threshold", 0.75) if cfg_sel else 0.75)
+    first_complexity = _first_user_complexity(messages, config)
+    if first_complexity >= slow_threshold:
         return False
 
     return True
@@ -524,7 +553,7 @@ def score(
 
     # Active tool loops stay on the fast path UNLESS an escalation or stack trace
     # trigger fired (handled inside is_tool_loop) or the tool chain is very long.
-    if is_tool_loop(messages):
+    if is_tool_loop(messages, config=cfg):
         # Apply context boost to complexity even on the forced fast path so that
         # the persisted complexity value reflects accumulated session difficulty.
         ctx = _context_boost(messages)

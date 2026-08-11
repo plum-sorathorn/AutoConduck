@@ -63,6 +63,7 @@ class SelectionConfig(BaseModel):
     tiebreaker_enabled: bool = True
     tiebreaker_min_complexity: float = 0.45
     budget_tiebreaker_min_complexity: float = 0.65
+    slow_threshold: float = 0.75
 
 
 class ClaudeCodeSettings(BaseModel):
@@ -114,6 +115,9 @@ class Config(BaseModel):
     preset_overrides: dict[str, list[dict]] = Field(default_factory=dict)
     shims: dict[str, str] = Field(default_factory=dict)
     managed_server: bool = False
+    # When True, `conduck start --[agent]` spawns the AutoConduck proxy in a
+    # separate terminal window and runs the agent in the calling terminal.
+    launch_in_new_terminal: bool = False
     selection: SelectionConfig = Field(default_factory=SelectionConfig)
     claude_code: ClaudeCodeSettings = Field(default_factory=ClaudeCodeSettings)
     pi: PiSettings = Field(default_factory=PiSettings)

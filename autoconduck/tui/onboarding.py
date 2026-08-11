@@ -242,7 +242,7 @@ if _TEXTUAL:
             )
 
     class ModelSourceScreen(Screen):
-        SOURCES = ["Anthropic", "OpenAI", "Google", "LLM Gateway", "Custom endpoint…"]
+        SOURCES = ["Anthropic", "OpenAI", "Google", "LLM Gateway", "OpenCode Go", "Custom endpoint…"]
 
         def __init__(self, app_controller=None, selected=None):
             super().__init__()
@@ -266,11 +266,15 @@ if _TEXTUAL:
         def _choose(self):
             key = (
                 "custom"
-                if self.cursor == 4
+                if self.cursor == 5
                 else (
                     "llmgateway"
                     if self.cursor == 3
-                    else self.SOURCES[self.cursor].lower()
+                    else (
+                        "opencodego"
+                        if self.cursor == 4
+                        else self.SOURCES[self.cursor].lower()
+                    )
                 )
             )
             if key == "custom":
@@ -853,9 +857,9 @@ if _TEXTUAL:
             self._finish()
 
         def _finish(self):
-            from .dashboard import DashboardScreen
+            from .dashboard import MainMenuScreen
 
-            self.controller.switch_screen(DashboardScreen())
+            self.controller.switch_screen(MainMenuScreen())
 else:
 
     class OnboardingScreen(Screen):

@@ -16,7 +16,7 @@ def test_cmd_reset_reverts_and_reports(capsys, monkeypatch, tmp_path):
 
 def test_start_claude_flag(monkeypatch):
     called = []
-    monkeypatch.setattr(cli, "cmd_launch_agent", lambda agent: called.append(agent) or 0)
+    monkeypatch.setattr(cli, "cmd_launch_agent", lambda agent, new_terminal=None: called.append(agent) or 0)
     with patch.object(sys, "argv", ["autoconduck", "start", "--claude"]):
         try:
             cli.main()

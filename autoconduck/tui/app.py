@@ -4,7 +4,7 @@ try:
     from textual.app import App
     from textual.widgets import Footer
     from .onboarding import OnboardingScreen, ModelSourceScreen
-    from .dashboard import DashboardScreen
+    from .dashboard import DashboardScreen, MainMenuScreen
     _TEXTUAL = True
 except ImportError:
     _TEXTUAL = False
@@ -21,11 +21,13 @@ if _TEXTUAL:
                 screen = SimpleTuneScreen(self) if self.tune_mode == "simple" else AdvancedTuneScreen(self) if self.tune_mode == "advanced" else TuneScreen(self)
                 self.push_screen(screen)
             else:
-                self.push_screen(DashboardScreen() if self.configured else OnboardingScreen(self))
+                # Configured: go to the main navigation menu.
+                # Not configured: run the onboarding flow first.
+                self.push_screen(MainMenuScreen() if self.configured else OnboardingScreen(self))
         def action_pause(self): self.paused = not self.paused
         def action_edit(self): self.push_screen(ModelSourceScreen(self))
         def action_ignore_quit(self): pass
-        def action_help(self): self.notify("↑/↓ move · space toggle · right forward · left back · / filter · ctrl+s save · ctrl+c quit · p pause · e edit")
+        def action_help(self): self.notify("up/down move  enter open  d stats  m models  t tune  s settings  a launch agent  ctrl+c quit")
 else:
     class AutoConduckApp(App):
         def __init__(self, *args, **kwargs): raise RuntimeError("Textual is required to use the AutoConduck TUI")

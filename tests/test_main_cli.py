@@ -77,27 +77,27 @@ def test_no_args_falls_back_to_headless_when_tui_is_unavailable():
 
 def test_claude_flag_dispatches_to_claude_code():
     with patch.object(cli, "cmd_launch_agent", return_value=0) as launch:
-        with patch.object(sys, "argv", ["autoconduck", "--claude"]):
+        with patch.object(sys, "argv", ["autoconduck", "start", "--claude"]):
             with patch("builtins.print"):
                 try:
                     cli.main()
                 except SystemExit as exc:
                     assert exc.code == 0
-    launch.assert_called_once_with("claude_code")
+    launch.assert_called_once_with("claude_code", new_terminal=None)
 
 
 def test_opencode_flag_dispatches_to_opencode():
     with patch.object(cli, "cmd_launch_agent", return_value=0) as launch:
-        with patch.object(sys, "argv", ["autoconduck", "--opencode"]):
+        with patch.object(sys, "argv", ["autoconduck", "start", "--opencode"]):
             try:
                 cli.main()
             except SystemExit as exc:
                 assert exc.code == 0
-    launch.assert_called_once_with("opencode")
+    launch.assert_called_once_with("opencode", new_terminal=None)
 
 
 def test_claude_and_opencode_flags_exit_two():
-    with patch.object(sys, "argv", ["autoconduck", "--claude", "--opencode"]):
+    with patch.object(sys, "argv", ["autoconduck", "start", "--claude", "--opencode"]):
         with patch("builtins.print"):
             try:
                 cli.main()
@@ -107,16 +107,16 @@ def test_claude_and_opencode_flags_exit_two():
 
 def test_pi_flag_dispatches_to_pi():
     with patch.object(cli, "cmd_launch_agent", return_value=0) as launch:
-        with patch.object(sys, "argv", ["autoconduck", "--pi"]):
+        with patch.object(sys, "argv", ["autoconduck", "start", "--pi"]):
             try:
                 cli.main()
             except SystemExit as exc:
                 assert exc.code == 0
-    launch.assert_called_once_with("pi")
+    launch.assert_called_once_with("pi", new_terminal=None)
 
 
 def test_pi_and_claude_flags_exit_two():
-    with patch.object(sys, "argv", ["autoconduck", "--pi", "--claude"]):
+    with patch.object(sys, "argv", ["autoconduck", "start", "--pi", "--claude"]):
         with patch("builtins.print"):
             try:
                 cli.main()
@@ -125,7 +125,7 @@ def test_pi_and_claude_flags_exit_two():
 
 
 def test_pi_and_opencode_flags_exit_two():
-    with patch.object(sys, "argv", ["autoconduck", "--pi", "--opencode"]):
+    with patch.object(sys, "argv", ["autoconduck", "start", "--pi", "--opencode"]):
         with patch("builtins.print"):
             try:
                 cli.main()
