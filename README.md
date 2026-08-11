@@ -1,7 +1,7 @@
 # AutoConduck
 
 AutoConduck is a local, zero-overhead model router and task orchestrator for
-OpenAI-compatible coding agents. It routes each turn to the model whose cost is
+coding agents. It routes each turn to the model whose cost is
 **CLOSEST** to a task-value score computed on the fly, keeping ordinary decisions
 on a sub-5 ms fast path and escalating complex, multi-file work to parallel
 subagents.

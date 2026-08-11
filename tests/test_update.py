@@ -4,11 +4,11 @@ from autoconduck import update
 
 
 def test_upgrade_command_mapping():
-    assert update.upgrade_command("uv-tool") == "uv tool upgrade autoconduck"
+    assert update.upgrade_command("uv-tool") == "uv tool upgrade --reinstall autoconduck"
     assert update.upgrade_command("npm") == "npm install -g autoconduck@latest"
-    assert update.upgrade_command("pip") == "pip install --upgrade autoconduck"
-    assert update.upgrade_command("uv-tool-editable") == "uv tool install --editable ."
-    assert update.upgrade_command("pip-editable") == "pip install -e ."
+    assert update.upgrade_command("pip") == "pip install --force-reinstall --upgrade autoconduck"
+    assert update.upgrade_command("uv-tool-editable") == "uv tool install --reinstall --editable ."
+    assert update.upgrade_command("pip-editable") == "pip install --force-reinstall -e ."
     assert update.upgrade_command("unknown") is None
 
 
@@ -45,5 +45,5 @@ def test_uv_tool_editable_guidance(capsys):
     with patch.object(update, "detect_install_method", return_value="uv-tool-editable"):
         main.cmd_update(type("Args", (), {"dry_run": True})())
     output = capsys.readouterr().out
-    assert "uv tool install --editable ." in output
+    assert "uv tool install --reinstall --editable ." in output
     assert "pip install -e ." not in output

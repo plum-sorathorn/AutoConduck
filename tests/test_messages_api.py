@@ -400,3 +400,23 @@ def test_sanitize_tools_converts_non_string_enums():
     assert props["count"]["enum"] == ["1", "2", "3"]
     assert props["null_option"]["enum"] == ["null"]
 
+
+def test_opencodego_litellm_params_avoids_provider_prefix(monkeypatch):
+    monkeypatch.setenv("OPENCODE_API_KEY", "opencode-key-123")
+    cfg = _cfg(
+        custom_models=[
+            {
+                "id": "gpt-5-6-luna",
+                "provider": "opencodego",
+                "base_url": "https://opencode.ai/zen/go/v1",
+                "api_key_env": "OPENCODE_API_KEY",
+                "enabled": True,
+            }
+        ]
+    )
+    params = m.litellm_params_for("gpt-5-6-luna", cfg)
+    assert params["model"] == "openai/gpt-5-6-luna"
+    assert params["api_base"] == "https://opencode.ai/zen/go/v1"
+    assert params["api_key"] == "opencode-key-123"
+
+

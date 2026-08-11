@@ -910,14 +910,39 @@ def cmd_reset(args):
     print("\nCoding agents reverted:")
     for msg in reverted:
         print(msg)
-    print("\nAutoConduck state purged; package remains installed.")
-    hint = update.uninstall_hint(update.detect_install_method())
-    if hint:
-        print(f"Package still installed — remove it with: {hint}")
+    
+    is_uninstall = getattr(args, "cmd", "") == "uninstall"
+    if not is_uninstall:
+        print("\nAutoConduck state purged; package remains installed.")
+        hint = update.uninstall_hint(update.detect_install_method())
+        if hint:
+            print(f"Package still installed — remove it with: {hint}")
+    else:
+        print("\nAutoConduck state purged.")
 
+
+def _run_detached_self_destruct(command_args, cwd=None):
+    import sys, os, subprocess
+    if sys.platform == "win32":
+        cmd_str = " ".join(command_args)
+        script = f"ping 127.0.0.1 -n 2 > nul & {cmd_str}"
+        subprocess.Popen(
+            ["cmd.exe", "/c", script],
+            creationflags=0x08000000,
+            cwd=cwd
+        )
+        sys.exit(0)
+    else:
+        os.execvp(command_args[0], command_args)
 
 def cmd_uninstall(args):
     cmd_reset(args)
+    from . import update
+    method = update.detect_install_method()
+    command = update.uninstall_hint(method)
+    if command:
+        print(f"Uninstalling package via: {command}")
+        _run_detached_self_destruct(command.split())
 
 
 def purge_home_dir(home: Path) -> None:
@@ -965,17 +990,13 @@ def cmd_update(args):
         elif (Path.cwd() / "pyproject.toml").exists():
             cwd = str(Path.cwd())
 
-    subprocess.call([tool, *command.split()[1:]], cwd=cwd)
     try:
         launcher.stop_server()
     except Exception:
         pass
-    try:
-        import importlib.metadata
 
-        print(f"New version: {importlib.metadata.version('autoconduck')}")
-    except importlib.metadata.PackageNotFoundError:
-        print("Upgrade finished; run autoconduck --version to confirm the new version.")
+    print("Upgrade spawned in background; run autoconduck --version to confirm the new version when done.")
+    _run_detached_self_destruct([tool, *command.split()[1:]], cwd=cwd)
 
 
 def cmd_ensure(args):

@@ -252,9 +252,22 @@ def litellm_params_for(model_id: str, cfg) -> dict:
     if "/" in str(raw_model):
         qual_model = str(raw_model)
     elif provider:
-        qual_model = f"{provider}/{model_id}"
+        is_known_provider = False
+        try:
+            from litellm import provider_list
+
+            if provider in provider_list:
+                is_known_provider = True
+        except Exception:
+            pass
+        if is_known_provider:
+            qual_model = f"{provider}/{model_id}"
+        else:
+            qual_model = str(model_id)
     else:
-        qual_model = qualify_model(model_id)
+        qual_model = str(model_id)
+
+    qual_model = qualify_model(qual_model)
 
     result = {"model": qual_model}
     if base_url:
