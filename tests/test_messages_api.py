@@ -403,19 +403,20 @@ def test_sanitize_tools_converts_non_string_enums():
 
 def test_opencodego_litellm_params_avoids_provider_prefix(monkeypatch):
     monkeypatch.setenv("OPENCODE_API_KEY", "opencode-key-123")
+    monkeypatch.setattr(m, "resolve_api_key", lambda *_args: "opencode-key-123")
     cfg = _cfg(
         custom_models=[
             {
-                "id": "gpt-5-6-luna",
+                "id": "gpt-5.6-luna",
                 "provider": "opencodego",
                 "base_url": "https://opencode.ai/zen/go/v1",
-                "api_key_env": "OPENCODE_API_KEY",
+                "api_key": "opencode-key-123",
                 "enabled": True,
             }
         ]
     )
-    params = m.litellm_params_for("gpt-5-6-luna", cfg)
-    assert params["model"] == "openai/gpt-5-6-luna"
+    params = m.litellm_params_for("gpt-5.6-luna", cfg)
+    assert params["model"] == "openai/gpt-5.6-luna"
     assert params["api_base"] == "https://opencode.ai/zen/go/v1"
     assert params["api_key"] == "opencode-key-123"
 

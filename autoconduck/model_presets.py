@@ -291,7 +291,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://api.llmgateway.io",
         },
         {
-            "id": "grok-4-5",
+            "id": "grok-4.5",
             "provider": "llmgateway",
             "tier": "balanced",
             "price_in": 2.0,
@@ -1161,7 +1161,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
     # user's OpenCode account key.  All models are OpenAI-compatible.
     "opencodego": [
         {
-            "id": "grok-4-5",
+            "id": "grok-4.5",
             "provider": "opencodego",
             "tier": "balanced",
             "price_in": 2.00,
@@ -1170,7 +1170,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "gpt-5-6-luna",
+            "id": "gpt-5.6-luna",
             "provider": "opencodego",
             "tier": "budget",
             "price_in": 0.20,
@@ -1179,7 +1179,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "glm-5-2",
+            "id": "glm-5.2",
             "provider": "opencodego",
             "tier": "balanced",
             "price_in": 1.40,
@@ -1188,7 +1188,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "glm-5-1",
+            "id": "glm-5.1",
             "provider": "opencodego",
             "tier": "balanced",
             "price_in": 1.40,
@@ -1206,7 +1206,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "kimi-k2-7-code",
+            "id": "kimi-k2.7-code",
             "provider": "opencodego",
             "tier": "balanced",
             "price_in": 0.95,
@@ -1215,7 +1215,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "kimi-k2-6",
+            "id": "kimi-k2.6",
             "provider": "opencodego",
             "tier": "budget",
             "price_in": 0.95,
@@ -1224,7 +1224,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "mimo-v2-5",
+            "id": "mimo-v2.5",
             "provider": "opencodego",
             "tier": "budget",
             "price_in": 0.14,
@@ -1233,7 +1233,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "mimo-v2-5-pro",
+            "id": "mimo-v2.5-pro",
             "provider": "opencodego",
             "tier": "budget",
             "price_in": 0.435,
@@ -1251,7 +1251,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "minimax-m2-7",
+            "id": "minimax-m2.7",
             "provider": "opencodego",
             "tier": "budget",
             "price_in": 0.30,
@@ -1260,7 +1260,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "minimax-m2-5",
+            "id": "minimax-m2.5",
             "provider": "opencodego",
             "tier": "budget",
             "price_in": 0.30,
@@ -1269,7 +1269,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "qwen3-8-max",
+            "id": "qwen3.8-max",
             "provider": "opencodego",
             "tier": "balanced",
             "price_in": 2.00,
@@ -1278,7 +1278,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "qwen3-7-max",
+            "id": "qwen3.7-max",
             "provider": "opencodego",
             "tier": "balanced",
             "price_in": 2.50,
@@ -1287,7 +1287,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "qwen3-7-plus",
+            "id": "qwen3.7-plus",
             "provider": "opencodego",
             "tier": "budget",
             "price_in": 0.40,
@@ -1296,7 +1296,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "base_url": "https://opencode.ai/zen/go/v1",
         },
         {
-            "id": "qwen3-6-plus",
+            "id": "qwen3.6-plus",
             "provider": "opencodego",
             "tier": "budget",
             "price_in": 0.50,
@@ -1328,6 +1328,24 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "tier": "budget",
             "price_in": 0.14,
             "price_out": 0.58,
+            "api_key_env": "OPENCODE_API_KEY",
+            "base_url": "https://opencode.ai/zen/go/v1",
+        },
+        {
+            "id": "glm-5",
+            "provider": "opencodego",
+            "tier": "balanced",
+            "price_in": 0.57,
+            "price_out": 2.58,
+            "api_key_env": "OPENCODE_API_KEY",
+            "base_url": "https://opencode.ai/zen/go/v1",
+        },
+        {
+            "id": "kimi-k2.5",
+            "provider": "opencodego",
+            "tier": "budget",
+            "price_in": 0.4,
+            "price_out": 1.98,
             "api_key_env": "OPENCODE_API_KEY",
             "base_url": "https://opencode.ai/zen/go/v1",
         },
