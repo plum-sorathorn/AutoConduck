@@ -11,6 +11,24 @@ from .config import home_dir
 from .routing import pricing
 
 _latest_selection: dict[str, Any] = {}
+_active_routing: dict[str, Any] = {
+    "active": False,
+    "path": "FAST",
+    "pseudo_model": "autoconduck",
+    "selected_model": "none",
+    "task_value": 0.0,
+    "node": "idle",
+    "step_detail": "Idle",
+    "subtasks_total": 0,
+    "subtasks_completed": 0,
+    "start_time": 0.0,
+}
+
+def update_active_routing(**kwargs: Any) -> None:
+    _active_routing.update(kwargs)
+
+def get_active_routing() -> dict[str, Any]:
+    return dict(_active_routing)
 
 def record_selection(task_value: float, target_scaled_cost: float, model: str, config) -> None:
     if getattr(getattr(config, "selection", None), "expose_value_in_stats", True):

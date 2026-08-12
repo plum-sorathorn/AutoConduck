@@ -192,6 +192,7 @@ def qualify_model(model_id: str) -> str:
 def normalize_api_base(base_url: str) -> str:
     """Return an OpenAI-compatible endpoint URL with the required /v1 path."""
     value = str(base_url or "").rstrip("/")
+    value = _repair_base_url_scheme(value)
     if not value:
         return value
     parts = urlsplit(value)
@@ -206,6 +207,35 @@ def normalize_api_base(base_url: str) -> str:
             parts.fragment,
         )
     )
+
+
+def _repair_base_url_scheme(base_url: str) -> str:
+    """Repair a malformed/missing URL scheme so base URLs are always usable.
+
+    Fixes the classic ``ttps://`` typo and bare hostnames without changing
+    values that already carry a valid HTTP(S) scheme.
+    """
+    value = str(base_url or "").strip()
+    if not value:
+        return value
+    if "://" in value:
+        scheme, _, rest = value.partition("://")
+        if scheme.lower() == "ttps":
+            return "https://" + rest
+        if scheme.lower() in ("http", "https"):
+            return value
+        return value
+    return "https://" + value
+
+
+def _normalize_model_entries(config_dict):
+    for field in ("custom_models", "model_list"):
+        for entry in config_dict.get(field, []) or []:
+            if not isinstance(entry, dict):
+                continue
+            for key in ("base_url", "api_base"):
+                if entry.get(key) is not None:
+                    entry[key] = _repair_base_url_scheme(entry[key])
 
 
 def _configured_model_sources(cfg):
@@ -312,6 +342,10 @@ def load_config(path=None) -> Config:
     if "AUTOCONDUCK_LOG_LEVEL" in os.environ:
         data["log_level"] = os.environ["AUTOCONDUCK_LOG_LEVEL"]
     config = Config(**data)
+    _normalize_model_entries({
+        "custom_models": config.custom_models,
+        "model_list": config.model_list,
+    })
     if any(
         isinstance(e, dict) and e.get("api_key")
         for s in (config.model_list, config.custom_models)
@@ -356,7 +390,9 @@ def save_config(cfg, path=None):
     global _config, _config_digest, _config_path
     p = Path(path) if path else home_dir() / "config.yaml"
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(yaml.safe_dump(cfg.model_dump()), encoding="utf-8")
+    data = cfg.model_dump()
+    _normalize_model_entries(data)
+    p.write_text(yaml.safe_dump(data), encoding="utf-8")
     _config = None
     _config_digest = None
     _config_path = None

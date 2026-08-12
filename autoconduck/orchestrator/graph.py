@@ -153,10 +153,13 @@ async def _run_executor_subagents(
 
     async def _draft_for_group(group_id: str, group: dict) -> tuple:
         scope_files = ", ".join(group["scope"]) if group["scope"] else "general"
-        relevant_outputs = "\n\n".join(
-            f"[{sid}]\n{subagent_outputs.get(sid, '')}"
-            for sid in group["subtask_ids"]
-        )
+        outputs = []
+        for sid in group["subtask_ids"]:
+            raw_out = str(subagent_outputs.get(sid, ""))
+            if len(raw_out) > 1200:
+                raw_out = raw_out[:1200] + "\n...[truncated]"
+            outputs.append(f"[{sid}]\n{raw_out}")
+        relevant_outputs = "\n\n".join(outputs)
         from .subagents import SubTask, OutputContract, run_subagent as _rs
         draft_task = SubTask(
             id=group_id,
@@ -233,6 +236,16 @@ async def run(
         async def planner_node(state: State) -> dict:
             if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
                 return {"fallback": True}
+            try:
+                from autoconduck import stats
+                stats.update_active_routing(
+                    active=True, path="SLOW", pseudo_model=state.pseudo_model,
+                    task_value=state.task_value, node="planner",
+                    step_detail="Planner generating JSON DAG task plan...",
+                    start_time=time.time()
+                )
+            except Exception:
+                pass
             plan = build_task_plan(
                 state.messages, client=client, cfg=cfg, task_value=state.task_value
             )
@@ -248,6 +261,15 @@ async def run(
                 return {"fallback": True}
             completed: dict[str, str] = {}
             pending = list(state.plan.subtasks)
+            try:
+                from autoconduck import stats
+                stats.update_active_routing(
+                    node="subagents",
+                    subtasks_total=len(pending),
+                    step_detail=f"Running {len(pending)} analyst subagent(s) in parallel..."
+                )
+            except Exception:
+                pass
             while pending:
                 if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
                     return {"fallback": True}
@@ -288,9 +310,21 @@ async def run(
                     Send("subagent_pool", {"task_id": task.id})
                     completed[task.id] = result
                     pending.remove(task)
+                try:
+                    from autoconduck import stats
+                    stats.update_active_routing(subtasks_completed=len(completed))
+                except Exception:
+                    pass
             return {"subagent_outputs": completed}
 
         def compactor_node(state: State) -> dict:
+            try:
+                from autoconduck import stats
+                stats.update_active_routing(
+                    node="compactor", step_detail="Compacting analyst findings..."
+                )
+            except Exception:
+                pass
             ordered = [
                 state.subagent_outputs[task.id]
                 for task in sorted(
@@ -304,6 +338,13 @@ async def run(
         async def executor_node(state: State) -> dict:
             if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
                 return {"fallback": True}
+            try:
+                from autoconduck import stats
+                stats.update_active_routing(
+                    node="executor", step_detail="Executor synthesizing final response..."
+                )
+            except Exception:
+                pass
             user_text = "\n".join(
                 str(m.get("content", ""))
                 if isinstance(m, dict)
@@ -317,6 +358,7 @@ async def run(
             plan = state.plan
             use_subagents = (
                 plan is not None
+                and getattr(getattr(cfg, "selection", None), "enable_executor_subagents", False)
                 and len(plan.subtasks) >= 2
                 and any(len(t.scope) > 0 for t in plan.subtasks)
             )
@@ -375,15 +417,22 @@ async def run(
         )
         graph.add_edge("compactor", "executor")
         graph.add_edge("executor", END)
-        final = await graph.compile().ainvoke(
-            State(
-                messages=messages,
-                history=history,
-                pseudo_model=pseudo_model,
-                task_value=task_value,
+        try:
+            final = await graph.compile().ainvoke(
+                State(
+                    messages=messages,
+                    history=history,
+                    pseudo_model=pseudo_model,
+                    task_value=task_value,
+                )
             )
-        )
-        state = State.model_validate(final)
-        return None if state.fallback else state.result
+            state = State.model_validate(final)
+            return None if state.fallback else state.result
+        finally:
+            try:
+                from autoconduck import stats
+                stats.update_active_routing(active=False, node="idle", step_detail="Completed")
+            except Exception:
+                pass
     except Exception:
         return None

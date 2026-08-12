@@ -25,14 +25,21 @@ def subagent_target(subtask_prompt, role, plan_breadth, budget_hint, config):
 
 
 def build_subagent_prompt(task: SubTask, upstream_summaries: str = "") -> str:
+    role_header = (
+        "ROLE: You are a read-only file analyst. You do not propose fixes or write code."
+        if task.role != "write"
+        else "ROLE: You are a file change drafting analyst."
+    )
     parts = [
-        "ROLE: You are a read-only file analyst. You do not propose fixes or write code.",
+        role_header,
         f"TASK: {task.goal}",
         f"FILES IN SCOPE (only these): {', '.join(task.scope)}",
         f"REQUIRED OUTPUT FORMAT: {task.output_contract}",
         f"DO NOT: {', '.join(task.constraints)}",
         f"CONTEXT FROM SIBLING TASKS: {upstream_summaries}",
     ]
+    if task.role == "write":
+        parts.append("STRICT OUTPUT DIRECTIVE: Output only concise line-level diffs and necessary code snippets. Do not write conversational introductions or explanations.")
     if task.verified_context:
         bullets = "\n".join(f"- {item}" for item in task.verified_context)
         parts.append(f"VERIFIED CONTEXT (do not re-investigate):\n{bullets}")
@@ -87,22 +94,31 @@ async def run_subagent(
         )
         params["_path"] = "orchestrator-subagent"
         params["_pseudo"] = "autoconduck"
+        params.setdefault("max_tokens", 650)
+        params.setdefault("timeout", 12.0)
         logging.getLogger("autoconduck.orchestrator").debug(
             "SUBAGENT PROMPT [%s]:\n%s", task.id, prompt
         )
         messages = [{"role": "user", "content": prompt}]
-        if client is not None and hasattr(client, "completion"):
-            return _text(
-                await asyncio.to_thread(client.completion, messages=messages, **params)
-            )
-        if client is not None and hasattr(client, "chat"):
-            return _text(
-                await asyncio.to_thread(
-                    client.chat.completions.create, messages=messages, **params
-                )
-            )
-        import litellm
 
-        return _text(await litellm.acompletion(messages=messages, **params))
+        async def _execute():
+            if client is not None and hasattr(client, "completion"):
+                return _text(
+                    await asyncio.to_thread(client.completion, messages=messages, **params)
+                )
+            if client is not None and hasattr(client, "chat"):
+                return _text(
+                    await asyncio.to_thread(
+                        client.chat.completions.create, messages=messages, **params
+                    )
+                )
+            import litellm
+
+            return _text(await litellm.acompletion(messages=messages, **params))
+
+        try:
+            return await asyncio.wait_for(_execute(), timeout=12.0)
+        except asyncio.TimeoutError:
+            return f"Subagent [{task.id}] timed out after 12s; proceeding with available context."
     except Exception as exc:
         return f"Subagent error: {exc}"

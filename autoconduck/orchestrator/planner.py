@@ -156,6 +156,7 @@ def _completion(
     from autoconduck.config import orchestrator_litellm_params
 
     kwargs = {**orchestrator_litellm_params(cfg), **kwargs}
+    kwargs.setdefault("max_tokens", 500)
     from autoconduck.config import qualify_model
 
     kwargs["model"] = qualify_model(_model_name(cfg, task_value=task_value))

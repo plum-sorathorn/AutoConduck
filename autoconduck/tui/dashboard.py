@@ -262,21 +262,22 @@ if _TEXTUAL:
         def compose(self):
             yield Vertical(
                 Static(self._mascot_header(), id="header", markup=True),
+                Static(self._graph_view(), id="graph", markup=True),
                 Static(self._stats_summary(), id="stats", markup=True),
                 Static("recent routing decisions\n" + render_log_rows(self.records, self.cursor), id="log", markup=True),
-                Static("active agents: none", id="agents"),
                 Static("[up/down] move  [d] details  [/] filter  [p] pause  [left] back  [ctrl+c] quit", id="footer", markup=False),
             )
 
         def on_mount(self):
             self._update_stats()
-            self.set_interval(1.2, self._tick)
+            self.set_interval(0.8, self._tick)
 
         def _tick(self):
             self.duck_frame = (self.duck_frame + 1) % len(self.DUCK_FRAMES)
             self._update_stats()
             try:
                 self.query_one("#header", Static).update(self._mascot_header())
+                self.query_one("#graph", Static).update(self._graph_view())
                 self.query_one("#stats", Static).update(self._stats_summary())
             except Exception:
                 pass
@@ -286,10 +287,65 @@ if _TEXTUAL:
                 from autoconduck import stats
                 records = stats.load_records(limit=50)
                 if records:
+                    self.records = list(reversed(records))
                     agg = stats.aggregate(records)
                     self.totals = agg.get("totals", self.totals)
             except Exception:
                 pass
+
+        def _graph_view(self) -> str:
+            try:
+                from autoconduck import stats
+                active = stats.get_active_routing()
+            except Exception:
+                active = {"active": False, "path": "FAST", "node": "idle"}
+
+            is_active = active.get("active", False)
+            path = active.get("path", "FAST")
+            node = active.get("node", "idle")
+            detail = active.get("step_detail", "Ready")
+            model = active.get("selected_model", "autoconduck")
+            val = active.get("task_value", 0.0)
+            completed = active.get("subtasks_completed", 0)
+            total = active.get("subtasks_total", 0)
+
+            if is_active and path == "SLOW":
+                p_n = "[bold yellow]● PLANNER[/bold yellow]" if node == "planner" else ("[green]✓ PLANNER[/green]" if node in ("subagents", "compactor", "executor") else "[dim]○ PLANNER[/dim]")
+                sub_label = f"SUBAGENTS ({completed}/{total})" if total else "SUBAGENTS"
+                s_n = f"[bold yellow]● {sub_label}[/bold yellow]" if node == "subagents" else ("[green]✓ SUBAGENTS[/green]" if node in ("compactor", "executor") else "[dim]○ SUBAGENTS[/dim]")
+                c_n = "[bold yellow]● COMPACTOR[/bold yellow]" if node == "compactor" else ("[green]✓ COMPACTOR[/green]" if node == "executor" else "[dim]○ COMPACTOR[/dim]")
+                e_n = "[bold yellow]● EXECUTOR[/bold yellow]" if node == "executor" else "[dim]○ EXECUTOR[/dim]"
+
+                lines = [
+                    "+----- [bold cyan]LangGraph SLOW Path Execution[/bold cyan] -----------------------------+",
+                    f"| Target: [bold]{model}[/bold] | Task Value V: [bold yellow]{val:.2f}[/bold yellow]                           |",
+                    "|                                                                           |",
+                    f"|  [START] ──► {p_n} ──► {s_n} ──► {c_n} ──► {e_n} ──► [END] |",
+                    "|                                                                           |",
+                    f"| Status: [bold cyan]{detail}[/bold cyan]",
+                    "+---------------------------------------------------------------------------+"
+                ]
+                return "\n".join(lines)
+            elif is_active and path == "FAST":
+                lines = [
+                    "+----- [bold green]Direct FAST Path Execution[/bold green] ----------------------------------+",
+                    f"| Selected Model: [bold green]{model}[/bold green] | Task Value V: [bold]{val:.2f}[/bold]                  |",
+                    "|                                                                           |",
+                    f"|  [START] ──────────► [⚡ FAST DIRECT DISPATCH] ──────────► [END]         |",
+                    "|                                                                           |",
+                    f"| Status: [bold green]{detail}[/bold green]",
+                    "+---------------------------------------------------------------------------+"
+                ]
+                return "\n".join(lines)
+            else:
+                lines = [
+                    "+----- [bold dim]Routing Mechanism Standby[/bold dim] ----------------------------------+",
+                    f"| Engine: [bold]AutoConduck Proxy[/bold] | Standby | Exposure: Active              |",
+                    "|                                                                           |",
+                    "|  [START] ──► [● ROUTER READY] ──► (FAST Direct / SLOW Orchestrator)      |",
+                    "+---------------------------------------------------------------------------+"
+                ]
+                return "\n".join(lines)
 
         def _mascot_header(self):
             status_label = "PAUSED" if self.paused else "RUNNING"

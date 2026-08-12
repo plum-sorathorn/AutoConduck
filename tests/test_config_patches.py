@@ -109,3 +109,19 @@ def test_save_config_invalidates_get_config_cache(tmp_path, monkeypatch):
     refreshed = get_config()
     assert refreshed.host == "saved"
     assert refreshed is not initial
+
+
+def test_save_config_repairs_malformed_base_url(tmp_path):
+    cfg = Config(
+        custom_models=[{"id": "custom", "base_url": "ttps://opencode.ai/zen/go/v1"}],
+        model_list=[{"id": "listed", "api_base": "ttps://api.example"}],
+    )
+    path = tmp_path / "config.yaml"
+
+    save_config(cfg, path)
+
+    text = path.read_text(encoding="utf-8")
+    assert "https://opencode.ai/zen/go/v1" in text
+    assert "https://api.example" in text
+    assert "base_url: ttps://" not in text
+    assert "api_base: ttps://" not in text

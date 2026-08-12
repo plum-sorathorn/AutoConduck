@@ -92,10 +92,6 @@ def is_tool_loop(messages: list, config=None) -> bool:
     if tool_turn_count > 12:
         return False
 
-    # KEY FIX: if the *original* user request was already complex enough to
-    # warrant the slow path, do not suppress it just because we are now
-    # mid-tool-loop.  This prevents coding agents (Pi, Claude, opencode) from
-    # being permanently stuck on the fast path after their first response.
     cfg_sel = getattr(config, "selection", config) if config else None
     slow_threshold = float(getattr(cfg_sel, "slow_threshold", 0.75) if cfg_sel else 0.75)
     first_complexity = complexity_of(_first_user_complexity_text(messages), config)
