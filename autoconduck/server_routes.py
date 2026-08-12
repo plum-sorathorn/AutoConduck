@@ -74,6 +74,15 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                 model = getattr(decision, "model", None)
             except Exception:
                 decision, path, model = None, "FAST", None
+            # Guard: only invoke the full LangGraph orchestrator when complexity
+            # is genuinely high enough to justify 3-5 extra LLM calls.
+            task_complexity = float(getattr(decision, "complexity", 0.5))
+            min_orch = float(
+                getattr(getattr(cfg, "selection", None), "min_orchestrator_complexity", 0.62)
+            )
+            if path == "SLOW" and task_complexity < min_orch:
+                path = "FAST"
+                model = model or None  # will be resolved below
             decisions.append({"path": path, "model": model or body_model, "time": time.time()})
             logging.getLogger("autoconduck").info("route=%s model=%s ms=%.1f", path, model or body_model, (time.perf_counter() - started) * 1000)
             if path == "SLOW" and not (request is not None and await request.is_disconnected()):

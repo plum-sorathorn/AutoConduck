@@ -124,7 +124,7 @@ def test_slow_path_langgraph_happy_path(harness):
         await litellm.acompletion(model="openai/cheap-model", messages=[])
         await litellm.acompletion(model="openai/pricy-model", messages=[])
         return "FINAL ANSWER"
-    dispatcher.route = lambda *args, **kwargs: SimpleNamespace(path="SLOW", model=None)
+    dispatcher.route = lambda *args, **kwargs: SimpleNamespace(path="SLOW", model=None, complexity=0.80)
     original_run = orchestrator.run
     orchestrator.run = run_graph
     try:
@@ -207,7 +207,7 @@ def test_anthropic_messages_answer_stream_full_sse_sequence(harness, monkeypatch
     """Orchestrator __answer__ short-circuit must emit a complete Anthropic SSE
     sequence: message_start ... content_block_delta ... message_stop."""
     client, calls, _ = harness
-    monkeypatch.setattr(dispatcher, "route", lambda *args, **kwargs: SimpleNamespace(path="SLOW", model=None))
+    monkeypatch.setattr(dispatcher, "route", lambda *args, **kwargs: SimpleNamespace(path="SLOW", model=None, complexity=0.80))
     import autoconduck.orchestrator as orchestrator
     async def run_graph(*args, **kwargs):
         return "autoconduck-ok"

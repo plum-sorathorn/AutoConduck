@@ -181,7 +181,11 @@ def _content(response: Any) -> str:
 def build_task_plan(
     messages: list, client=None, cfg=None, task_value: float = 0.5
 ) -> TaskPlan | None:
-    """Ask the fast model for a plan; tolerate unavailable dependencies and bad models."""
+    """Ask the planner model for a structured task plan.
+
+    Returns None on any failure so the orchestrator degrades gracefully to the
+    direct-executor path rather than spending a second LLM call on a retry.
+    """
     try:
         schema = TaskPlan.model_json_schema()
         paths = _extract_file_paths(messages if isinstance(messages, list) else [])
@@ -193,29 +197,29 @@ def build_task_plan(
             for message in messages
             if isinstance(message, dict)
         )
-        for _ in range(2):
-            try:
-                logging.getLogger("autoconduck.orchestrator").debug(
-                    "PLANNER PROMPT:\n%s\n---\n%s", system_content, user_msg
-                )
-                response = _completion(
-                    client,
-                    prompt_messages,
-                    cfg=cfg,
-                    task_value=task_value,
-                    response_format={
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "TaskPlan",
-                            "schema": schema,
-                            "strict": True,
-                        },
+        try:
+            logging.getLogger("autoconduck.orchestrator").debug(
+                "PLANNER PROMPT:\n%s\n---\n%s", system_content, user_msg
+            )
+            response = _completion(
+                client,
+                prompt_messages,
+                cfg=cfg,
+                task_value=task_value,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "TaskPlan",
+                        "schema": schema,
+                        "strict": True,
                     },
-                )
-                raw = _content(response)
-                return TaskPlan.model_validate(json.loads(raw))
-            except Exception:
-                continue
+                },
+            )
+            raw = _content(response)
+            return TaskPlan.model_validate(json.loads(raw))
+        except Exception:
+            return None
     except (ImportError, ModuleNotFoundError):
         return None
     return None
+

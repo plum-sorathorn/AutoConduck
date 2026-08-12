@@ -60,10 +60,23 @@ class SelectionConfig(BaseModel):
     spend_guard_enabled: bool = True
     spend_guard_max_usd_per_min: float = 0.20
     spend_guard_window_s: int = 300
-    tiebreaker_enabled: bool = True
+    # Tiebreaker: disabled by default — the extra LLM call almost always just
+    # falls back to the complexity-based decision anyway.  Enable manually for
+    # installations that want the extra signal.
+    tiebreaker_enabled: bool = False
     tiebreaker_min_complexity: float = 0.45
     budget_tiebreaker_min_complexity: float = 0.65
     slow_threshold: float = 0.75
+    # Minimum complexity required before the full LangGraph orchestrator is
+    # invoked.  Requests below this threshold are treated as fast-path even
+    # when the dispatcher returns path=slow, saving 3-5 LLM calls per turn.
+    min_orchestrator_complexity: float = 0.62
+    # Maximum number of subtasks the planner may generate.  Prevents unbounded
+    # analyst fan-out on requests that don't genuinely need it.
+    max_subtasks: int = 3
+    # Executor-subagent fan-out doubles LLM call count for multi-subtask plans;
+    # keep disabled by default and only enable for truly complex batch tasks.
+    enable_executor_subagents: bool = False
 
 
 class ClaudeCodeSettings(BaseModel):
@@ -99,8 +112,10 @@ class Config(BaseModel):
     host: str = "127.0.0.1"
     port: int = 11434
     log_level: str = "INFO"
-    ambiguous_low: float = 0.55
-    ambiguous_high: float = 0.70
+    # Tightened from 0.55/0.70 — reduces the ambiguous zone so fewer messages
+    # trigger the expensive tiebreaker/orchestrator resolution path.
+    ambiguous_low: float = 0.60
+    ambiguous_high: float = 0.75
     hysteresis_floor: float = 0.50
     escalation_threshold: float = 0.80
     stack_trace_boost: float = 0.25

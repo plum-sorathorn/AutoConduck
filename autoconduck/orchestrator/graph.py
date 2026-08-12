@@ -233,6 +233,29 @@ async def run(
 
         cfg = get_config()
 
+        # Short-circuit: for clearly non-complex tasks skip the planner and
+        # subagent fan-out entirely — use a single direct executor call.  This
+        # avoids spending 3-5 extra LLM calls on messages that only narrowly
+        # crossed the SLOW threshold.
+        direct_threshold = float(
+            getattr(getattr(cfg, "selection", None), "min_orchestrator_complexity", 0.62)
+        )
+        if task_value < direct_threshold:
+            import logging
+            logging.getLogger("autoconduck.orchestrator").debug(
+                "Direct-executor short-circuit (task_value=%.2f < %.2f)", task_value, direct_threshold
+            )
+            user_text = "\n".join(
+                str(m.get("content", "")) if isinstance(m, dict) else getattr(m, "content", str(m))
+                for m in messages
+                if not isinstance(m, dict) or m.get("role", "user") == "user"
+            )
+            try:
+                exec_model = _executor_model(pseudo_model, cfg, task_value, "", 0)
+                return await _call(client, exec_model, [{"role": "user", "content": user_text}])
+            except Exception:
+                return None
+
         async def planner_node(state: State) -> dict:
             if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
                 return {"fallback": True}
@@ -249,6 +272,11 @@ async def run(
             plan = build_task_plan(
                 state.messages, client=client, cfg=cfg, task_value=state.task_value
             )
+            # Clamp subtask count to prevent unbounded analyst fan-out.
+            if plan is not None:
+                max_sub = int(getattr(getattr(cfg, "selection", None), "max_subtasks", 3))
+                if len(plan.subtasks) > max_sub:
+                    plan = plan.model_copy(update={"subtasks": plan.subtasks[:max_sub]})
             attempt = state.attempt + 1
             return {
                 "plan": plan,

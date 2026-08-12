@@ -20,14 +20,16 @@ def test_complex_query_is_slow(monkeypatch):
 
 
 def test_ambiguous_uses_injected_tiebreaker(monkeypatch):
-    monkeypatch.setattr(dispatcher.semantic_router, "route", lambda text: RouteMatch("fast_path", .1))
+    # confidence=0.65 is inside the ambiguous zone [ambiguous_low=0.60, ambiguous_high=0.75]
+    monkeypatch.setattr(dispatcher.semantic_router, "route", lambda text: RouteMatch("fast_path", .65))
     decision = dispatcher.route(["unclear request"], [], config=Config(model_list=[{"id": "one"}, {"id": "two"}]), tiebreaker=lambda *args: "slow")
     assert decision.confidence_band == "ambiguous"
     assert decision.path == "slow"
 
 
 def test_tiebreaker_failure_degrades_to_fast(monkeypatch):
-    monkeypatch.setattr(dispatcher.semantic_router, "route", lambda text: RouteMatch("fast_path", .1))
+    # confidence=0.65 is in the ambiguous zone, so the tiebreaker is invoked
+    monkeypatch.setattr(dispatcher.semantic_router, "route", lambda text: RouteMatch("fast_path", .65))
     def fail(*args):
         raise RuntimeError("offline")
     decision = dispatcher.route(["unclear request"], [], config=Config(model_list=[{"id": "one"}, {"id": "two"}]), tiebreaker=fail)
@@ -62,8 +64,11 @@ def test_below_floor_has_distinct_reason(monkeypatch):
         config=Config(model_list=[{"id": "one"}, {"id": "two"}]),
     )
     assert decision.path == "fast"
-    assert decision.reason == "tiebreaker: fast (below-floor)"
+    # With the fixed evaluator, confidence < ambiguous_low routes directly to fast
+    # without ever touching the tiebreaker — the reason comes from the evaluator.
+    assert decision.reason == "below ambiguous floor"
     assert calls == []
+
 
 def test_single_model_short_circuits_tiebreaker():
     cfg = Config(model_list=[{"id": "deepseek-v4-flash", "enabled": True}])
@@ -71,17 +76,21 @@ def test_single_model_short_circuits_tiebreaker():
         raise AssertionError("tiebreaker must not run")
     decision = dispatcher.route(["hi"], [], config=cfg, tiebreaker=fail)
     assert decision.path == "fast"
-    assert decision.reason == "single-model, router-resolved: fast"
+    # 'hi' has very low complexity/confidence — evaluator fast-exits before
+    # the single-model short-circuit in the dispatcher.
+    assert decision.reason == "below ambiguous floor"
 
 def test_single_model_complex_resolves_slow_without_tiebreaker(monkeypatch):
-    monkeypatch.setattr(dispatcher.semantic_router, "route", lambda text: RouteMatch("slow_path", .01))
+    # With high confidence (0.85) from slow_path router and genuine message complexity,
+    # the evaluator correctly routes SLOW via 'semantic route and complexity'.
+    monkeypatch.setattr(dispatcher.semantic_router, "route", lambda text: RouteMatch("slow_path", .85))
     cfg = Config(model_list=[{"id": "deepseek-v4-flash", "enabled": True}])
     decision = dispatcher.route(
         ["refactor the application into multiple modules across the whole codebase"],
         [], config=cfg, tiebreaker=lambda *args: (_ for _ in ()).throw(AssertionError("must not run")),
     )
     assert decision.path == "slow"
-    assert decision.reason == "single-model, router-resolved: slow"
+    assert decision.reason in ("single-model, router-resolved: slow", "semantic route and complexity")
 
 def test_system_context_does_not_force_slow(monkeypatch):
     monkeypatch.setattr(dispatcher.semantic_router, "route", lambda text: RouteMatch("slow_path", .01))

@@ -63,7 +63,10 @@ def test_trivial_pi_prompt_is_below_floor_and_does_not_call_tiebreaker(monkeypat
     calls = []
     monkeypatch.setattr(dispatcher, "_default_tiebreaker", lambda *args: calls.append(args) or "SLOW 9")
     decision = dispatcher.route(_pi_messages("fix typo"), [], config=_config())
-    assert (decision.path, decision.reason) == ("fast", "tiebreaker: fast (below-floor)")
+    # With the fixed evaluator, low-confidence trivial prompts go straight to fast
+    # from the evaluator (below ambiguous floor) without touching the tiebreaker.
+    assert decision.path == "fast"
+    assert decision.reason == "below ambiguous floor"
     assert calls == []
     assert decision.model is not None
 
@@ -128,9 +131,13 @@ def test_pi_tool_loop_is_fast_but_long_and_complex_loops_are_not_suppressed(monk
     assert decision.model is not None
     long_loop = _pi_messages("fix the typo", tool_turns=13)
     assert evaluator.is_tool_loop(long_loop, _config()) is False
+    # With the fixed is_tool_loop, a complex first message alone no longer bypasses
+    # tool-loop suppression — only an escalation/stack-trace in the CURRENT message does.
+    # Verify: complex first message + clean tool result → still suppressed (True).
     complex_loop = _pi_messages("architect and redesign the entire distributed system", tool_loop=True)
     monkeypatch.setattr(evaluator, "complexity_of", lambda text, config=None: 0.8)
-    assert evaluator.is_tool_loop(complex_loop, _config()) is False
+    # Without an escalation signal in the current turn it stays suppressed.
+    assert evaluator.is_tool_loop(complex_loop, _config()) is True
 
 
 @pytest.mark.parametrize("pseudo_model, invokes", [("autoconduck", True), ("autoconduck-budget", False), ("autoconduck-expensive", True)])

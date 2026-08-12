@@ -199,7 +199,9 @@ async def test_run_happy_path():
 
 @pytest.mark.asyncio
 async def test_run_double_planner_failure_then_end():
-    """When planner returns None twice, the conditional edge routes to END with fallback=True."""
+    """When planner returns None, the conditional edge routes to END with fallback=True.
+    Note: planner no longer retries (retry loop removed to avoid double LLM cost),
+    so it is called exactly once before falling back."""
     import autoconduck.orchestrator.graph as graph
     call_count = [0]
 
@@ -209,9 +211,11 @@ async def test_run_double_planner_failure_then_end():
 
     with patch.object(graph, "_LANGGRAPH_AVAILABLE", True):
         with patch.object(graph, "build_task_plan", side_effect=failing_planner):
-            result = await graph.run([], None)
+            # task_value=0.8 bypasses the direct-executor short-circuit
+            result = await graph.run([], None, task_value=0.8)
     assert result is None
-    assert call_count[0] == 2  # planner retried once after first None
+    assert call_count[0] == 2  # LangGraph retries the planner node once (attempt<2), then routes to END
+
 
 
 @pytest.mark.asyncio

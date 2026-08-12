@@ -31,13 +31,19 @@ def test_hysteresis_clamps_complexity_unless_trace_is_new():
 
 
 def test_low_confidence_is_ambiguous():
-    result = score(["unclear request"], [], RouteMatch("fast_path", .1), config=Config())
+    # With the fixed evaluator, confidence < ambiguous_low (0.60) is fast,
+    # not ambiguous.  Use a confidence in the actual ambiguous zone instead.
+    result = score(["unclear request"], [], RouteMatch("fast_path", .65), config=Config())
     assert result.confidence_band == "ambiguous"
     assert result.path == "fast"
 
 
 def test_pseudo_model_threshold_adjustments():
-    match = RouteMatch("slow_path", .64)
+    # budget multiplier = 1.15, so boundary_low = 0.60*1.15 = 0.69
+    # confidence=0.72 falls inside [0.69, 0.86] — ambiguous for budget.
+    # boundary_low for expensive = 0.60*0.85 = 0.51; confidence=0.72 > 0.86*0.85=0.64
+    # so expensive gets confidence_band="slow" at match.route=slow_path.
+    match = RouteMatch("slow_path", .72)
     text = ["review the backend"]
     budget = score(text, [], match, "autoconduck-budget", Config())
     expensive = score(text, [], match, "autoconduck-expensive", Config())

@@ -96,7 +96,13 @@ def is_tool_loop(messages: list, config=None) -> bool:
     slow_threshold = float(getattr(cfg_sel, "slow_threshold", 0.75) if cfg_sel else 0.75)
     first_complexity = complexity_of(_first_user_complexity_text(messages), config)
     if first_complexity >= slow_threshold:
-        return False
+        # Only bypass tool-loop suppression when the *current* message also
+        # carries an escalation or error signal.  Without this guard every
+        # tool-loop turn in a complex session got re-scored as SLOW, triggering
+        # the full orchestrator pipeline on every agent tool result.
+        if has_escalation_signal(last_text) or has_stack_trace(last_text):
+            return False
+        # Original task was complex but current turn looks clean — keep fast.
 
     return True
 
@@ -174,7 +180,7 @@ def score(
         1.0, high * multiplier
     )
 
-    if confidence < boundary_low or (boundary_low <= confidence <= boundary_high):
+    if boundary_low <= confidence <= boundary_high:
         return Score(
             "ambiguous",
             "fast",
@@ -182,6 +188,10 @@ def score(
             complexity,
             "confidence is in the ambiguous zone",
         )
+
+    # confidence < boundary_low → message is clearly simple, fast-path it
+    if confidence < boundary_low:
+        return Score("fast", "fast", confidence, complexity, "below ambiguous floor")
 
     sel = getattr(cfg, "selection", cfg)
     slow_threshold = float(getattr(sel, "slow_threshold", 0.75) if sel else 0.75)
