@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 import uuid
 from typing import Any
-from .messages_api import STOP_REASON_MAP, coerce_content_text
+def _coerce_content_text(content: Any) -> str:
+    """Import the API helper lazily to avoid the API/SSE import cycle."""
+    from .messages_api import coerce_content_text
+
+    return coerce_content_text(content)
 
 def count_tokens(text: str) -> int:
     try:
@@ -18,7 +22,7 @@ def count_tokens(text: str) -> int:
 def anthropic_response_text(
     content: Any, model: str = "", stop_reason: str = "end_turn", input_text: str = ""
 ) -> dict:
-    text = coerce_content_text(content)
+    text = _coerce_content_text(content)
     return {
         "id": "msg_" + uuid.uuid4().hex[:12],
         "type": "message",
@@ -158,6 +162,8 @@ class AnthropicSSETranslator:
         return events
 
     def _close(self, finish_reason: Any, chunk: dict | None = None) -> list[dict]:
+        from .messages_api import STOP_REASON_MAP
+
         events: list[dict] = []
         for idx in sorted(self.blocks.keys()):
             block = self.blocks[idx]

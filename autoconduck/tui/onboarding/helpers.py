@@ -180,6 +180,24 @@ def is_agent_configured(agent_id: str) -> bool:
     return False
 
 
+def _persist(cfg):
+    # Onboarding should not import LiteLLM's large registry just to persist a
+    # user's selection. Runtime startup can enrich pricing lazily when needed.
+    from autoconduck.model_presets import resolve_models
+
+    models = resolve_models(cfg, use_litellm=False)
+    cfg.model_list = [m.model_dump() for m in models]
+    save_config(cfg)
+
+
+def _delete_provider(provider):
+    cfg = get_config()
+    from ..onboarding_models import remove_custom_provider
+
+    cfg.custom_models = remove_custom_provider(cfg.custom_models, provider)
+    save_config(cfg)
+
+
 
 try:
     import textual as _TEXTUAL

@@ -1,6 +1,7 @@
 """Advanced onboarding screens."""
 from __future__ import annotations
 from .helpers import *
+from .helpers import _delete_provider, _persist
 def _models_value(widget):
     return getattr(widget, "text", getattr(widget, "value", ""))
 from ..onboarding_models import upsert_custom_models, remove_custom_provider, search_match
@@ -79,7 +80,7 @@ if _TEXTUAL:
                     cfg = get_config()
                     value = self.query_one("#api_key").value
                     if value.strip() and not value.strip().startswith("env:"):
-                        from ..auth import set_provider_key
+                        from ...auth import set_provider_key
 
                         set_provider_key(self.key, value.strip())
                     cfg.preset_overrides[self.key] = apply_api_key(
