@@ -44,12 +44,14 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
         app = FastAPI(title="AutoConduck")
     decisions = []
 
-    async def _call(model, body, path=None, pseudo=None):
+    async def _call(model, body, path=None, pseudo=None, messages=None):
         from .server_streaming import _litellm
         llm = _litellm()
         if llm is None:
             raise RuntimeError("litellm unavailable")
         kwargs = body.model_dump(exclude_none=True)
+        if messages is not None:
+            kwargs["messages"] = messages
         if kwargs.get("tools"):
             kwargs["tools"] = sanitize_tools(kwargs["tools"])
         kwargs.update(model=model, drop_params=True)
@@ -122,6 +124,12 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                 return StreamingResponse(answer_stream(), media_type="text/event-stream")
             return {"id": "autoconduck", "object": "chat.completion", "created": created, "model": target or body.model,
                     "choices": [{"message": {"role": "assistant", "content": answer}}]}
+        messages = body.messages
+        if extra.get("_path") == "FAST":
+            from .digest import maybe_digest_messages
+            digest = await maybe_digest_messages(messages, get_config(), request=request)
+            if digest:
+                messages = messages + digest
         if body.stream:
             async def relay():
                 from .server_streaming import _litellm
@@ -130,9 +138,10 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                     yield 'data: ' + json.dumps({"error": {"message": "litellm unavailable", "type": "api_error"}}) + "\n\n"
                     yield "data: [DONE]\n\n"; return
                 kwargs = body.model_dump(exclude_none=True)
+                kwargs["messages"] = messages
                 if kwargs.get("tools"): kwargs["tools"] = sanitize_tools(kwargs["tools"])
-                kwargs.update(extra)
                 kwargs.update(model=target, drop_params=True)
+                kwargs.update(extra)
                 response = await llm.acompletion(**kwargs)
                 async for chunk in response:
                     if await request.is_disconnected(): break
@@ -141,7 +150,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                 yield "data: [DONE]\n\n"
             return StreamingResponse(relay(), media_type="text/event-stream")
         body.model = target
-        return JSONResponse(await _call(target, body, extra.get("_path"), extra.get("_pseudo")))
+        return JSONResponse(await _call(target, body, extra.get("_path"), extra.get("_pseudo"), messages=messages))
 
     async def messages_endpoint(body: MessagesRequest, request: Request):
         try: oai_messages = openai_messages_from_anthropic(body.model_dump(exclude_none=True))
@@ -157,6 +166,11 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                     for ev in translator.translate({"choices": [{"delta": {"role": "assistant", "content": answer}, "finish_reason": "stop"}]}): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                 return StreamingResponse(answer_stream(), media_type="text/event-stream")
             return JSONResponse(anthropic_response_text(answer, target or body.model, input_text=json.dumps(oai_messages)))
+        if extra.get("_path") == "FAST":
+            from .digest import maybe_digest_messages
+            digest = await maybe_digest_messages(oai_messages, get_config(), request=request)
+            if digest:
+                oai_messages = oai_messages + digest
         kwargs = messages_litellm_kwargs(target, extra)
         kwargs.update(_path=extra.get("_path", "unknown"), _pseudo=extra.get("_pseudo", body.model))
         for name, value in (("tools", openai_tools_from_anthropic(body.tools)), ("tool_choice", openai_tool_choice_from_anthropic(body.tool_choice)),
@@ -179,7 +193,11 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                         for ev in translator.translate(payload): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                     for ev in translator.finish(): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                 except Exception as exc:
-                    for ev in translator.error(str(exc)): yield f"event: {ev['event']}\ndata: {ev['data']}\n\n"
+                    exc_str = str(exc)
+                    if "Error building chunks" in exc_str or "stream_chunk_builder" in exc_str or "list index out of range" in exc_str:
+                        for ev in translator.finish(): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
+                    else:
+                        for ev in translator.error(str(exc)): yield f"event: {ev['event']}\ndata: {ev['data']}\n\n"
             return StreamingResponse(relay(), media_type="text/event-stream")
         try:
             result = await llm.acompletion(messages=oai_messages, stream=False, drop_params=True, **kwargs)

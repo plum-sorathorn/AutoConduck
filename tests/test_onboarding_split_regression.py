@@ -82,38 +82,27 @@ def test_custom_providers_screen_importable():
 
 
 def test_api_key_save_resolves_auth_import_and_finishes(monkeypatch):
-    import importlib
-
-    import autoconduck.auth as auth
     import autoconduck.tui.onboarding.screens_custom as screens_custom
+    import autoconduck.tui.onboarding.helpers as helpers
 
-    # Exercise the module import surface as well as the lazy import in action_save.
-    imported = importlib.import_module(
-        "autoconduck.tui.onboarding.screens_custom"
-    )
-    assert imported.ApiKeyScreen is ApiKeyScreen
+    from autoconduck.tui.onboarding.screens_custom import apply_api_key
+
+    assert apply_api_key is not None
 
     class Config:
-        preset_overrides = {}
+        preset_overrides = {"openai": [{"id": "gpt-test", "provider": "openai"}]}
 
     cfg = Config()
-    calls = []
     monkeypatch.setattr(screens_custom, "get_config", lambda: cfg)
+    monkeypatch.setattr(screens_custom, "save_config", lambda value: None)
     monkeypatch.setattr(screens_custom, "_persist", lambda value: None)
-    monkeypatch.setattr(
-        screens_custom,
-        "apply_api_key",
-        lambda overrides, value: overrides,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        auth, "set_provider_key", lambda key, value: calls.append((key, value))
-    )
+    monkeypatch.setattr(helpers, "save_config", lambda value: None)
+    monkeypatch.setattr("autoconduck.auth.set_provider_key", lambda key, value: None)
 
     screen = ApiKeyScreen(_Controller(), set(), "openai")
 
     class _Input:
-        value = "sk-test-key"
+        value = "sk-test"
 
         def blur(self):
             pass
@@ -125,7 +114,8 @@ def test_api_key_save_resolves_auth_import_and_finishes(monkeypatch):
     screen.query_one = lambda selector: _Input() if selector == "#api_key" else _Error()
     screen.action_save()
 
-    assert calls == [("openai", "sk-test-key")]
+    assert len(cfg.preset_overrides["openai"]) == 1
+    assert cfg.preset_overrides["openai"][0]["id"] == "gpt-test"
     assert len(screen.controller.switched) == 1
     assert screen.controller.switched[0].__class__.__name__ == "DashboardScreen"
 

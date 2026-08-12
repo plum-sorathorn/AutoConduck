@@ -107,6 +107,13 @@ class Config(BaseModel):
     ema_alpha: float = 0.1
     degraded_error_rate: float = 0.20
     degraded_window_s: int = 300
+    fast_path_digest_enabled: bool = True
+    fast_path_digest_max_files: int = 4
+    fast_path_digest_max_bytes: int = 8192
+    fast_path_digest_max_lines: int = 40
+    fast_path_digest_timeout_ms: int = 150
+    fast_path_digest_max_total_bytes: int = 12000
+    fast_path_digest_min_files: int = 2
     pseudo_model: str = "autoconduck"
     model_list: list[dict] = Field(default_factory=list)
     routing_log: bool = True

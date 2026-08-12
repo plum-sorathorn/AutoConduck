@@ -5,9 +5,6 @@ import re
 
 
 def _tokens(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9_]+", text.lower()))
-
-def _tokens(text: str) -> set[str]:
     """Tokenise text into a lowercase word set (shared with semantic_router)."""
     return set(re.findall(r"[a-z0-9_]+", text.lower()))
 
@@ -46,7 +43,7 @@ def _first_user_complexity(messages: list, config=None) -> float:
         content = str(msg.get("content", ""))
         if role == "user" and "<system-reminder>" not in content and content.strip():
             from .complexity import complexity_of
-            return complexity_of(clean_routing_text(content), config)
+            return complexity_of(content, config)
     return 0.0
 def _last(messages: list) -> str:
     if not isinstance(messages, list) or not messages:

@@ -103,6 +103,7 @@ def is_tool_loop(messages: list, config=None) -> bool:
         return False
 
     return True
+
 def score(
     messages: list,
     history,
@@ -128,10 +129,10 @@ def score(
     # Active tool loops stay on the fast path UNLESS an escalation or stack trace
     # trigger fired (handled inside is_tool_loop) or the tool chain is very long.
     if is_tool_loop(messages, config=cfg):
-        # Apply context boost to complexity even on the forced fast path so that
-        # the persisted complexity value reflects accumulated session difficulty.
         ctx = _context_boost(messages)
-        return Score("fast", "fast", 0.0, min(1.0, complexity + ctx), "interactive agent tool loop")
+        first_comp = _first_user_complexity(messages, cfg)
+        eff_complexity = min(1.0, max(complexity, first_comp) + ctx)
+        return Score("fast", "fast", 0.0, eff_complexity, "interactive agent tool loop")
 
     # Apply context-aware boost (conversation depth, tool chain, intent drift)
     ctx = _context_boost(messages)

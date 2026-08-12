@@ -128,7 +128,11 @@ def install_recorder(llm: Any) -> None:
                             final_usage = _usage(chunk)
                         yield chunk
                     record(path, pseudo, model, *(final_usage or (prompt, completion)))
-                except Exception:
+                except Exception as exc:
+                    exc_str = str(exc)
+                    if "Error building chunks" in exc_str or "stream_chunk_builder" in exc_str or "list index out of range" in exc_str:
+                        record(path, pseudo, model, *(final_usage or (prompt, completion)))
+                        return
                     pricing.record_error(model)
                     raise
             return relay()

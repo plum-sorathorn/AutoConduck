@@ -4,7 +4,7 @@ from .helpers import *
 from .helpers import _delete_provider, _persist
 def _models_value(widget):
     return getattr(widget, "text", getattr(widget, "value", ""))
-from ..onboarding_models import upsert_custom_models, remove_custom_provider, search_match
+from ..onboarding_models import apply_api_key, upsert_custom_models, remove_custom_provider, search_match
 from autoconduck.config import get_config, save_config, resolve_api_key
 from autoconduck.model_presets import curated_model_catalog, resolve_models
 try:
