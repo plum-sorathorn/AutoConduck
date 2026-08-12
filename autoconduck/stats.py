@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import home_dir
-from . import pricing
+from .routing import pricing
 
 _latest_selection: dict[str, Any] = {}
 

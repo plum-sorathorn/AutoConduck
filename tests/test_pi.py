@@ -44,6 +44,14 @@ def test_pi_adapter_patch_writes_extension_file(pi_dir):
     assert "providers" not in data or "autoconduck" not in data.get("providers", {})
 
 
+def test_pi_extension_registers_all_pseudo_models_at_local_base_url(pi_dir):
+    PiAdapter().patch(Config())
+    content = (pi_dir / "extensions" / "autoconduck.ts").read_text(encoding="utf-8")
+    assert 'baseUrl: "http://127.0.0.1:11434/v1"' in content
+    for model in ("autoconduck", "autoconduck-budget", "autoconduck-expensive"):
+        assert f'"id": "{model}"' in content
+
+
 def test_pi_adapter_custom_context_window(pi_dir):
     adapter = PiAdapter()
     cfg = Config()

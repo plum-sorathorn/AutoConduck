@@ -1,9 +1,9 @@
-import autoconduck.dispatcher as dispatcher
+import autoconduck.routing.dispatcher as dispatcher
 
 from autoconduck.config import Config
-from autoconduck.evaluator import score, has_stack_trace
-from autoconduck.semantic_router import RouteMatch
-from autoconduck.dispatcher import route, RoutingDecision
+from autoconduck.routing.evaluator import score, has_stack_trace
+from autoconduck.routing.semantic_router import RouteMatch
+from autoconduck.routing.dispatcher import route, RoutingDecision
 
 
 def test_stack_trace_boost_is_bounded():

@@ -32,7 +32,7 @@ Agent → LiteLLM Proxy (streaming/provider abstraction)
 1. **LiteLLM Proxy** provides provider abstraction, streaming, model usage,
    and the OpenAI-compatible `/v1/chat/completions` and `/v1/models` surface.
 2. **Aurelio Semantic Router** classifies fast/slow routes with embedding-based
-   confidence. `dispatcher.py`, `semantic_router.py`, and `evaluator.py` add
+   confidence. `routing/dispatcher.py`, `routing/semantic_router.py`, and `routing/evaluator.py` add
    the routing judgment without I/O or LLM calls on the fast path.
 3. **LangGraph** runs the asynchronous subagent DAG through `orchestrator/`.
    The dashboard and Textual `tui/` make routing decisions inspectable.
@@ -105,7 +105,7 @@ with `autoconduck start --headless` for them.
    LiteLLM Proxy at `127.0.0.1:11434`, or the Anthropic `/v1/messages` shim in
    `messages_api.py`.
 2. Requests for `autoconduck`, `autoconduck-budget`, or `autoconduck-expensive`
-   are intercepted and handed to `dispatcher.py` through `_route_target`.
+   are intercepted and handed to `routing/dispatcher.py` through `_route_target`.
 3. `dispatcher.route()` runs the synchronous, zero-I/O fast path: 
    `semantic_router.route()` → `evaluator.score()` → an optional tiebreaker.
    This path is designed to stay under 5 ms.
@@ -116,7 +116,7 @@ with `autoconduck start --headless` for them.
 5. Errors anywhere degrade to the fast path, never to a client-facing API
    error.
 
-### Semantic router (`semantic_router.py`)
+### Semantic router (`routing/semantic_router.py`)
 
 The router has `fast_path` and `slow_path` routes. Fast examples include
 typos, renames, “where is X defined”, docstrings, and comments. Slow examples
@@ -129,7 +129,7 @@ The optional real embedding layer uses `semantic_router` and
 token-overlap matching over the examples is used; no match returns
 `RouteMatch("fast_path", 0.0)`.
 
-### Evaluator (`evaluator.py`)
+### Evaluator (`routing/evaluator.py`)
 
 The evaluator is pure math on the fast path:
 
@@ -152,7 +152,7 @@ prompts escalate even when the semantic router says fast. The budget pseudo-mode
 it by `0.85`. Both instead shift the selection target: budget applies a `−0.20`
 bias and expensive a `+0.20` bias.
 
-### Pricing (`pricing.py`)
+### Pricing (`routing/pricing.py`)
 
 Prices resolve config → `litellm.model_cost` → `pricing_fallback.json`.
 `scaled_cost` is `ln(1 + price)` relative to the pool maximum. An EMA realized-
@@ -272,8 +272,8 @@ tests for the whole system”.
 
 ### Module map
 
-`dispatcher.py` (sequence) · `semantic_router.py` · `evaluator.py` ·
-`pricing.py` · `config.py` (`resolve_orchestrator_model`, `qualify_model`,
+`routing/dispatcher.py` (sequence) · `routing/semantic_router.py` · `routing/evaluator.py` ·
+`routing/pricing.py` · `config.py` (`resolve_orchestrator_model`, `qualify_model`,
 `resolve_api_key`, `normalize_api_base`) · `providers.py` · `launcher.py`
 (shims and ensure/release refcounting) · `messages_api.py` (Anthropic shim) ·
 `orchestrator/{graph,planner,subagents,compactor}.py` · `agents/` (external
@@ -288,7 +288,7 @@ pytest
 ```
 
 The project is Python 3.11+; `providers.py` supports generic OpenAI-compatible
-gateways and model discovery, while `pricing.py` chooses capable models.
+gateways and model discovery, while `routing/pricing.py` chooses capable models.
 
 ## TUI keymap highlights
 

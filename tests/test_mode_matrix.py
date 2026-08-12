@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from autoconduck.config import Config
 from autoconduck import dispatcher
 from autoconduck.main import _build
+from autoconduck import server_streaming
 
 
 MODELS = [
@@ -61,7 +62,7 @@ def harness(monkeypatch, tmp_path):
     # _build is intentionally cached by the application; isolate each matrix case.
     main_module.app = None
     main_module._cached.clear()
-    monkeypatch.setattr(main_module, "get_config", lambda: cfg)
+    monkeypatch.setattr(server_streaming, "get_config", lambda: cfg)
     import litellm
 
     async def acompletion(**kwargs):
@@ -123,7 +124,7 @@ def test_slow_path_langgraph_happy_path(harness):
         await litellm.acompletion(model="openai/cheap-model", messages=[])
         await litellm.acompletion(model="openai/pricy-model", messages=[])
         return "FINAL ANSWER"
-    dispatcher.route = lambda *args, **kwargs: SimpleNamespace(path="slow", model=None)
+    dispatcher.route = lambda *args, **kwargs: SimpleNamespace(path="SLOW", model=None)
     original_run = orchestrator.run
     orchestrator.run = run_graph
     try:
@@ -138,7 +139,7 @@ def test_slow_path_langgraph_happy_path(harness):
 def test_slow_path_degrades_when_langgraph_missing(harness, monkeypatch):
     monkeypatch.setattr("autoconduck.orchestrator.graph._LANGGRAPH_AVAILABLE", False)
     client, calls, _ = harness
-    monkeypatch.setattr(dispatcher, "route", lambda *args, **kwargs: SimpleNamespace(path="slow", model=None))
+    monkeypatch.setattr(dispatcher, "route", lambda *args, **kwargs: SimpleNamespace(path="SLOW", model=None))
     assert fast(client, text=SLOW).status_code == 200
     assert calls
 
@@ -151,7 +152,7 @@ def test_slow_path_degrades_on_planner_failure(harness):
         return FakeResponse("not json") if "mid-model" in kwargs.get("model", "") else FakeResponse("hello")
     # The planner's invalid result is contained and the API must still fall back.
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(dispatcher, "route", lambda *args, **kwargs: SimpleNamespace(path="slow", model=None))
+    monkeypatch.setattr(dispatcher, "route", lambda *args, **kwargs: SimpleNamespace(path="SLOW", model=None))
     monkeypatch.setattr(litellm, "acompletion", broken)
     try:
         assert fast(client, text=SLOW).status_code == 200
@@ -169,7 +170,7 @@ def test_subagent_exception_returns_error_string_not_crash(harness, monkeypatch)
             raise RuntimeError("subagent unavailable")
         return await original(**kwargs)
     monkeypatch.setattr(litellm, "acompletion", raises)
-    monkeypatch.setattr(dispatcher, "route", lambda *args, **kwargs: SimpleNamespace(path="slow", model=None))
+    monkeypatch.setattr(dispatcher, "route", lambda *args, **kwargs: SimpleNamespace(path="SLOW", model=None))
     import autoconduck.orchestrator as orchestrator
     async def run_graph(*args, **kwargs):
         try:
@@ -206,7 +207,7 @@ def test_anthropic_messages_answer_stream_full_sse_sequence(harness, monkeypatch
     """Orchestrator __answer__ short-circuit must emit a complete Anthropic SSE
     sequence: message_start ... content_block_delta ... message_stop."""
     client, calls, _ = harness
-    monkeypatch.setattr(dispatcher, "route", lambda *args, **kwargs: SimpleNamespace(path="slow", model=None))
+    monkeypatch.setattr(dispatcher, "route", lambda *args, **kwargs: SimpleNamespace(path="SLOW", model=None))
     import autoconduck.orchestrator as orchestrator
     async def run_graph(*args, **kwargs):
         return "autoconduck-ok"

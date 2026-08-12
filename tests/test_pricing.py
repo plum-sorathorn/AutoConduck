@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-import autoconduck.pricing as pricing
+import autoconduck.routing.pricing as pricing
 
 
 def setup_function():

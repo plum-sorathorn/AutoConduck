@@ -29,7 +29,7 @@ def _pool_id(entry):
 
 
 def _configured_entry(model, config):
-    from .config import _configured_model_sources
+    from ..config import _configured_model_sources
 
     wanted = str(model).removeprefix("openai/")
     for entry in _configured_model_sources(config):
@@ -172,7 +172,7 @@ def record_usage(model, prompt_tokens, completion_tokens, *, cost=None, success=
     old = _ema.get(model)
     alpha = 0.1
     try:
-        from .config import get_config
+        from ..config import get_config
 
         alpha = float(
             getattr(getattr(get_config(), "selection", None), "ema_alpha", 0.1)
@@ -229,7 +229,7 @@ def select_model_by_tier(tier, config):
 
 
 def pool_ids(config):
-    from .config import _configured_model_sources
+    from ..config import _configured_model_sources
 
     return [
         str(n)

@@ -6,6 +6,7 @@ import types
 import pytest
 
 from autoconduck import main
+from autoconduck import server_streaming
 from autoconduck import messages_api as m
 
 
@@ -302,10 +303,10 @@ async def test_chat_stream_litellm_missing_emits_error_and_done(monkeypatch):
         async def is_disconnected(self):
             return False
 
-    monkeypatch.setattr(main, "_route_target", route_target)
-    monkeypatch.setattr(main, "_litellm", lambda: None)
+    monkeypatch.setattr(server_streaming, "_route_target", route_target)
+    monkeypatch.setattr(server_streaming, "_litellm", lambda: None)
     body = main.CompletionRequest(model="autoconduck", messages=[], stream=True)
-    response = await main.completions(body, Request())
+    response = await server_streaming._cached["completions"](body, Request())
     output = "".join([chunk async for chunk in response.body_iterator])
     assert '"type": "api_error"' in output
     assert "data: [DONE]" in output
@@ -324,15 +325,15 @@ async def test_messages_stream_first_await_failure_returns_502(monkeypatch):
         async def is_disconnected(self):
             return False
 
-    monkeypatch.setattr(main, "_route_target", route_target)
-    monkeypatch.setattr(main, "_litellm", lambda: FailingLLM())
+    monkeypatch.setattr(server_streaming, "_route_target", route_target)
+    monkeypatch.setattr(server_streaming, "_litellm", lambda: FailingLLM())
 
     body = main.MessagesRequest(
         model="autoconduck",
         messages=[{"role": "user", "content": "Hello"}],
         stream=True,
     )
-    response = await main.messages_endpoint(body, Request())
+    response = await server_streaming._cached["messages_endpoint"](body, Request())
     assert response.status_code == 502
     assert response.body == b'{"type":"error","error":{"type":"api_error","message":"upstream failed"}}'
 
@@ -352,8 +353,8 @@ async def test_messages_thinking_enables_litellm_drop_params(monkeypatch):
     async def route_target(_model, _messages):
         return "deepseek", {"model": "openai/deepseek"}
 
-    monkeypatch.setattr(main, "_route_target", route_target)
-    monkeypatch.setattr(main, "_litellm", lambda: LLM())
+    monkeypatch.setattr(server_streaming, "_route_target", route_target)
+    monkeypatch.setattr(server_streaming, "_litellm", lambda: LLM())
 
     body = main.MessagesRequest(
         model="autoconduck",
@@ -361,7 +362,7 @@ async def test_messages_thinking_enables_litellm_drop_params(monkeypatch):
         thinking={"type": "enabled", "budget_tokens": 1024},
         stream=False,
     )
-    response = await main.messages_endpoint(body, object())
+    response = await server_streaming._cached["messages_endpoint"](body, object())
 
     assert response.status_code == 200
     assert calls[0]["thinking"] == {"type": "enabled", "budget_tokens": 1024}

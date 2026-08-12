@@ -93,7 +93,7 @@ _PSEUDO_SET = frozenset({"autoconduck", "autoconduck-budget", "autoconduck-expen
 
 
 async def _do_router_dispatch(messages, body_model, cfg):
-    from .dispatcher import route
+    from .routing.dispatcher import route
     try:
         decision = await asyncio.to_thread(route, messages, [], pseudo_model=body_model, config=cfg)
         return getattr(decision, "path", "FAST").upper(), getattr(decision, "model", None)
@@ -111,7 +111,7 @@ async def _do_slow_route(messages, body_model):
 
 def _pick_fast_model(body_model, cfg):
     try:
-        from .pricing import select_closest, pool_ids
+        from .routing.pricing import select_closest, pool_ids
         return select_closest(pool_ids(cfg), .15, cfg, pseudo_model=body_model)
     except Exception:
         from .config import resolve_orchestrator_model

@@ -212,9 +212,9 @@ New files: `tests/test_valuation.py`, `tests/test_pricing_select_closest.py`, `t
 # 6. Implementation order
 
 1. **`config.py`** — add `SelectionConfig` dataclass + defaults, wire into `AppConfig`, preserve `tier:` YAML parsing.
-2. **`evaluator.py`** — config-driven weights, add `keyword_domain`/`edit_intent`/`multi_step` factors, keep `complexity_of(text, config=None)` signature backward-compatible. Run `pytest tests/test_evaluator.py`.
-3. **`pricing.py`** — add `target_scaled_cost`, `select_closest`, `cheapest_enabled`, `_entry_effective_value` EMA blend; turn `select`/`select_model_by_tier` into thin deprecated wrappers. Run new `tests/test_pricing_select_closest.py`.
-4. **`dispatcher.py`** — add `RoutingDecision.model`, populate on fast path, extend tiebreaker prompt+parsing.
+2. **`routing/evaluator.py`** — config-driven weights, add `keyword_domain`/`edit_intent`/`multi_step` factors, keep `complexity_of(text, config=None)` signature backward-compatible. Run `pytest tests/test_evaluator.py`.
+3. **`routing/pricing.py`** — add `target_scaled_cost`, `select_closest`, `cheapest_enabled`, `_entry_effective_value` EMA blend; turn `select`/`select_model_by_tier` into thin deprecated wrappers. Run new `tests/test_pricing_select_closest.py`.
+4. **`routing/dispatcher.py`** — add `RoutingDecision.model`, populate on fast path, extend tiebreaker prompt+parsing.
 5. **`resolver.py`** — consume `decision.model` instead of calling `pricing.select` directly.
 6. **`orchestrator/planner.py`** — add `TaskPlan.budget_hint`, replace `_model_name` with `planner_target` + `select_closest`, update planner system prompt.
 7. **`orchestrator/subagents.py`** — thread `role`/`plan_breadth`/`budget_hint` through subagent dispatch, implement `subagent_target`, replace the line-45 `select_model_by_tier("cheap", cfg)` call.

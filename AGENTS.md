@@ -15,8 +15,8 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
 
 ## Non-negotiable architecture invariants
 
-- Fast path stays under 5 ms (`tests/test_dispatcher.py` asserts < 0.005): `semantic_router.py` and `evaluator.py` are sync-only (zero async); routing decisions perform no I/O or LLM calls.
-- Confidence below the tunable ambiguous threshold (default 0.55–0.70) goes to a cheap LLM tiebreaker.
+- Fast path stays under 5 ms (`tests/test_dispatcher.py` asserts < 0.005): `routing/semantic_router.py` and `routing/evaluator.py` are sync-only (zero async); routing decisions perform no I/O or LLM calls.
+- Confidence below the tunable ambiguous threshold (default 0.55–0.70) goes to a cheap LLM tiebreaker. If the tiebreaker is unavailable (timeout, API error, no model, or local-port recursion), the default tiebreaker returns `None` and routing falls back to a deterministic complexity decision — SLOW when complexity >= `slow_threshold` (0.75) unless the provider is degraded, in which case FAST. Reason strings are `tiebreaker: fast|slow`, `tiebreaker: fast (below-floor)`, `tiebreaker_unavailable: complexity-fallback`, and `tiebreaker_unavailable: degraded-provider`; provider health uses `pricing.is_degraded(model, window_s, error_rate)`.
 - Any LangGraph, orchestrator, or schema error degrades to the fast path, never a client-facing API error.
 - Model selection is dynamic closest-cost matching, not fixed tiers: `ModelEntry.tier` is advisory/display-only. Orchestrator phases use `PHASE_BANDS` (defined in `orchestrator/graph.py`) — planner [0.55,0.85], subagent [0.10,0.55], executor [0.35,0.70] — with on-the-fly targets from task value, `budget_hint`, role weights, breadth damping, and compactor-summary complexity. `RoutingDecision.model` is populated on the fast path and is never None there.
 - Honor `request.is_disconnected()` for instant cancellation (used in `main.py` streaming loops).
@@ -24,21 +24,27 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
 
 ## API surface
 
-- The FastAPI app in `autoconduck/main.py` serves the LiteLLM-backed endpoint: `/v1/chat/completions` and `/v1/models` (the latter returning exactly the three pseudo-models from `PSEUDO_MODELS` in `messages_api.py`: `autoconduck`, `autoconduck-budget`, `autoconduck-expensive`), plus AutoConduck-owned `/stats` and `/healthz`, and an Anthropic-compatible `/v1/messages` shim (covered by `tests/test_messages_api.py`).
+- The FastAPI app in `autoconduck/server_streaming.py`, with routes installed by `server_routes.py`, serves the LiteLLM-backed endpoint: `/v1/chat/completions` and `/v1/models` (the latter returning exactly the three pseudo-models from `PSEUDO_MODELS` in `messages_api.py`: `autoconduck`, `autoconduck-budget`, `autoconduck-expensive`), plus AutoConduck-owned `/stats` and `/healthz`, and an Anthropic-compatible `/v1/messages` shim (covered by `tests/test_messages_api.py`). `main.py` remains a compatibility facade.
 
 ## Key modules
 
-- `dispatcher.py`: thin sequence of semantic router → evaluator → optional tiebreaker; keep its own logic minimal.
-- `semantic_router.py`: wrapper over the external `semantic-router` library (the "Aurelio" pillar) with fast/slow routes and confidence.
-- `evaluator.py`: `T_i ∈ [0,1]`, stack-trace boost `+0.25`, hysteresis clamp `≤0.50` after escalation `≥0.80`, and ambiguous-zone handling.
-- `pricing.py`: `select_closest()` closest-cost model matching on ln(1+cost) scaled domain (ties→cheaper, degraded exclusion, `cheapest_enabled()` deterministic fallback), `target_scaled_cost()` with pseudo-model bias (±0.20) and `value_to_cost_gamma`, EMA realized-cost blend α=0.1 (≥ `ema_min_samples` = 5 samples) via `_entry_effective_value`, failover after trailing error rate >20%, `pricing_fallback.json`; `select()`/`select_model_by_tier()` are deprecated thin wrappers.
+- `routing/dispatcher.py`: thin sequence of semantic router → evaluator → optional tiebreaker; keep its own logic minimal.
+- `routing/semantic_router.py`: wrapper over the external `semantic-router` library (the "Aurelio" pillar) with fast/slow routes and confidence.
+- `routing/evaluator.py`: `T_i ∈ [0,1]`, stack-trace boost `+0.25`, hysteresis clamp `≤0.50` after escalation `≥0.80`, and ambiguous-zone handling.
+- `routing/complexity.py` and `routing/complexity_helpers.py`: fast complexity scoring and its extraction helpers.
+- `routing/pricing.py`: `select_closest()` closest-cost model matching on ln(1+cost) scaled domain (ties→cheaper, degraded exclusion, `cheapest_enabled()` deterministic fallback), `target_scaled_cost()` with pseudo-model bias (±0.20) and `value_to_cost_gamma`, EMA realized-cost blend α=0.1 (≥ `ema_min_samples` = 5 samples) via `_entry_effective_value`, failover after trailing error rate >20%, `pricing_fallback.json`; `select()`/`select_model_by_tier()` are deprecated thin wrappers.
 - `providers.py`: LiteLLM `openai/<model>` plus `api_base`, `/v1/models` discovery.
 - `config.py`: active model configuration, `resolve_orchestrator_model`, `normalize_api_root` (adds `/v1` for host-root gateway URLs at LiteLLM call sites), `qualify_model()` (`openai/<id>`), `resolve_api_key()` (literal keys, env names, or literal fallback values).
-- `launcher.py`: launcher shims, `ensure_server`/`release_server` refcounting, PATH integration, `real_binary_path`, and `stop_server`.
-- `orchestrator/`: LangGraph `graph.py` (owns `PHASE_BANDS`) → Send-based `subagents.py` → `compactor.py` → executor; `planner.py` owns `TaskPlan`.
-- `model_presets.py`: runtime catalog ingested from the installed litellm registry (`litellm.model_cost` via `_ingest_litellm_costs`).
+- `launcher.py`, `launcher_procs.py`, `launcher_shims.py`: server refcounting and process discovery; shims, environment/PATH integration, `real_binary_path`, and install/uninstall helpers.
+- `cli.py` and `cli_launch.py`: CLI commands and agent installation/launch/tuning helpers; `main.py` is the compatibility entrypoint.
+- `orchestrator/`: LangGraph `graph.py` (owns `PHASE_BANDS`) → Send-based `subagents.py` → `compactor.py` → executor; `planner.py` owns `TaskPlan`, with shared helpers in `helpers.py`.
+- `model_presets.py`, `presets_data.py`, `presets_ingest.py`, and `presets_fallback.py`: runtime catalog data and ingestion from the installed litellm registry (`litellm.model_cost` via `_ingest_litellm_costs`), while public names remain re-exported from `model_presets.py`.
 - `agents/`: agent adapters (`opencode.py`, `claude_code.py`, `pi.py`).
-- `messages_api.py`, `main.py`, and Textual `tui/` (Ctrl+C is the single quit chord per `tui/keymap.py`; Textual Ctrl+Q is disabled) provide the shim, CLI, and onboarding/monitoring.
+- `messages_api.py`, `messages_models.py`, and `messages_sse.py` provide the Anthropic shim models and SSE translation; Textual `tui/` and its `tui/onboarding/` package provide onboarding/monitoring (Ctrl+C is the single quit chord per `tui/keymap.py`; Textual Ctrl+Q is disabled).
+
+## Repository layout
+
+- `routing/` contains the synchronous fast-path stack; `server_streaming.py`/`server_routes.py` split the FastAPI server; `cli.py`/`cli_launch.py` split CLI concerns; `presets_*` split catalog data and ingestion; and `tui/onboarding/` contains the onboarding package.
 
 ## State, environment, and scope
 

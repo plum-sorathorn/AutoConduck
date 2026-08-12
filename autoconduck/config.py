@@ -244,7 +244,7 @@ def resolve_orchestrator_model(cfg=None) -> str:
 def select_model_by_tier(tier: str, cfg=None) -> str:
     """Select a configured model by relative price, with the legacy fallback."""
     try:
-        from autoconduck.pricing import select_model_by_tier as _select
+        from autoconduck.routing.pricing import select_model_by_tier as _select
 
         return _select(tier, cfg or get_config()) or resolve_orchestrator_model(cfg)
     except Exception:

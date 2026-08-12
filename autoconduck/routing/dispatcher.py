@@ -26,7 +26,7 @@ class RoutingDecision:
 def _default_tiebreaker(message, pseudo_model, config):
     try:
         import litellm
-        from .config import (
+        from ..config import (
             get_config,
             normalize_api_base,
             qualify_model,
@@ -37,7 +37,7 @@ def _default_tiebreaker(message, pseudo_model, config):
         content = getattr(message, "content", str(message))
         model = pricing.cheapest_enabled(cfg)
         if not model:
-            return "fast"
+            return None
         entry = next(
             (
                 e
@@ -73,7 +73,8 @@ def _default_tiebreaker(message, pseudo_model, config):
                 parsed.hostname in {"127.0.0.1", "localhost", "::1"}
                 and (parsed.port or 80) == local_port
             ):
-                return "fast"
+                # The local gateway would recurse into this tiebreaker call.
+                return None
         params = {"model": qualify_model(model)}
         if base:
             params["api_base"] = base
@@ -96,9 +97,9 @@ def _default_tiebreaker(message, pseudo_model, config):
         match = __import__("re").match(
             r"^(FAST|SLOW)(?:\s+([1-9]))?\s*$", answer
         )
-        return answer if match else "FAST"
+        return answer if match else None
     except Exception:
-        return "FAST"
+        return None
 
 
 def route(
@@ -109,7 +110,7 @@ def route(
     config=None,
 ) -> RoutingDecision:
     if config is None:
-        from .config import get_config
+        from ..config import get_config
 
         config = get_config()
     enabled = [
@@ -140,7 +141,7 @@ def route(
             else None
         )
         if model:
-            from .stats import record_selection
+            from ..stats import record_selection
 
             record_selection(
                 result.complexity,
@@ -169,25 +170,42 @@ def route(
         )
         if not use_tiebreaker:
             path, complexity = "fast", result.complexity
+            reason_suffix = "fast (below-floor)"
         else:
             try:
-                answer = str(
-                    (tiebreaker or _default_tiebreaker)(
-                        messages[-1], pseudo_model, config
-                    )
-                ).upper()
-                import re
+                answer = str((tiebreaker or _default_tiebreaker)(messages[-1], pseudo_model, config)).upper()
+            except Exception:
+                answer = "NONE"
+            import re
 
-                match = re.match(r"^(FAST|SLOW)(?:\s+([1-9]))?\s*$", answer)
-                digit = int(match.group(2)) if match and match.group(2) else None
+            match = re.match(r"^(FAST|SLOW)(?:\s+([1-9]))?\s*$", answer)
+            if answer == "NONE" or not match:
+                slow_threshold = float(getattr(selection, "slow_threshold", 0.75))
+                tiebreaker_model = pricing.cheapest_enabled(config)
+                degraded = bool(
+                    tiebreaker_model
+                    and pricing.is_degraded(
+                        tiebreaker_model,
+                        getattr(config, "degraded_window_s", 300),
+                        getattr(config, "degraded_error_rate", 0.2),
+                    )
+                )
+                if degraded:
+                    path = "fast"
+                    reason_suffix = "unavailable: degraded-provider"
+                else:
+                    path = "slow" if result.complexity >= slow_threshold else "fast"
+                    reason_suffix = "unavailable: complexity-fallback"
+                complexity = result.complexity
+            else:
+                digit = int(match.group(2)) if match.group(2) else None
                 complexity = (
                     0.5 * result.complexity + 0.5 * (digit / 9)
                     if digit is not None
                     else result.complexity
                 )
-                path = "slow" if match and match.group(1) == "SLOW" else "fast"
-            except Exception:
-                path, complexity = "fast", result.complexity
+                path = "slow" if match.group(1) == "SLOW" else "fast"
+                reason_suffix = path
         model = (
             pricing.select_closest(
                 pricing.pool_ids(config), complexity, config, pseudo_model=pseudo_model
@@ -196,7 +214,7 @@ def route(
             else None
         )
         if model:
-            from .stats import record_selection
+            from ..stats import record_selection
 
             record_selection(
                 complexity,
@@ -209,7 +227,11 @@ def route(
             confidence_band="ambiguous",
             confidence=result.confidence,
             complexity=complexity,
-            reason="tiebreaker: " + path,
+            reason=(
+                "tiebreaker: " + reason_suffix
+                if not reason_suffix.startswith("unavailable:")
+                else "tiebreaker_" + reason_suffix
+            ),
             model=model,
         )
     model = (
@@ -223,7 +245,7 @@ def route(
         else None
     )
     if model:
-        from .stats import record_selection
+        from ..stats import record_selection
 
         record_selection(
             result.complexity,

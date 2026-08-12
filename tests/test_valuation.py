@@ -1,7 +1,7 @@
 import math
 import pytest
 from autoconduck.config import Config
-from autoconduck.evaluator import (
+from autoconduck.routing.evaluator import (
     complexity_of,
     has_stack_trace,
     has_escalation_signal,
@@ -265,7 +265,7 @@ def test_intent_drift_low_when_same_topic():
 
 def test_long_tool_loop_breaks_fast_path_bypass():
     """Tool loop with >12 tool turns should return is_tool_loop=False (allow rescoring)."""
-    from autoconduck.evaluator import is_tool_loop
+    from autoconduck.routing.evaluator import is_tool_loop
     msgs = [{"role": "user", "content": "do something complex"}]
     for i in range(13):
         msgs.append({
@@ -281,7 +281,7 @@ def test_long_tool_loop_breaks_fast_path_bypass():
 
 def test_short_tool_loop_still_fast_path():
     """Tool loop with ≤12 tool turns preserves fast path bypass (no stack trace)."""
-    from autoconduck.evaluator import is_tool_loop
+    from autoconduck.routing.evaluator import is_tool_loop
     msgs = [
         {"role": "user", "content": "refactor the codebase"},
         {"role": "assistant", "content": "reading...", "tool_calls": [{"id": "c1"}]},
@@ -384,7 +384,7 @@ def test_non_escalation_text_not_detected():
 
 def test_idf_fallback_routes_data_slow():
     """Data/ML complex utterance should route to slow_path via the IDF fallback."""
-    from autoconduck.semantic_router import SemanticRouter
+    from autoconduck.routing.semantic_router import SemanticRouter
     router = SemanticRouter()
     router._layer = None  # force fallback path
     result = router.route("build an end-to-end ETL pipeline with feature engineering")
@@ -394,7 +394,7 @@ def test_idf_fallback_routes_data_slow():
 
 
 def test_idf_fallback_routes_writing_slow():
-    from autoconduck.semantic_router import SemanticRouter
+    from autoconduck.routing.semantic_router import SemanticRouter
     router = SemanticRouter()
     router._layer = None
     result = router.route(
@@ -406,7 +406,7 @@ def test_idf_fallback_routes_writing_slow():
 
 
 def test_idf_fallback_routes_simple_fast():
-    from autoconduck.semantic_router import SemanticRouter
+    from autoconduck.routing.semantic_router import SemanticRouter
     router = SemanticRouter()
     router._layer = None
     result = router.route("fix the grammar in this sentence")
@@ -416,7 +416,7 @@ def test_idf_fallback_routes_simple_fast():
 
 
 def test_idf_fallback_empty_input():
-    from autoconduck.semantic_router import SemanticRouter
+    from autoconduck.routing.semantic_router import SemanticRouter
     router = SemanticRouter()
     router._layer = None
     result = router.route("")

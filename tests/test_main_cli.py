@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from autoconduck import __version__
 from autoconduck.config import Config
 from autoconduck import main as cli
+from autoconduck import cli_launch
 
 
 def test_version_prints_version_and_exits_zero(capsys):
@@ -237,14 +238,14 @@ def test_cmd_launch_agent_passes_file_object_streams_to_popen(tmp_path):
         return SimpleNamespace(pid=1234)
 
     with (
-        patch.object(cli, "load_config", return_value=cfg),
-        patch.object(cli, "home_dir", return_value=tmp_path),
+        patch.object(cli_launch, "load_config", return_value=cfg),
+        patch.object(cli_launch, "home_dir", return_value=tmp_path),
         patch("autoconduck.launcher.kill_existing_on_port"),
         patch("autoconduck.launcher.daemon_python", return_value="pythonw.exe"),
         patch("autoconduck.launcher.real_binary_path", return_value=None),
-        patch.object(cli.shutil, "which", return_value=None),
+        patch.object(cli_launch.shutil, "which", return_value=None),
         patch("autoconduck.launcher.release_server"),
-        patch.object(cli.subprocess, "Popen", side_effect=popen),
+        patch.object(cli_launch.subprocess, "Popen", side_effect=popen),
         patch("urllib.request.urlopen"),
         patch(
             "autoconduck.agents.claude_code.ClaudeCodeAdapter",

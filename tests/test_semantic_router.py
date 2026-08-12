@@ -1,4 +1,4 @@
-import autoconduck.semantic_router as module
+import autoconduck.routing.semantic_router as module
 
 
 def test_seed_examples_return_valid_matches():

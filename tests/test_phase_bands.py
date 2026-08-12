@@ -11,5 +11,5 @@ def test_subagent_target_read_role_cheaper_than_write_role():
     c=config(); assert subagent_target("analyze files","read",1,.5,c) < subagent_target("analyze files","write",1,.5,c)
 def test_ambiguous_tiebreak_blends_llm_digit_with_heuristic(): assert .5*.4+.5*7/9 == .5*.4+.5*7/9
 def test_orchestrator_error_degrades_to_fast_path_with_model():
-    from autoconduck.dispatcher import route
+    from autoconduck.routing.dispatcher import route
     d=route(["fix typo"],[],config=c if False else config()); assert d.path == "fast" and d.model is not None

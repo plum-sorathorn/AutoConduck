@@ -5,7 +5,7 @@ from typing import Any
 
 from .planner import OutputContract, SubTask
 import math
-from autoconduck.evaluator import complexity_of
+from autoconduck.routing.evaluator import complexity_of
 
 
 def subagent_target(subtask_prompt, role, plan_breadth, budget_hint, config):
