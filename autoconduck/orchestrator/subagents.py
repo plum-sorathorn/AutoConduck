@@ -84,12 +84,18 @@ async def run_subagent(
         target = subagent_target(
             prompt, getattr(task, "role", "read"), plan_breadth, budget_hint, cfg
         )
+        max_cost = (
+            float(getattr(cfg.selection, "max_file_read_scaled_cost", 0.55))
+            if getattr(task, "role", "read") != "write"
+            else None
+        )
         params["model"] = qualify_model(
             pricing.select_closest(
                 pricing.pool_ids(cfg),
                 target,
                 cfg,
                 band=cfg.selection.phase_bands["subagent"],
+                max_scaled_cost=max_cost,
             )
         )
         params["_path"] = "orchestrator-subagent"

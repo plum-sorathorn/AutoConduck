@@ -154,7 +154,9 @@ def _completion(
     **kwargs: Any,
 ) -> Any:
     from autoconduck.config import orchestrator_litellm_params
+    from autoconduck.messages_api import normalize_messages_for_llm
 
+    messages = normalize_messages_for_llm(messages)
     kwargs = {**orchestrator_litellm_params(cfg), **kwargs}
     kwargs.setdefault("max_tokens", 500)
     from autoconduck.config import qualify_model
@@ -179,7 +181,7 @@ def _content(response: Any) -> str:
 
 
 def build_task_plan(
-    messages: list, client=None, cfg=None, task_value: float = 0.5
+    messages: list, client=None, cfg=None, task_value: float = 0.5, ground_truth: str = ""
 ) -> TaskPlan | None:
     """Ask the planner model for a structured task plan.
 
@@ -187,9 +189,14 @@ def build_task_plan(
     direct-executor path rather than spending a second LLM call on a retry.
     """
     try:
+        from autoconduck.messages_api import normalize_messages_for_llm
+
+        messages = normalize_messages_for_llm(messages if isinstance(messages, list) else [])
         schema = TaskPlan.model_json_schema()
         paths = _extract_file_paths(messages if isinstance(messages, list) else [])
         file_block = _format_file_contents(_read_files(paths))
+        if ground_truth:
+            file_block += f"\n\nRECON GROUND TRUTH EVIDENCE:\n{ground_truth}"
         system_content = PLANNER_SYSTEM_PROMPT + file_block
         prompt_messages = [{"role": "system", "content": system_content}, *messages]
         user_msg = "\n".join(

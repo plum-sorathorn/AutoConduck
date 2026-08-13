@@ -71,9 +71,13 @@ class SelectionConfig(BaseModel):
     # invoked.  Requests below this threshold are treated as fast-path even
     # when the dispatcher returns path=slow, saving 3-5 LLM calls per turn.
     min_orchestrator_complexity: float = 0.62
-    # Maximum number of subtasks the planner may generate.  Prevents unbounded
-    # analyst fan-out on requests that don't genuinely need it.
-    max_subtasks: int = 3
+    # Maximum scaled cost permitted for file reading / recon / read analyst subagents.
+    # Expensive models (scaled_cost > 0.55) will be excluded from file read tasks.
+    max_file_read_scaled_cost: float = 0.55
+    # Threshold below which an escalated session de-escalates back to fast path.
+    deescalation_threshold: float = 0.40
+    # Enable compiled fast-path mini graph execution.
+    enable_fast_path_graph: bool = True
     # Executor-subagent fan-out doubles LLM call count for multi-subtask plans;
     # keep disabled by default and only enable for truly complex batch tasks.
     enable_executor_subagents: bool = False

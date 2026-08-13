@@ -19,7 +19,11 @@ from .subagents import run_subagent
 from .helpers import _response_text, _executor_model
 
 
+from .recon import ReconTarget, build_recon_plan
+
+
 PHASE_BANDS = {
+    "recon": [0.10, 0.45],
     "planner": [0.55, 0.85],
     "subagent": [0.10, 0.55],
     "executor": [0.35, 0.70],
@@ -30,6 +34,7 @@ class State(BaseModel):
     messages: list = Field(default_factory=list)
     history: Any = None
     pseudo_model: str = "autoconduck"
+    recon: Any = None
     plan: TaskPlan | None = None
     subagent_outputs: dict[str, str] = Field(default_factory=dict)
     compacted: str = ""
@@ -47,7 +52,9 @@ async def _call(client: Any, model: str, messages: list[dict[str, str]]) -> str:
         get_config,
         qualify_model,
     )
+    from autoconduck.messages_api import normalize_messages_for_llm
 
+    messages = normalize_messages_for_llm(messages)
     params: TypingAny = orchestrator_litellm_params(get_config())
     params["model"] = qualify_model(model)
     params["_path"] = "orchestrator-executor"
@@ -109,14 +116,7 @@ async def _run_executor_subagents(
     pseudo_model: str,
     task_value: float,
 ) -> str:
-    """Fan the executor work into semantically-scoped write-draft subagents.
-
-    Constraints:
-    - Subagents only draft (read-only against real files); they do not write.
-    - FileClaimRegistry ensures each file belongs to exactly one group.
-    - Conflicting scopes are merged into the first-claiming group.
-    - The executor LLM synthesizes all drafts sequentially.
-    """
+    """Fan the executor work into semantically-scoped write-draft subagents."""
     import asyncio
     import logging
 
@@ -131,7 +131,6 @@ async def _run_executor_subagents(
         if registry.claim(gid, scope):
             groups[gid] = {"scope": list(scope), "subtask_ids": [task.id]}
         else:
-            # Find the owning group for the first conflicting file and merge into it
             owner_id = None
             for f in scope:
                 owner_id = registry._owners.get(f)
@@ -229,14 +228,13 @@ async def run(
     try:
         if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
             return None
+        import time
         from autoconduck.config import get_config
+        from autoconduck.messages_api import normalize_messages_for_llm
 
         cfg = get_config()
+        messages = normalize_messages_for_llm(messages)
 
-        # Short-circuit: for clearly non-complex tasks skip the planner and
-        # subagent fan-out entirely — use a single direct executor call.  This
-        # avoids spending 3-5 extra LLM calls on messages that only narrowly
-        # crossed the SLOW threshold.
         direct_threshold = float(
             getattr(getattr(cfg, "selection", None), "min_orchestrator_complexity", 0.62)
         )
@@ -256,23 +254,54 @@ async def run(
             except Exception:
                 return None
 
-        async def planner_node(state: State) -> dict:
+        async def recon_node(state: State) -> dict:
             if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
                 return {"fallback": True}
             try:
                 from autoconduck import stats
                 stats.update_active_routing(
                     active=True, path="SLOW", pseudo_model=state.pseudo_model,
-                    task_value=state.task_value, node="planner",
-                    step_detail="Planner generating JSON DAG task plan...",
+                    task_value=state.task_value, node="recon",
+                    step_detail="Recon discovering target files...",
                     start_time=time.time()
                 )
             except Exception:
                 pass
+            target = build_recon_plan(state.messages, client=client, cfg=cfg, task_value=state.task_value)
+            return {"recon": target}
+
+        async def recon_subagent_pool_node(state: State) -> dict:
+            if state.recon is None or not getattr(state.recon, "files", []):
+                return {"compacted": ""}
+            files = state.recon.files[:5]
+            try:
+                from autoconduck import stats
+                stats.update_active_routing(
+                    node="subagents",
+                    subtasks_total=len(files),
+                    step_detail=f"Running {len(files)} recon analyst subagent(s)..."
+                )
+            except Exception:
+                pass
+            from .planner import _read_files
+            raw_files = _read_files(files)
+            evidence = [f"[{path}]\n{content[:1500]}" for path, content in raw_files.items()]
+            return {"compacted": compact(evidence)}
+
+        async def planner_node(state: State) -> dict:
+            if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
+                return {"fallback": True}
+            try:
+                from autoconduck import stats
+                stats.update_active_routing(
+                    node="planner",
+                    step_detail="Planner generating JSON DAG task plan...",
+                )
+            except Exception:
+                pass
             plan = build_task_plan(
-                state.messages, client=client, cfg=cfg, task_value=state.task_value
+                state.messages, client=client, cfg=cfg, task_value=state.task_value, ground_truth=state.compacted
             )
-            # Clamp subtask count to prevent unbounded analyst fan-out.
             if plan is not None:
                 max_sub = int(getattr(getattr(cfg, "selection", None), "max_subtasks", 3))
                 if len(plan.subtasks) > max_sub:
@@ -361,7 +390,8 @@ async def run(
                 )
                 if task.id in state.subagent_outputs
             ]
-            return {"compacted": compact(ordered)}
+            merged = state.compacted + "\n" + compact(ordered) if state.compacted else compact(ordered)
+            return {"compacted": merged}
 
         async def executor_node(state: State) -> dict:
             if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
@@ -382,7 +412,6 @@ async def run(
             )
             task_value = getattr(state, "task_value", 0.5)
 
-            # Use executor subagents when the plan has multiple subtasks with file scope
             plan = state.plan
             use_subagents = (
                 plan is not None
@@ -404,7 +433,7 @@ async def run(
                     )
                     return {"result": result}
                 except Exception:
-                    pass  # fall through to single-executor
+                    pass
 
             prompt = f"Original request:\n{user_text}\n\nAnalyst summary:\n{state.compacted}"
             return {
@@ -430,11 +459,16 @@ async def run(
             return "end" if state.fallback else "compact"
 
         graph = StateGraph(State)
+        graph.add_node("recon", recon_node)
+        graph.add_node("recon_subagent_pool", recon_subagent_pool_node)
         graph.add_node("planner", planner_node)
         graph.add_node("subagent_pool", subagent_pool_node)
         graph.add_node("compactor", compactor_node)
         graph.add_node("executor", executor_node)
-        graph.add_edge(START, "planner")
+
+        graph.add_edge(START, "recon")
+        graph.add_edge("recon", "recon_subagent_pool")
+        graph.add_edge("recon_subagent_pool", "planner")
         graph.add_conditional_edges(
             "planner",
             after_plan,

@@ -44,6 +44,25 @@ def coerce_content_text(content: Any) -> str:
     return _text_from_blocks(content)
 
 
+def normalize_messages_for_llm(messages: list) -> list[dict]:
+    """Ensure all assistant messages have a reasoning_content key for thinking-mode API providers (e.g. Console Go)."""
+    if not isinstance(messages, list):
+        return []
+    normalized: list[dict] = []
+    for msg in messages:
+        if isinstance(msg, dict):
+            m = dict(msg)
+        elif hasattr(msg, "model_dump"):
+            m = msg.model_dump()
+        else:
+            m = {"role": getattr(msg, "role", "user"), "content": str(msg)}
+        if m.get("role") == "assistant":
+            if m.get("reasoning_content") is None:
+                m["reasoning_content"] = m.get("thinking") or m.get("reasoning") or ""
+        normalized.append(m)
+    return normalized
+
+
 def openai_messages_from_anthropic(body: dict) -> list[dict]:
     """Convert an Anthropic /v1/messages request body into OpenAI messages."""
     messages: list[dict] = []
@@ -57,16 +76,23 @@ def openai_messages_from_anthropic(body: dict) -> list[dict]:
         content = msg.get("content")
 
         if isinstance(content, str):
-            messages.append({"role": role, "content": content})
+            entry: dict[str, Any] = {"role": role, "content": content}
+            if role == "assistant":
+                entry["reasoning_content"] = msg.get("reasoning_content") or msg.get("thinking") or ""
+            messages.append(entry)
             continue
         if not isinstance(content, list):
-            messages.append({"role": role, "content": ""})
+            entry = {"role": role, "content": ""}
+            if role == "assistant":
+                entry["reasoning_content"] = msg.get("reasoning_content") or msg.get("thinking") or ""
+            messages.append(entry)
             continue
 
         text_parts: list[str] = []
         content_parts: list[dict[str, Any]] = []
         tool_calls: list[dict] = []
         tool_messages: list[dict] = []
+        thinking_parts: list[str] = []
         has_image = False
         for block in content:
             if not isinstance(block, dict):
@@ -76,6 +102,10 @@ def openai_messages_from_anthropic(body: dict) -> list[dict]:
                 text = block.get("text", "")
                 text_parts.append(text)
                 content_parts.append({"type": "text", "text": text})
+            elif btype == "thinking":
+                thinking_text = block.get("thinking", "")
+                if thinking_text:
+                    thinking_parts.append(thinking_text)
             elif btype == "tool_use":
                 tool_calls.append(
                     {
@@ -110,21 +140,27 @@ def openai_messages_from_anthropic(body: dict) -> list[dict]:
                 content_parts.append({"type": "image_url", "image_url": {"url": url}})
             # Unknown block types are silently skipped.
 
+        thinking_str = "".join(thinking_parts) if thinking_parts else (msg.get("reasoning_content") or msg.get("thinking") or "")
         if tool_calls:
-            entry: dict[str, Any] = {
+            entry = {
                 "role": role,
                 "content": content_parts if has_image else "".join(text_parts) or None,
             }
             entry["tool_calls"] = tool_calls
+            if role == "assistant":
+                entry["reasoning_content"] = thinking_str
             messages.append(entry)
-        elif text_parts or has_image:
-            messages.append({
+        elif text_parts or has_image or thinking_parts:
+            entry = {
                 "role": role,
                 "content": content_parts if has_image else "".join(text_parts),
-            })
+            }
+            if role == "assistant":
+                entry["reasoning_content"] = thinking_str
+            messages.append(entry)
         messages.extend(tool_messages)
 
-    return messages
+    return normalize_messages_for_llm(messages)
 
 
 def _clean_enum_value(val: Any) -> str:

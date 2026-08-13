@@ -422,3 +422,34 @@ def test_opencodego_litellm_params_avoids_provider_prefix(monkeypatch):
     assert params["api_key"] == "opencode-key-123"
 
 
+def test_normalize_messages_for_llm_reasoning_content():
+    msgs = [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there"},
+        {"role": "assistant", "content": "Let me think", "thinking": "step by step"},
+        {"role": "assistant", "content": "Done", "reasoning_content": "pre-existing reasoning"},
+    ]
+    normalized = m.normalize_messages_for_llm(msgs)
+    assert normalized[0] == {"role": "user", "content": "Hello"}
+    assert normalized[1] == {"role": "assistant", "content": "Hi there", "reasoning_content": ""}
+    assert normalized[2] == {"role": "assistant", "content": "Let me think", "thinking": "step by step", "reasoning_content": "step by step"}
+    assert normalized[3] == {"role": "assistant", "content": "Done", "reasoning_content": "pre-existing reasoning"}
+
+
+def test_openai_messages_from_anthropic_preserves_thinking():
+    body = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Evaluating options..."},
+                    {"type": "text", "text": "I will proceed with option A."}
+                ]
+            }
+        ]
+    }
+    converted = m.openai_messages_from_anthropic(body)
+    assert len(converted) == 1
+    assert converted[0]["role"] == "assistant"
+    assert converted[0]["content"] == "I will proceed with option A."
+    assert converted[0]["reasoning_content"] == "Evaluating options..."

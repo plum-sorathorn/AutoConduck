@@ -11,7 +11,10 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
     (openai_messages_from_anthropic, openai_tools_from_anthropic,
      openai_tool_choice_from_anthropic, litellm_params_for, count_tokens,
      AnthropicSSETranslator, anthropic_response_text, coerce_content_text,
-     sanitize_tools, messages_litellm_kwargs) = helpers
+     sanitize_tools, messages_litellm_kwargs, *extra_helpers) = helpers
+    normalize_messages_for_llm = extra_helpers[0] if extra_helpers else None
+    if normalize_messages_for_llm is None:
+        from .messages_api import normalize_messages_for_llm
     from fastapi import FastAPI
     from .config import get_config
     from .stats import aggregate, load_records, record
@@ -51,7 +54,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
             raise RuntimeError("litellm unavailable")
         kwargs = body.model_dump(exclude_none=True)
         if messages is not None:
-            kwargs["messages"] = messages
+            kwargs["messages"] = normalize_messages_for_llm(messages)
         if kwargs.get("tools"):
             kwargs["tools"] = sanitize_tools(kwargs["tools"])
         kwargs.update(model=model, drop_params=True)
@@ -65,11 +68,14 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
     async def _route_target(body_model, messages, request=None):
         started = time.perf_counter()
         cfg = get_config()
+        messages = normalize_messages_for_llm(messages)
         target, path = body_model, "direct"
         if body_model in PSEUDO_MODELS:
             try:
                 from .routing.dispatcher import route
-                decision = route(messages, [], pseudo_model=body_model, config=cfg)
+
+                history = decisions[-5:] if decisions else []
+                decision = route(messages, history, pseudo_model=body_model, config=cfg)
                 path = getattr(decision, "path", "FAST").upper()
                 model = getattr(decision, "model", None)
             except Exception:
@@ -120,6 +126,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                 "path_counts": usage["paths"], "pseudo_counts": usage["pseudos"]}
 
     async def completions(body: CompletionRequest, request: Request):
+        body.messages = normalize_messages_for_llm(body.messages)
         target, extra = await _route_target(body.model, body.messages, request)
         answer = extra.get("__answer__")
         if answer is not None:
@@ -133,7 +140,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                 return StreamingResponse(answer_stream(), media_type="text/event-stream")
             return {"id": "autoconduck", "object": "chat.completion", "created": created, "model": target or body.model,
                     "choices": [{"message": {"role": "assistant", "content": answer}}]}
-        messages = body.messages
+        messages = normalize_messages_for_llm(body.messages)
         if extra.get("_path") == "FAST":
             from .digest import maybe_digest_messages
             digest = await maybe_digest_messages(messages, get_config(), request=request)
@@ -147,7 +154,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                     yield 'data: ' + json.dumps({"error": {"message": "litellm unavailable", "type": "api_error"}}) + "\n\n"
                     yield "data: [DONE]\n\n"; return
                 kwargs = body.model_dump(exclude_none=True)
-                kwargs["messages"] = messages
+                kwargs["messages"] = normalize_messages_for_llm(messages)
                 if kwargs.get("tools"): kwargs["tools"] = sanitize_tools(kwargs["tools"])
                 kwargs.update(model=target, drop_params=True)
                 kwargs.update(extra)
@@ -162,7 +169,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
         return JSONResponse(await _call(target, body, extra.get("_path"), extra.get("_pseudo"), messages=messages))
 
     async def messages_endpoint(body: MessagesRequest, request: Request):
-        try: oai_messages = openai_messages_from_anthropic(body.model_dump(exclude_none=True))
+        try: oai_messages = normalize_messages_for_llm(openai_messages_from_anthropic(body.model_dump(exclude_none=True)))
         except Exception as exc: return JSONResponse({"type": "error", "error": {"type": "invalid_request_error", "message": str(exc)}}, status_code=400)
         try: target, extra = await _route_target(body.model, oai_messages, request)
         except Exception as exc: return JSONResponse({"type": "error", "error": {"type": "api_error", "message": str(exc)}}, status_code=500)

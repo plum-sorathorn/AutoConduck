@@ -156,6 +156,10 @@ def score(
             "agent complexity escalation" if escalation else "stack trace boost",
         )
 
+    deescalation_threshold = float(
+        getattr(getattr(cfg, "selection", None), "deescalation_threshold", 0.40) if cfg else 0.40
+    )
+
     previous = history[-1] if isinstance(history, list) and history else history
     escalated = bool(
         getattr(previous, "complexity", 0) >= ESCALATION_THRESHOLD
@@ -167,6 +171,11 @@ def score(
             )
         )
     )
+    # DE-ESCALATION: If session was escalated but current turn is simple (< deescalation_threshold)
+    # and carries no stack trace or escalation signals, active de-escalate back to fast path.
+    if escalated and complexity < deescalation_threshold and not trace and not escalation:
+        return Score("fast", "fast", confidence, complexity, "de-escalated to fast path")
+
     if escalated:
         complexity = min(complexity, hysteresis_floor)
 

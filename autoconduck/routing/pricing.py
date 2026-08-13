@@ -283,7 +283,19 @@ def target_scaled_cost(value, pseudo_model, config):
     return max(0.0, min(1.0, float(value) ** gamma + bias))
 
 
-def select_closest(pool, value, config, *, pseudo_model=None, band=None, degraded=None):
+def is_expensive_model(model: str, config=None) -> bool:
+    """Return True if the model's scaled cost exceeds the file-read ceiling (default 0.55)."""
+    try:
+        from ..config import get_config
+        cfg = config or get_config()
+        sel = getattr(cfg, "selection", cfg)
+        max_cost = float(getattr(sel, "max_file_read_scaled_cost", 0.55))
+        return scaled_cost(model, cfg) > max_cost
+    except Exception:
+        return False
+
+
+def select_closest(pool, value, config, *, pseudo_model=None, band=None, degraded=None, max_scaled_cost=None):
     try:
         names = [str(_pool_id(x)) for x in pool if _pool_id(x)]
         eligible = [m for m in names if not (degraded and m in degraded)]
@@ -292,6 +304,10 @@ def select_closest(pool, value, config, *, pseudo_model=None, band=None, degrade
         if not eligible:
             return cheapest_enabled(config)
         costs = _scaled_costs(names, config)
+        if max_scaled_cost is not None:
+            under_cap = [m for m in eligible if costs.get(m, 0.0) <= max_scaled_cost]
+            if under_cap:
+                eligible = under_cap
         if band:
             inside = [m for m in eligible if band[0] <= costs[m] <= band[1]]
             eligible = inside or eligible

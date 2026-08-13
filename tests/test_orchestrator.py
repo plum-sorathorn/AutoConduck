@@ -301,3 +301,21 @@ async def test_run_no_subagent_outputs_reaches_compactor():
                 result = await graph.run([], None, client=OkClient())
                 # Should degrade gracefully — either a string or None
                 assert isinstance(result, (str, type(None)))
+
+
+def test_build_recon_plan_explicit_path():
+    from autoconduck.orchestrator.recon import build_recon_plan
+    target = build_recon_plan([{"role": "user", "content": "Check autoconduck/orchestrator/planner.py"}])
+    assert "autoconduck/orchestrator/planner.py" in target.files
+    assert target.query == "Explicit file paths from request"
+
+
+def test_build_recon_plan_llm():
+    from autoconduck.orchestrator.recon import build_recon_plan
+    class Client:
+        def completion(self, **kwargs):
+            return {"choices": [{"message": {"content": '{"files": ["autoconduck/config.py"], "query": "config", "reasoning": "checking config"}'}}]}
+    target = build_recon_plan([{"role": "user", "content": "How does config loading work?"}], client=Client())
+    assert target.files == ["autoconduck/config.py"]
+    assert target.query == "config"
+

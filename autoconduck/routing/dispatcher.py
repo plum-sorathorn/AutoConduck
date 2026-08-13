@@ -113,11 +113,26 @@ def route(
         from ..config import get_config
 
         config = get_config()
-    enabled = [
-        entry
-        for entry in (getattr(config, "model_list", []) or [])
-        if entry.get("enabled", True)
-    ]
+    if getattr(getattr(config, "selection", None), "enable_fast_path_graph", True):
+        from .fast_graph import execute_fast_graph, FastGraphState
+
+        state = execute_fast_graph(
+            FastGraphState(
+                messages=messages,
+                history=history,
+                pseudo_model=pseudo_model,
+                config=config,
+                tiebreaker=tiebreaker,
+            )
+        )
+        return RoutingDecision(
+            path=state.path,
+            confidence_band=state.confidence_band,
+            confidence=state.confidence,
+            complexity=state.complexity,
+            reason=state.reason,
+            model=state.model,
+        )
     user_messages = _user_messages(messages)
     last = user_messages[-1] if user_messages else ""
     text = (

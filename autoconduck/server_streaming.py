@@ -77,13 +77,14 @@ def _build():
         coerce_content_text,
         sanitize_tools,
         messages_litellm_kwargs,
+        normalize_messages_for_llm,
         PSEUDO_MODELS,
     )
 
     from .server_routes import install_routes
     app = install_routes(
         app, Request, JSONResponse, StreamingResponse, BaseModel, Field,
-        (openai_messages_from_anthropic, openai_tools_from_anthropic, openai_tool_choice_from_anthropic, litellm_params_for, count_tokens, AnthropicSSETranslator, anthropic_response_text, coerce_content_text, sanitize_tools, messages_litellm_kwargs),
+        (openai_messages_from_anthropic, openai_tools_from_anthropic, openai_tool_choice_from_anthropic, litellm_params_for, count_tokens, AnthropicSSETranslator, anthropic_response_text, coerce_content_text, sanitize_tools, messages_litellm_kwargs, normalize_messages_for_llm),
         serve_model_ids, PSEUDO_MODELS, _cached,
     )
 
