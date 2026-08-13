@@ -256,14 +256,14 @@ async def test_run_langgraph_unavailable():
 
 @pytest.mark.asyncio
 async def test_run_subagent_pool_returns_error_strings():
-    """Subagents catch exceptions and return 'Subagent error: ...' strings.
+    """Subagents catch exceptions and return tagged error strings.
     The pool finishes normally, compactor merges messy text, executor fires.
     No exception should bubble out of run()."""
     import autoconduck.orchestrator.graph as graph
     plan = TaskPlan(subtasks=[valid_task()])
 
     def bad_subagent(*args, **kwargs):
-        return "Subagent error: connection timeout to upstream API"
+        return "__SUBAGENT_ERROR__[a]: connection timeout to upstream API"
 
     with patch.object(graph, "_LANGGRAPH_AVAILABLE", True):
         with patch.object(graph, "build_task_plan", return_value=plan):

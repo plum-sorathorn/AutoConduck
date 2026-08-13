@@ -100,8 +100,9 @@ async def run_subagent(
         params["_path"] = "orchestrator-subagent"
         params["_pseudo"] = "autoconduck"
         params["drop_params"] = True
-        params.setdefault("max_tokens", 650)
-        params.setdefault("timeout", 12.0)
+        params.setdefault("max_tokens", int(getattr(cfg.selection, "subagent_max_tokens", 4096)))
+        timeout_s = float(getattr(cfg.selection, "subagent_timeout_s", 120.0))
+        params.setdefault("timeout", timeout_s)
         logging.getLogger("autoconduck.orchestrator").debug(
             "SUBAGENT PROMPT [%s]:\n%s", task.id, prompt
         )
@@ -123,8 +124,8 @@ async def run_subagent(
             return _text(await litellm.acompletion(messages=messages, **params))
 
         try:
-            return await asyncio.wait_for(_execute(), timeout=12.0)
+            return await asyncio.wait_for(_execute(), timeout=timeout_s)
         except asyncio.TimeoutError:
-            return f"Subagent [{task.id}] timed out after 12s; proceeding with available context."
+            return f"__SUBAGENT_ERROR__[{task.id}]: timed out after {timeout_s:g}s"
     except Exception as exc:
-        return f"Subagent error: {exc}"
+        return f"__SUBAGENT_ERROR__[{task.id}]: {exc}"

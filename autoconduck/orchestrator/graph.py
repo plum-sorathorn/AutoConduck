@@ -30,6 +30,10 @@ PHASE_BANDS = {
 }
 
 
+def _is_subagent_error(value: str) -> bool:
+    return isinstance(value, str) and value.startswith("__SUBAGENT_ERROR__")
+
+
 class State(BaseModel):
     messages: list = Field(default_factory=list)
     history: Any = None
@@ -37,6 +41,7 @@ class State(BaseModel):
     recon: Any = None
     plan: TaskPlan | None = None
     subagent_outputs: dict[str, str] = Field(default_factory=dict)
+    subagent_error_count: int = 0
     compacted: str = ""
     result: str | None = None
     fallback: bool = False
@@ -186,7 +191,8 @@ async def _run_executor_subagents(
             log.warning("Executor draft subagent failed: %s", item)
             continue
         gid, text = item
-        drafts[gid] = text
+        if not _is_subagent_error(text):
+            drafts[gid] = text
 
     if not drafts:
         return await _call(
@@ -368,7 +374,8 @@ async def run(
                     stats.update_active_routing(subtasks_completed=len(completed))
                 except Exception:
                     pass
-            return {"subagent_outputs": completed}
+            error_count = sum(_is_subagent_error(value) for value in completed.values())
+            return {"subagent_outputs": completed, "subagent_error_count": error_count}
 
         def compactor_node(state: State) -> dict:
             try:
@@ -385,6 +392,7 @@ async def run(
                     key=lambda task: (-len(task.depends_on), task.id),
                 )
                 if task.id in state.subagent_outputs
+                and not _is_subagent_error(state.subagent_outputs[task.id])
             ]
             merged = state.compacted + "\n" + compact(ordered) if state.compacted else compact(ordered)
             return {"compacted": merged}
@@ -407,6 +415,11 @@ async def run(
                 if not isinstance(m, dict) or m.get("role", "user") == "user"
             )
             task_value = getattr(state, "task_value", 0.5)
+            valid_outputs = {
+                task_id: output
+                for task_id, output in state.subagent_outputs.items()
+                if not _is_subagent_error(output)
+            }
 
             plan = state.plan
             use_subagents = (
@@ -419,7 +432,7 @@ async def run(
                 try:
                     result = await _run_executor_subagents(
                         plan=plan,
-                        subagent_outputs=state.subagent_outputs,
+                        subagent_outputs=valid_outputs,
                         compacted=state.compacted,
                         user_text=user_text,
                         client=client,
@@ -431,7 +444,8 @@ async def run(
                 except Exception:
                     pass
 
-            prompt = f"Original request:\n{user_text}\n\nAnalyst summary:\n{state.compacted}"
+            analyst_summary = state.compacted
+            prompt = f"Original request:\n{user_text}\n\nAnalyst summary:\n{analyst_summary}"
             return {
                 "result": await _call(
                     client,
@@ -439,8 +453,8 @@ async def run(
                         state.pseudo_model,
                         cfg,
                         task_value,
-                        state.compacted,
-                        len(state.subagent_outputs),
+                        analyst_summary,
+                        len(valid_outputs),
                     ),
                     [{"role": "user", "content": prompt}],
                 )

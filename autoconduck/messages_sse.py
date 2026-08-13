@@ -123,19 +123,28 @@ class AnthropicSSETranslator:
             block_index = self.tool_indices[idx]
             fn = tc.get("function") or {}
             if block_index not in self.blocks:
-                self.blocks[block_index] = {"kind": "tool_use", "started": True}
+                tool_id = tc.get("id") or "toolu_" + uuid.uuid4().hex[:12]
+                self.blocks[block_index] = {
+                    "kind": "tool_use",
+                    "started": True,
+                    "id": tool_id,
+                    "synthetic_id": not bool(tc.get("id")),
+                }
                 events.append(
                     {
                         "type": "content_block_start",
                         "index": block_index,
                         "content_block": {
                             "type": "tool_use",
-                            "id": tc.get("id") or "toolu_" + uuid.uuid4().hex[:12],
+                            "id": self.blocks[block_index]["id"],
                             "name": fn.get("name"),
                             "input": {},
                         },
                     }
                 )
+            elif tc.get("id") and self.blocks[block_index].get("synthetic_id"):
+                self.blocks[block_index]["id"] = tc["id"]
+                self.blocks[block_index]["synthetic_id"] = False
             if fn.get("arguments"):
                 self.output_tokens += count_tokens(fn["arguments"])
                 events.append(

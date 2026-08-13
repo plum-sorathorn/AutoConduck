@@ -71,6 +71,8 @@ class SelectionConfig(BaseModel):
     # invoked.  Requests below this threshold are treated as fast-path even
     # when the dispatcher returns path=slow, saving 3-5 LLM calls per turn.
     min_orchestrator_complexity: float = 0.62
+    subagent_timeout_s: float = 120.0
+    subagent_max_tokens: int = 4096
     # Maximum scaled cost permitted for file reading / recon / read analyst subagents.
     # Expensive models (scaled_cost > 0.55) will be excluded from file read tasks.
     max_file_read_scaled_cost: float = 0.55
