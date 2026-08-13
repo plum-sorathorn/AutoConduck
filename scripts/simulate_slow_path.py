@@ -37,7 +37,7 @@ class Mock(BaseHTTPRequestHandler):
             branch = "ROLE"
         elif isinstance(last_message, dict) and last_message.get("role") == "tool":
             branch = "post-tool"
-        elif "Reply with FAST or SLOW" in last_user:
+        elif last_user.startswith("Reply with FAST or SLOW"):
             branch = "tiebreaker"
         elif "tools" in body:
             branch = "tools"
@@ -52,7 +52,7 @@ class Mock(BaseHTTPRequestHandler):
             text = json.dumps({"files":["autoconduck/routing/dispatcher.py"],"query":"q","reasoning":"r"})
         elif isinstance(last_message, dict) and last_message.get("role") == "tool":
             text = "Mock post-tool answer."
-        elif "Reply with FAST or SLOW" in last_user:
+        elif last_user.startswith("Reply with FAST or SLOW"):
             text = "SLOW 8"
         elif "Original request:" in last_user:
             text = ANSWER
@@ -82,12 +82,12 @@ class Mock(BaseHTTPRequestHandler):
 
 def config(base, timeout=120.0):
     from autoconduck.config import Config, SelectionConfig
-    s = SelectionConfig(subagent_timeout_s=timeout, enable_executor_subagents=False, enable_fast_path_graph=True, min_orchestrator_complexity=.4, slow_threshold=.4, complexity_weights={"length":2.0,"structural":2.0,"scope_breadth":2.0,"code_density":2.0,"abstraction_level":2.0,"uncertainty_hedge":2.0,"cross_domain":2.0,"task_novelty":2.0,"imperative_strength":2.0,"multi_step":2.0})
+    s = SelectionConfig(subagent_timeout_s=timeout, enable_executor_subagents=False, enable_fast_path_graph=True, min_orchestrator_complexity=.4, slow_threshold=.75, ambiguous_low=.40)
     entries = [{"id": n, "provider": "mock", "api_base": base, "api_key": "dummy", "input_cost_per_token": 1e-6, "output_cost_per_token": 1e-6, "tier": t} for n, t in (("autoconduck", "fast"), ("autoconduck-budget", "fast"), ("autoconduck-expensive", "slow"))]
     return Config(model_list=entries, selection=s, fast_path_digest_enabled=False)
 
 
-BASE_PROMPT = "Refactor authentication in autoconduck/routing/dispatcher.py, autoconduck/config.py, and tests/test_dispatcher.py: (1) replace session cookies with JWT access and refresh tokens, (2) add rate-limiting middleware, (3) migrate the database schema, (4) update all call sites, (5) write expiry edge-case tests, (6) update API docs, (7) coordinate frontend refresh flow, (8) add cleanup cron, (9) preserve legacy mobile compatibility, with rollback, security review, load testing, and staged multi-step migration."
+BASE_PROMPT = "Refactor the authentication module in src/auth.py and src/utils.py: (1) replace session cookies with JWT access+refresh tokens, (2) add rate-limiting middleware..., (3) migrate the user table schema..., (4) update all 14 call sites..., (5) write unit tests covering token expiry edge cases, (6) update the API documentation, (7) coordinate with the frontend team on the refresh flow, (8) add a cleanup cron job for expired tokens, (9) preserve backward compatibility with the legacy mobile client..."
 TOOLS = [{"type": "function", "function": {"name": "bash", "description": "run shell", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}}]
 
 
@@ -111,6 +111,7 @@ def main():
     prompt, score = next((x for x in scores if x[1] >= .75), scores[-1])
     prompt += "\n\nTraceback (most recent call last):\n  File \"/app/main.py\", line 42, in <module>\n    raise ValueError('boom')\nValueError: boom"
     score = complexity_of(prompt, cfg); print(f"S1 chosen score={score:.3f}\nPrompt: {prompt}")
+    plain_prompt = BASE_PROMPT
     from autoconduck.routing.dispatcher import route
     decision = route([{"role": "user", "content": prompt}], [], pseudo_model="autoconduck", config=cfg)
     print("S2 routing decision:", {k: getattr(decision, k) for k in ("path", "confidence_band", "confidence", "complexity", "reason")})
@@ -122,10 +123,13 @@ def main():
         except Exception as e: traceback.print_exc(); results.append((name, "FAIL", f"{time.perf_counter()-start:.2f}s {e}"))
     def client(): server._build(); return TestClient(server.app)
     run("S1 complexity", lambda: (_ for _ in ()).throw(AssertionError("< .75")) if score < .75 else "score >= .75")
-    def slow(stream=False):
+    def slow(stream=False, pipeline_prompt=prompt, use_tools=True):
         trace.clear()
         with client() as c:
-            r = c.post("/v1/chat/completions", json={"model": "autoconduck", "messages": [{"role": "user", "content": prompt}], "tools": TOOLS, "stream": stream})
+            payload = {"model": "autoconduck", "messages": [{"role": "user", "content": pipeline_prompt}], "stream": stream}
+            if use_tools:
+                payload["tools"] = TOOLS
+            r = c.post("/v1/chat/completions", json=payload)
             if not stream:
                 print("\n--- S2 DIAGNOSTICS ---")
                 print("_LANGGRAPH_AVAILABLE:", _LANGGRAPH_AVAILABLE)
@@ -159,7 +163,22 @@ def main():
             assert canonical.index("recon") < canonical.index("planner") < canonical.index("subagent_pool") < canonical.index("compactor") < canonical.index("executor")
             assert c.get("/stats").json()["path_counts"].get("SLOW", 0) > 0
         print("S2 node trace:", trace); return "slow pipeline"
-    run("S2 full slow", lambda: slow(False)); run("S3a streaming slow", lambda: slow(True))
+    run("S2 full slow", lambda: slow(False))
+    def plain_complex_slow():
+        s8_cfg = cfg.model_copy(deep=True)
+        s8_cfg.selection.complexity_weights = {"scope_breadth": .4, "imperative_strength": .3, "cross_domain": .3}
+        cm.get_config = lambda: s8_cfg; server.get_config = lambda: s8_cfg
+        server.app = None; server._cached.clear()
+        plain_score = complexity_of(plain_prompt, s8_cfg)
+        plain_decision = route([{"role": "user", "content": plain_prompt}], [], pseudo_model="autoconduck", config=s8_cfg)
+        print(f"S8 plain prompt complexity={plain_score:.3f}")
+        print("S8 routing decision:", {k: getattr(plain_decision, k) for k in ("path", "confidence_band", "confidence", "complexity", "reason")})
+        assert plain_score >= .75, plain_score
+        assert plain_decision.path == "slow"
+        assert plain_decision.reason == "complexity threshold"
+        return slow(False, plain_prompt, use_tools=False)
+    run("S8 plain complex slow", plain_complex_slow)
+    run("S3a streaming slow", lambda: slow(True))
     def tools():
         with client() as c:
             with c.stream("POST", "/v1/chat/completions", json={"model": "autoconduck-budget", "messages": [{"role": "user", "content": "please use bash tool"}], "tools": TOOLS, "stream": True}) as r: text = "".join(r.iter_text())
@@ -188,10 +207,26 @@ def main():
     run("S4 old timeout", lambda: timeout(12.0)); run("S5 default timeout", lambda: timeout(120.0))
     def tiebreaker():
         from autoconduck.config import SelectionConfig
-        moderate = "Review the dispatcher and suggest a small routing improvement."
+        object.__setattr__(cfg, "ambiguous_low", 0.40)
         off_cfg = cfg.model_copy(deep=True)
         off_cfg.selection = SelectionConfig(**{**cfg.selection.model_dump(), "tiebreaker_enabled": False})
-        off = route([{"role": "user", "content": moderate}], [], config=off_cfg)
+        candidates = [
+            "Reply with FAST or SLOW: " + BASE_PROMPT + " Include dependency, uncertainty, tradeoff, and validation analysis.",
+            "Reply with FAST or SLOW: " + BASE_PROMPT + " Include architecture, integration, compatibility, failure-mode, and staged verification analysis.",
+            "Reply with FAST or SLOW: " + BASE_PROMPT + " Include architecture analysis across related modules and interfaces, with rollback and observability.",
+            "Reply with FAST or SLOW: " + BASE_PROMPT + " Include architecture analysis across authentication, API, and persistence boundaries, with staged verification.",
+        ]
+        scored = []
+        for index, candidate in enumerate(candidates, 1):
+            candidate_score = complexity_of(candidate, off_cfg)
+            candidate_decision = route([{"role": "user", "content": candidate}], [], config=off_cfg)
+            scored.append((candidate, candidate_score, candidate_decision))
+            print(f"S7 candidate {index}: complexity={candidate_score:.3f} path={candidate_decision.path} band={candidate_decision.confidence_band}")
+        moderate, score, off = next(
+            item for item in scored
+            if 0.55 <= item[1] <= 0.70 and item[2].path == "fast" and item[2].confidence_band == "ambiguous"
+        )
+        print(f"S7 chosen prompt complexity={score:.3f}: {moderate}")
         print("S7 routing decision with tiebreaker off:", {k: getattr(off, k) for k in ("path", "confidence_band", "confidence", "complexity", "reason")})
         assert off.path == "fast" and off.confidence_band == "ambiguous"
         on_cfg = cfg.model_copy(deep=True); on_cfg.selection.tiebreaker_enabled = True
@@ -199,8 +234,8 @@ def main():
         server.app = None; server._cached.clear(); trace.clear()
         with client() as c:
             on = route([{"role": "user", "content": moderate}], [], config=on_cfg)
-            print("S7 routing decision:", {k: getattr(on, k) for k in ("path", "confidence_band", "confidence", "complexity", "reason")})
-            assert on.path == "slow" and "tiebreaker: slow" in on.reason
+            print("S7 routing decision with tiebreaker on:", {k: getattr(on, k) for k in ("path", "confidence_band", "confidence", "complexity", "reason")})
+            assert on.path == "slow" and on.reason == "tiebreaker: slow"
             r = c.post("/v1/chat/completions", json={"model": "autoconduck", "messages": [{"role": "user", "content": moderate}]})
             assert r.status_code == 200 and ANSWER in r.text
             assert all(x in trace for x in ["recon", "planner", "compactor", "executor"]), trace

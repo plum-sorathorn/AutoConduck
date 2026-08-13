@@ -108,6 +108,7 @@ def test_dispatcher_routes_complex_fast_path_query_to_slow(monkeypatch):
     complex_query = [{"role": "user", "content": "refactor the entire application across multiple files and write integration tests for all modules"}]
     decision = route(complex_query, [], config=cfg)
     assert isinstance(decision, RoutingDecision)
+    # This prompt remains below the Option-A complexity threshold.
     assert decision.path == "fast"
     assert decision.model is not None
 

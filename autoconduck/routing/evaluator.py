@@ -203,6 +203,11 @@ def score(
     if escalated:
         complexity = min(complexity, hysteresis_floor)
 
+    sel = getattr(cfg, "selection", cfg)
+    slow_threshold = float(getattr(sel, "slow_threshold", 0.75) if sel else 0.75)
+    if complexity >= slow_threshold:
+        return Score("slow", "slow", confidence, complexity, "complexity threshold")
+
     multiplier = 1.0
     if pseudo_model.endswith("budget"):
         multiplier = 1.15
