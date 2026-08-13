@@ -53,43 +53,67 @@ def is_tool_loop(messages: list, config=None) -> bool:
     if not isinstance(messages, list) or not messages:
         return False
 
-    last_msg = None
-    for msg in reversed(messages):
-        if not isinstance(msg, dict):
-            last_msg = msg
-            break
-        role = msg.get("role", "user")
-        content = str(msg.get("content", ""))
-        if role != "system" and "<system-reminder>" not in content:
-            last_msg = msg
-            break
-
-    if not last_msg or not isinstance(last_msg, dict):
+    recent = [
+        msg for msg in messages
+        if isinstance(msg, dict)
+        and msg.get("role", "user") != "system"
+        and "<system-reminder>" not in str(msg.get("content", ""))
+    ][-4:]
+    if not recent:
         return False
 
-    role = last_msg.get("role", "user")
-    is_active_tool = (
-        role in ("tool", "function")
-        or "tool_calls" in last_msg
-        or "function_call" in last_msg
-    )
-    if not is_active_tool:
-        content = last_msg.get("content")
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") in (
-                    "tool_use",
-                    "tool_result",
-                ):
-                    is_active_tool = True
-                    break
+    signals: list[tuple[int, dict]] = []
+    for index, msg in enumerate(recent):
+        content = msg.get("content")
+        block_signal = isinstance(content, list) and any(
+            isinstance(block, dict)
+            and block.get("type") in ("tool_use", "tool_result")
+            for block in content
+        )
+        if (
+            msg.get("role") in ("tool", "function")
+            or "tool_calls" in msg
+            or "function_call" in msg
+            or block_signal
+        ):
+            signals.append((index, msg))
 
-    if not is_active_tool:
+    # A pi tool result may be a user-role text message immediately following
+    # the assistant's tool_calls message.  Do not require the final message to
+    # carry the tool metadata in that representation.
+    active: list[tuple[int, dict]] = []
+    for index, msg in signals:
+        if msg.get("role") == "assistant" and "tool_calls" in msg:
+            if index + 1 < len(recent) and recent[index + 1].get("role") == "user":
+                active.append((index, msg))
+            elif index == len(recent) - 1:
+                active.append((index, msg))
+        else:
+            active.append((index, msg))
+    if not active:
         return False
 
-    # Check for in-flight escalation exceptions
-    last_text = str(last_msg.get("content", ""))
-    if has_escalation_signal(last_text) or has_stack_trace(last_text):
+    # A later, unrelated user turn starts a new turn; historical tool calls
+    # alone must not suppress its normal complexity evaluation.
+    last_index = len(recent) - 1
+    signal_index, signal_msg = active[-1]
+    if recent[last_index].get("role") == "user" and not (
+        signal_index + 1 == last_index
+        and (
+            signal_msg.get("role") == "assistant"
+            and "tool_calls" in signal_msg
+            or recent[last_index].get("content")
+            and isinstance(recent[last_index].get("content"), list)
+        )
+    ):
+        return False
+
+    adjacent = recent[max(0, signal_index - 1): min(len(recent), signal_index + 3)]
+    adjacent_text = "\n".join(str(item.get("content", "")) for item in adjacent)
+    if signal_index + 1 < len(recent):
+        adjacent_text += "\n" + str(recent[signal_index + 1].get("content", ""))
+
+    if has_escalation_signal(adjacent_text) or has_stack_trace(adjacent_text):
         return False
 
     # Long tool chain soft-escalation: if >12 tool turns have fired, allow re-scoring
@@ -110,11 +134,9 @@ def is_tool_loop(messages: list, config=None) -> bool:
     if first_complexity >= slow_threshold:
         # Only bypass tool-loop suppression when the *current* message also
         # carries an escalation or error signal.  Without this guard every
-        # tool-loop turn in a complex session got re-scored as SLOW, triggering
-        # the full orchestrator pipeline on every agent tool result.
-        if has_escalation_signal(last_text) or has_stack_trace(last_text):
+        # tool-loop turn in a complex session got re-scored as SLOW.
+        if has_escalation_signal(adjacent_text) or has_stack_trace(adjacent_text):
             return False
-        # Original task was complex but current turn looks clean — keep fast.
 
     return True
 

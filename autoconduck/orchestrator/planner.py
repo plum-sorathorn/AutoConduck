@@ -1,12 +1,12 @@
 """Structured task planning prompts and validation."""
 
-import json
 import logging
 import re
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
+from autoconduck.jsonutil import _extract_json, parse_json_text
 
 
 class OutputContract(BaseModel):
@@ -137,6 +137,11 @@ def _model_name(cfg=None, task_value=0.5, config=None) -> str:
             from autoconduck.config import get_config
 
             config = get_config()
+        override = getattr(config.selection, "planner_model_override", None)
+        if override:
+            from autoconduck.config import qualify_model
+
+            return qualify_model(str(override).strip())
         lo, hi = config.selection.phase_bands["planner"]
         from autoconduck.config import resolve_orchestrator_model
 
@@ -161,7 +166,8 @@ def _completion(
     planner_model = _model_name(cfg, task_value=task_value)
     params = litellm_params_for(planner_model, cfg)
     kwargs = {**params, **kwargs}
-    kwargs.setdefault("max_tokens", 500)
+    kwargs["max_tokens"] = 4000
+    kwargs.setdefault("temperature", 0.0)
     kwargs["drop_params"] = True
     if client is not None:
         if hasattr(client, "completion"):
@@ -199,34 +205,40 @@ def build_task_plan(
         if ground_truth:
             file_block += f"\n\nRECON GROUND TRUTH EVIDENCE:\n{ground_truth}"
         system_content = PLANNER_SYSTEM_PROMPT + file_block
-        prompt_messages = [{"role": "system", "content": system_content}, *messages]
+        user_messages = [
+            message for message in messages
+            if isinstance(message, dict) and message.get("role") == "user"
+        ]
+        prompt_messages = [{"role": "system", "content": system_content}, *user_messages]
         user_msg = "\n".join(
             str(message.get("content", ""))
             for message in messages
             if isinstance(message, dict)
         )
-        try:
-            logging.getLogger("autoconduck.orchestrator").debug(
-                "PLANNER PROMPT:\n%s\n---\n%s", system_content, user_msg
-            )
-            response = _completion(
-                client,
-                prompt_messages,
-                cfg=cfg,
-                task_value=task_value,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "TaskPlan",
-                        "schema": schema,
-                        "strict": True,
-                    },
-                },
-            )
-            raw = _content(response)
-            return TaskPlan.model_validate(json.loads(raw))
-        except Exception:
-            return None
+        logger = logging.getLogger("autoconduck.orchestrator")
+        logger.info("Planning with model %s", _model_name(cfg, task_value=task_value))
+        logger.debug("PLANNER PROMPT:\n%s\n---\n%s", system_content, user_msg)
+        raw = ""
+        for attempt in range(2):
+            try:
+                kwargs = {}
+                if attempt == 1:
+                    mode = getattr(getattr(cfg, "selection", None), "planner_response_format", "json_object")
+                    if mode == "json_object":
+                        kwargs["response_format"] = {"type": "json_object"}
+                    elif mode == "json_schema":
+                        kwargs["response_format"] = {"type": "json_schema", "json_schema": {"name": "TaskPlan", "schema": schema, "strict": True}}
+                response = _completion(client, prompt_messages, cfg=cfg, task_value=task_value, **kwargs)
+                raw = _content(response)
+                parsed, repair_error, preview = parse_json_text(raw)
+                if parsed is None:
+                    raise ValueError(repair_error or "no JSON object found")
+                if repair_error:
+                    logger.info("Planner JSON repaired by %s", repair_error)
+                return TaskPlan.model_validate(parsed)
+            except Exception as exc:
+                logger.info("Planner attempt %d failed: %s; response preview: %s", attempt + 1, exc, raw[:300])
+        return None
     except (ImportError, ModuleNotFoundError):
         return None
     return None

@@ -224,6 +224,7 @@ async def run(
     client=None,
     task_value: float = 0.5,
     request=None,
+    on_progress: Any = None,
 ) -> str | None:
     if not _LANGGRAPH_AVAILABLE:
         return None
@@ -231,8 +232,22 @@ async def run(
         if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
             return None
         import time
+        import logging
         from autoconduck.config import get_config
         from autoconduck.messages_api import normalize_messages_for_llm
+        from autoconduck import stats
+        log = logging.getLogger("autoconduck.orchestrator")
+
+        def _emit(**kw: Any) -> None:
+            try:
+                stats.update_active_routing(**kw)
+            except Exception:
+                pass
+            if on_progress is not None:
+                try:
+                    on_progress(dict(kw))
+                except Exception:
+                    pass
 
         cfg = get_config()
         messages = normalize_messages_for_llm(messages)
@@ -259,16 +274,10 @@ async def run(
         async def recon_node(state: State) -> dict:
             if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
                 return {"fallback": True}
-            try:
-                from autoconduck import stats
-                stats.update_active_routing(
-                    active=True, path="SLOW", pseudo_model=state.pseudo_model,
-                    task_value=state.task_value, node="recon",
-                    step_detail="Recon discovering target files...",
-                    start_time=time.time()
-                )
-            except Exception:
-                pass
+            log.info("Starting recon node")
+            _emit(active=True, path="SLOW", pseudo_model=state.pseudo_model,
+                  task_value=state.task_value, node="recon",
+                  step_detail="Recon discovering target files...", start_time=time.time())
             target = build_recon_plan(state.messages, client=client, cfg=cfg, task_value=state.task_value)
             return {"recon": target}
 
@@ -276,15 +285,9 @@ async def run(
             if state.recon is None or not getattr(state.recon, "files", []):
                 return {"compacted": ""}
             files = state.recon.files[:5]
-            try:
-                from autoconduck import stats
-                stats.update_active_routing(
-                    node="subagents",
-                    subtasks_total=len(files),
-                    step_detail=f"Running {len(files)} recon analyst subagent(s)..."
-                )
-            except Exception:
-                pass
+            log.info("Starting recon_subagent_pool node with %d files", len(files))
+            _emit(node="recon_subagent_pool", subtasks_total=len(files),
+                  step_detail=f"Reading {', '.join(files[:5])}")
             from .planner import _read_files
             raw_files = _read_files(files)
             evidence = [f"[{path}]\n{content[:1500]}" for path, content in raw_files.items()]
@@ -293,14 +296,8 @@ async def run(
         async def planner_node(state: State) -> dict:
             if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
                 return {"fallback": True}
-            try:
-                from autoconduck import stats
-                stats.update_active_routing(
-                    node="planner",
-                    step_detail="Planner generating JSON DAG task plan...",
-                )
-            except Exception:
-                pass
+            log.info("Starting planner node")
+            _emit(node="planner", step_detail="Planner generating JSON DAG task plan...")
             plan = build_task_plan(
                 state.messages, client=client, cfg=cfg, task_value=state.task_value, ground_truth=state.compacted
             )
@@ -308,6 +305,7 @@ async def run(
                 max_sub = int(getattr(getattr(cfg, "selection", None), "max_subtasks", 3))
                 if len(plan.subtasks) > max_sub:
                     plan = plan.model_copy(update={"subtasks": plan.subtasks[:max_sub]})
+                log.info("Planner built plan with %d subtasks", len(plan.subtasks))
             attempt = state.attempt + 1
             return {
                 "plan": plan,
@@ -320,15 +318,9 @@ async def run(
                 return {"fallback": True}
             completed: dict[str, str] = {}
             pending = list(state.plan.subtasks)
-            try:
-                from autoconduck import stats
-                stats.update_active_routing(
-                    node="subagents",
-                    subtasks_total=len(pending),
-                    step_detail=f"Running {len(pending)} analyst subagent(s) in parallel..."
-                )
-            except Exception:
-                pass
+            log.info("Starting subagent_pool node with %d subtasks", len(pending))
+            _emit(node="subagent_pool", subtasks_total=len(pending),
+                  step_detail=f"Running {len(pending)} analyst subagent(s) in parallel...")
             while pending:
                 if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
                     return {"fallback": True}
@@ -369,22 +361,13 @@ async def run(
                     Send("subagent_pool", {"task_id": task.id})
                     completed[task.id] = result
                     pending.remove(task)
-                try:
-                    from autoconduck import stats
-                    stats.update_active_routing(subtasks_completed=len(completed))
-                except Exception:
-                    pass
+                _emit(node="subagent_pool", subtasks_completed=len(completed),
+                      step_detail=f"subagent {len(completed)}/{len(state.plan.subtasks)} complete")
             error_count = sum(_is_subagent_error(value) for value in completed.values())
             return {"subagent_outputs": completed, "subagent_error_count": error_count}
 
         def compactor_node(state: State) -> dict:
-            try:
-                from autoconduck import stats
-                stats.update_active_routing(
-                    node="compactor", step_detail="Compacting analyst findings..."
-                )
-            except Exception:
-                pass
+            _emit(node="compactor", step_detail="Compacting analyst findings...")
             ordered = [
                 state.subagent_outputs[task.id]
                 for task in sorted(
@@ -400,13 +383,8 @@ async def run(
         async def executor_node(state: State) -> dict:
             if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
                 return {"fallback": True}
-            try:
-                from autoconduck import stats
-                stats.update_active_routing(
-                    node="executor", step_detail="Executor synthesizing final response..."
-                )
-            except Exception:
-                pass
+            log.info("Starting executor node")
+            _emit(node="executor", step_detail="Executor synthesizing final response...")
             user_text = "\n".join(
                 str(m.get("content", ""))
                 if isinstance(m, dict)
@@ -502,8 +480,7 @@ async def run(
             return None if state.fallback else state.result
         finally:
             try:
-                from autoconduck import stats
-                stats.update_active_routing(active=False, node="idle", step_detail="Completed")
+                _emit(active=False, node="idle", step_detail="Completed")
             except Exception:
                 pass
     except Exception:

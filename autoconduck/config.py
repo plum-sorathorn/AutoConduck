@@ -22,6 +22,8 @@ class ModelEntry(BaseModel):
 
 
 class SelectionConfig(BaseModel):
+    planner_model_override: str | None = None
+    planner_response_format: str = "json_object"
     """Selection controls; pool entries may set quality_score and max_usd_per_min."""
 
     value_to_cost_gamma: float = 1.0
@@ -83,6 +85,7 @@ class SelectionConfig(BaseModel):
     # Executor-subagent fan-out doubles LLM call count for multi-subtask plans;
     # keep disabled by default and only enable for truly complex batch tasks.
     enable_executor_subagents: bool = False
+    slow_stream_progress: bool = True
 
 
 class ClaudeCodeSettings(BaseModel):

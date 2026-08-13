@@ -168,6 +168,58 @@ def test_build_task_plan_happy_no_files():
     assert result.subtasks[0].read_budget == 5
 
 
+def test_planner_plain_first_forced_budget_temperature_and_user_context():
+    plan = TaskPlan(subtasks=[valid_task()], summary="ok")
+    calls = []
+
+    class Client:
+        def completion(self, messages, **kwargs):
+            calls.append((messages, kwargs))
+            if len(calls) == 1:
+                assert "response_format" not in kwargs
+            return {"choices": [{"message": {"content": plan.model_dump_json()}}]}
+
+    with patch("autoconduck.messages_api.litellm_params_for", return_value={"model": "openai/test", "max_tokens": 500}):
+        result = build_task_plan(
+            [
+                {"role": "user", "content": "Please inspect autoconduck/config.py."},
+                {"role": "assistant", "content": "A very long answer and tool dump."},
+                {"role": "tool", "content": "generated code dump"},
+            ],
+            client=Client(),
+            cfg=Config(),
+        )
+    assert result is not None
+    assert len(calls) == 1
+    assert calls[0][1].get("temperature") == 0.0
+    assert calls[0][1].get("max_tokens") == 4000
+    prompt = calls[0][0]
+    assert any("Please inspect" in str(message.get("content")) for message in prompt)
+    assert not any("long answer" in str(message.get("content")) for message in prompt)
+    assert not any(message.get("role") == "tool" for message in prompt)
+
+
+def test_planner_fallback_uses_json_schema():
+    plan = TaskPlan(subtasks=[valid_task()])
+    calls = []
+
+    def completion(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return {"choices": [{"message": {"content": "garbage"}}]}
+        return {"choices": [{"message": {"content": plan.model_dump_json()}}]}
+
+    with patch.object(planner, "_completion", side_effect=completion):
+        assert build_task_plan([], client=object(), cfg=Config()) is not None
+    assert "response_format" not in calls[0]
+    assert calls[1]["response_format"]["type"] == "json_object"
+
+
+def test_planner_model_override_is_qualified():
+    cfg = Config(selection={"planner_model_override": "deepseek-v4-flash"})
+    assert planner._model_name(cfg) == "openai/deepseek-v4-flash"
+
+
 def test_compact_dedupes_refs():
     result = compact(["Issue at src/auth.py:10", "Same issue at src/auth.py:10", "Other at src/token.py:4"])
     assert result.count("src/auth.py:10") == 1

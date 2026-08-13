@@ -2,7 +2,9 @@
 
 import json
 import logging
+import os
 import time
+import asyncio
 from typing import Any
 
 
@@ -65,7 +67,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
         result = await llm.acompletion(**kwargs)
         return result.model_dump() if hasattr(result, "model_dump") else result
 
-    async def _route_target(body_model, messages, request=None):
+    async def _route_target(body_model, messages, request=None, on_progress=None):
         started = time.perf_counter()
         cfg = get_config()
         messages = normalize_messages_for_llm(messages)
@@ -89,13 +91,19 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
             if path == "SLOW" and task_complexity < min_orch:
                 path = "FAST"
                 model = model or None  # will be resolved below
+            if on_progress is not None:
+                try:
+                    on_progress({"kind": "route", "path": path})
+                except Exception:
+                    pass
             decisions.append({"path": path, "model": model or body_model, "time": time.time()})
             logging.getLogger("autoconduck").info("route=%s model=%s ms=%.1f", path, model or body_model, (time.perf_counter() - started) * 1000)
             if path == "SLOW" and not (request is not None and await request.is_disconnected()):
                 try:
                     from .orchestrator import run
                     result = await run(messages, [], pseudo_model=body_model,
-                                       task_value=float(getattr(decision, "complexity", .5)), request=request)
+                                       task_value=float(getattr(decision, "complexity", .5)), request=request,
+                                       on_progress=on_progress)
                     if result is not None:
                         return None, {"__answer__": result, "_path": path, "_pseudo": body_model}
                 except Exception as exc:
@@ -136,6 +144,101 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
 
     async def completions(body: CompletionRequest, request: Request):
         body.messages = normalize_messages_for_llm(body.messages)
+        cfg = get_config()
+        configured_progress = bool(getattr(getattr(cfg, "selection", None), "slow_stream_progress", True))
+        env_progress = os.environ.get("AUTOCONDUCK_STREAM_PROGRESS")
+        if env_progress is None:
+            progress_setting = configured_progress
+        else:
+            normalized_progress = env_progress.strip().lower()
+            if normalized_progress in {"1", "true", "yes"}:
+                progress_setting = True
+            elif normalized_progress in {"0", "false", "no"}:
+                progress_setting = False
+            else:
+                progress_setting = configured_progress
+        progress_enabled = body.stream and progress_setting and body.model in PSEUDO_MODELS
+        if progress_enabled:
+            async def progress_stream():
+                progress_q: asyncio.Queue = asyncio.Queue()
+                first_event = asyncio.get_running_loop().create_future()
+
+                def on_progress(event):
+                    try:
+                        progress_q.put_nowait(event)
+                        if not first_event.done():
+                            first_event.set_result(event)
+                    except Exception:
+                        pass
+
+                task = asyncio.create_task(_route_target(body.model, body.messages, request, on_progress))
+                try:
+                    first = await first_event
+                    target, extra = await task if str(first.get("path", "")).upper() != "SLOW" else (None, None)
+                    if str(first.get("path", "")).upper() == "SLOW":
+                        labels = {"recon": "recon", "recon_subagent_pool": "reading files",
+                                  "planner": "planner", "subagent_pool": "subagents",
+                                  "compactor": "compactor", "executor": "executor"}
+                        created = int(time.time())
+                        sent_role = False
+                        while True:
+                            event = await progress_q.get()
+                            if event.get("kind") == "route":
+                                continue
+                            node = event.get("node", "progress")
+                            detail = event.get("step_detail") or node
+                            label = labels.get(node, node)
+                            delta = {"content": f"[{label}] {detail}\n"}
+                            if not sent_role:
+                                delta["role"] = "assistant"
+                                sent_role = True
+                            yield "data: " + json.dumps({"id": "autoconduck", "object": "chat.completion.chunk",
+                                "created": created, "model": body.model,
+                                "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}) + "\n\n"
+                            if node == "idle":
+                                break
+                            if task.done() and progress_q.empty():
+                                break
+                        target, extra = await task
+                    answer = extra.get("__answer__") if extra else None
+                    if answer is not None:
+                        yield "data: " + json.dumps({"id": "autoconduck", "object": "chat.completion.chunk",
+                            "created": int(time.time()), "model": target or body.model,
+                            "choices": [{"index": 0, "delta": {"content": answer}, "finish_reason": None}]}) + "\n\n"
+                        yield "data: " + json.dumps({"id": "autoconduck", "object": "chat.completion.chunk",
+                            "created": int(time.time()), "model": target or body.model,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}) + "\n\n"
+                        yield "data: [DONE]\n\n"
+                    else:
+                        # FAST (or an orchestrator fallback): relay the normal provider stream.
+                        async for chunk in relay_for(target, extra, body.messages):
+                            yield chunk
+                except asyncio.CancelledError:
+                    task.cancel()
+                    raise
+                finally:
+                    if await request.is_disconnected() and not task.done():
+                        task.cancel()
+
+            async def relay_for(target, extra, messages):
+                from .server_streaming import _litellm
+                llm = _litellm()
+                if llm is None:
+                    yield 'data: ' + json.dumps({"error": {"message": "litellm unavailable", "type": "api_error"}}) + "\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+                kwargs = body.model_dump(exclude_none=True)
+                kwargs["messages"] = normalize_messages_for_llm(messages)
+                if kwargs.get("tools"): kwargs["tools"] = sanitize_tools(kwargs["tools"])
+                kwargs.update(model=target, drop_params=True)
+                kwargs.update(extra or {})
+                response = await llm.acompletion(**kwargs)
+                async for chunk in response:
+                    if await request.is_disconnected(): return
+                    payload = chunk.model_dump() if hasattr(chunk, "model_dump") else chunk
+                    yield f"data: {json.dumps(payload)}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(progress_stream(), media_type="text/event-stream")
         target, extra = await _route_target(body.model, body.messages, request)
         answer = extra.get("__answer__")
         if answer is not None:

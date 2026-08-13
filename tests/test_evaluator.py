@@ -1,7 +1,7 @@
 import autoconduck.routing.dispatcher as dispatcher
 
 from autoconduck.config import Config
-from autoconduck.routing.evaluator import score, has_stack_trace
+from autoconduck.routing.evaluator import score, has_stack_trace, is_tool_loop
 from autoconduck.routing.semantic_router import RouteMatch
 from autoconduck.routing.dispatcher import route, RoutingDecision
 
@@ -138,6 +138,32 @@ def test_tool_loop_in_dispatcher_route_preserves_fast_path():
     decision = route(messages, [], config=Config())
     assert decision.path == "fast"
     assert decision.reason == "interactive agent tool loop"
+
+
+def test_pi_user_role_tool_result_suppresses_complex_tool_turn():
+    messages = [
+        {"role": "user", "content": "refactor the entire codebase across all modules"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function"}]},
+        {"role": "user", "content": "\n".join(f"def generated_{i}(): return {i}" for i in range(40))},
+    ]
+    assert is_tool_loop(messages, Config())
+    assert score(messages, [], RouteMatch("slow_path", .95), config=Config()).path == "fast"
+
+
+def test_pi_user_role_tool_result_with_traceback_allows_rescoring():
+    messages = [
+        {"role": "user", "content": "refactor the entire codebase across all modules"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function"}]},
+        {"role": "user", "content": 'Traceback (most recent call last):\n  File "x.py", line 1\nRuntimeError: boom'},
+    ]
+    assert not is_tool_loop(messages, Config())
+
+
+def test_plain_tool_role_still_suppresses():
+    assert is_tool_loop([
+        {"role": "user", "content": "inspect this"},
+        {"role": "tool", "content": "file contents"},
+    ], Config())
 
 
 def test_new_user_prompt_after_tool_history_evaluates_complexity():

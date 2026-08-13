@@ -8,3 +8,4 @@ textual>=0.70
 litellm[proxy]>=1.40
 semantic-router
 langgraph
+json-repair

@@ -1,11 +1,11 @@
 """Lightweight pre-planner reconnaissance module for target file discovery."""
 
-import json
 import logging
 from typing import Any
 from pydantic import BaseModel, Field
 
 from .planner import _extract_file_paths, _read_files, _format_file_contents
+from autoconduck.jsonutil import parse_json_text
 
 
 class ReconTarget(BaseModel):
@@ -64,7 +64,8 @@ def build_recon_plan(
         cfg = cfg or get_config()
         recon_model = _recon_model_name(cfg, task_value)
         params = litellm_params_for(recon_model, cfg)
-        params.setdefault("max_tokens", 300)
+        params["max_tokens"] = 300
+        params.setdefault("temperature", 0.0)
         params["drop_params"] = True
 
         user_text = "\n".join(
@@ -81,31 +82,27 @@ def build_recon_plan(
         )
 
         schema = ReconTarget.model_json_schema()
-        params["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {"name": "ReconTarget", "schema": schema, "strict": True},
-        }
-
-        if client is not None:
-            if hasattr(client, "completion"):
-                resp = client.completion(messages=prompt_messages, **params)
-            elif hasattr(client, "chat") and hasattr(client.chat, "completions"):
-                resp = client.chat.completions.create(messages=prompt_messages, **params)
+        for attempt in range(2):
+            call_params = dict(params)
+            if attempt == 1:
+                mode = getattr(getattr(cfg, "selection", None), "planner_response_format", "json_object")
+                if mode == "json_object":
+                    call_params["response_format"] = {"type": "json_object"}
+                elif mode == "json_schema":
+                    call_params["response_format"] = {"type": "json_schema", "json_schema": {"name": "ReconTarget", "schema": schema, "strict": True}}
+            if client is not None and hasattr(client, "completion"):
+                resp = client.completion(messages=prompt_messages, **call_params)
+            elif client is not None and hasattr(client, "chat") and hasattr(client.chat, "completions"):
+                resp = client.chat.completions.create(messages=prompt_messages, **call_params)
             else:
                 import litellm
-
-                resp = litellm.completion(messages=prompt_messages, **params)
-        else:
-            import litellm
-
-            resp = litellm.completion(messages=prompt_messages, **params)
-
-        raw = (
-            resp["choices"][0]["message"]["content"]
-            if isinstance(resp, dict)
-            else resp.choices[0].message.content
-        )
-        return ReconTarget.model_validate(json.loads(raw))
+                resp = litellm.completion(messages=prompt_messages, **call_params)
+            raw = resp["choices"][0]["message"]["content"] if isinstance(resp, dict) else resp.choices[0].message.content
+            parsed, error, _ = parse_json_text(raw)
+            if parsed is not None:
+                return ReconTarget.model_validate(parsed)
+            logging.getLogger("autoconduck.orchestrator").info("Recon attempt %d failed: %s; response preview: %s", attempt + 1, error, raw[:200])
+        return ReconTarget()
     except Exception as exc:
         logging.getLogger("autoconduck.orchestrator").debug("Recon LLM fallback: %s", exc)
         return ReconTarget()

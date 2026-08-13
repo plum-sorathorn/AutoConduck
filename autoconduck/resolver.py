@@ -32,6 +32,7 @@ def record_decision(path: str, model: str | None) -> None:
 async def resolve_model(
     body_model: str,
     messages: list[dict],
+    on_progress=None,
 ) -> tuple[str | None, dict]:
     """Resolve a pseudo/custom model to a concrete target + extra kwargs.
 
@@ -42,9 +43,14 @@ async def resolve_model(
 
     if body_model in _PSEUDO_SET:
         path, model = await _do_router_dispatch(messages, body_model, cfg)
+        if on_progress is not None:
+            try:
+                on_progress({"kind": "route", "path": path})
+            except Exception:
+                pass
         record_decision(path, model)
         if path == "SLOW" and model is None:
-            answer = await _do_slow_route(messages, body_model)
+            answer = await _do_slow_route(messages, body_model, on_progress=on_progress)
             if answer is not None:
                 return None, {"__answer__": answer}
             # Fall through to FAST model selection below
@@ -101,10 +107,10 @@ async def _do_router_dispatch(messages, body_model, cfg):
         return "FAST", None
 
 
-async def _do_slow_route(messages, body_model):
+async def _do_slow_route(messages, body_model, on_progress=None):
     from .orchestrator import run
     try:
-        return await run(messages, [], pseudo_model=body_model)
+        return await run(messages, [], pseudo_model=body_model, on_progress=on_progress)
     except Exception:
         return None
 

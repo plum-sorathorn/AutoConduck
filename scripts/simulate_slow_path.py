@@ -1,7 +1,7 @@
 """Credential-free integration simulation for AutoConduck's slow path."""
 from __future__ import annotations
 
-import asyncio, json, sys, threading, time, traceback
+import asyncio, json, os, sys, threading, time, traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -15,24 +15,43 @@ class Mock(BaseHTTPRequestHandler):
     latency = 0.0
     seen: list[dict] = []
     branches: list[str] = []
+    planner_calls = 0
+    planner_failure = False
+    planner_truncation = False
 
     def log_message(self, *_): pass
 
     def do_POST(self):  # noqa: N802
         body = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))) or b"{}")
         self.seen.append(body)
+        if self.latency:
+            time.sleep(self.latency)
         messages = body.get("messages", [])
         parts = [str(m.get("content", "")) for m in messages if isinstance(m, dict)]
         prompt = "\n".join(parts); system_prompt = next((str(m.get("content", "")) for m in messages if m.get("role") == "system"), "")
         schema_name = body.get("response_format", {}).get("json_schema", {}).get("name")
+        response_format_type = body.get("response_format", {}).get("type")
+        is_planner = any(
+            "You are a coding-task planner" in str(m.get("content", ""))
+            for m in messages
+            if isinstance(m, dict)
+        )
+        is_recon = any(
+            "You are a codebase reconnaissance assistant" in str(m.get("content", ""))
+            for m in messages
+            if isinstance(m, dict)
+        )
         last_user = next((str(m.get("content", "")) for m in reversed(messages) if m.get("role") == "user"), "")
         last_message = messages[-1] if messages else {}
-        if schema_name == "TaskPlan":
+        response_format_type = body.get("response_format", {}).get("type")
+        if is_planner:
             branch = "TaskPlan"
-        elif schema_name == "ReconTarget":
+        elif is_recon:
             branch = "ReconTarget"
         elif "Original request:" in last_user:
             branch = "Original request"
+        elif "You are a coding-task planner" in system_prompt:
+            branch = "TaskPlan"
         elif "ROLE: You are" in last_user:
             branch = "ROLE"
         elif isinstance(last_message, dict) and last_message.get("role") == "tool":
@@ -46,9 +65,22 @@ class Mock(BaseHTTPRequestHandler):
         self.branches.append(branch)
         with LOG.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"keys": sorted(body), "response_format_name": schema_name, "has_tools": "tools" in body, "user_content_preview": last_user[:250]}, default=str) + "\n")
-        if schema_name == "TaskPlan":
-            text = json.dumps({"subtasks": [{"id":"t1","goal":"Inspect dispatcher routing behavior.","scope":["autoconduck/routing/dispatcher.py"],"output_contract":{"description":"Summarize routing.","verify":[]},"constraints":["Do not propose code changes."],"depends_on":[],"verified_context":[],"read_budget":5,"role":"read"},{"id":"t2","goal":"Inspect routing configuration.","scope":["autoconduck/config.py"],"output_contract":{"description":"Summarize configuration.","verify":[]},"constraints":["Do not propose code changes."],"depends_on":["t1"],"verified_context":[],"read_budget":5,"role":"read"}],"summary":"Inspect routing.","budget_hint":0.7})
-        elif schema_name == "ReconTarget":
+        if is_planner:
+            self.__class__.planner_calls += 1
+            if self.__class__.planner_failure:
+                text = ""
+                self.reply(body, text)
+                return
+            clean_plan = json.dumps({"subtasks": [{"id":"t1","goal":"Inspect dispatcher routing behavior.","scope":["autoconduck/routing/dispatcher.py"],"output_contract":{"description":"Summarize routing.","verify":[]},"constraints":["Do not propose code changes."],"depends_on":[],"verified_context":[],"read_budget":5,"role":"read"}],"summary":"Inspect routing.","budget_hint":0.7})
+            if self.__class__.planner_truncation and response_format_type is None:
+                text = '{"subtasks":[{"id":"t1","goal":"Inspect auth'
+            elif schema_name is None and response_format_type is None:
+                text = clean_plan
+            elif response_format_type == "json_object":
+                text = clean_plan
+            else:
+                text = '```json\n{"subtasks":[{"id":"t1"'
+        elif is_recon:
             text = json.dumps({"files":["autoconduck/routing/dispatcher.py"],"query":"q","reasoning":"r"})
         elif isinstance(last_message, dict) and last_message.get("role") == "tool":
             text = "Mock post-tool answer."
@@ -57,7 +89,6 @@ class Mock(BaseHTTPRequestHandler):
         elif "Original request:" in last_user:
             text = ANSWER
         elif "ROLE: You are" in last_user:
-            if self.latency: time.sleep(self.latency)
             text = "Mock analyst findings for this subtask."
         elif "tools" in body:
             return self.reply(body, "", {"id":"call_1","name":"bash","arguments":{"command":"ls"}})
@@ -80,15 +111,102 @@ class Mock(BaseHTTPRequestHandler):
         self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
 
 
-def config(base, timeout=120.0):
+def config(base, timeout=120.0, slow_stream_progress=True):
     from autoconduck.config import Config, SelectionConfig
-    s = SelectionConfig(subagent_timeout_s=timeout, enable_executor_subagents=False, enable_fast_path_graph=True, min_orchestrator_complexity=.4, slow_threshold=.75, ambiguous_low=.40)
+    s = SelectionConfig(subagent_timeout_s=timeout, enable_executor_subagents=False, enable_fast_path_graph=True, min_orchestrator_complexity=.4, slow_threshold=.75, ambiguous_low=.40, slow_stream_progress=slow_stream_progress)
     entries = [{"id": n, "provider": "mock", "api_base": base, "api_key": "dummy", "input_cost_per_token": 1e-6, "output_cost_per_token": 1e-6, "tier": t} for n, t in (("autoconduck", "fast"), ("autoconduck-budget", "fast"), ("autoconduck-expensive", "slow"))]
     return Config(model_list=entries, selection=s, fast_path_digest_enabled=False)
 
 
 BASE_PROMPT = "Refactor the authentication module in src/auth.py and src/utils.py: (1) replace session cookies with JWT access+refresh tokens, (2) add rate-limiting middleware..., (3) migrate the user table schema..., (4) update all 14 call sites..., (5) write unit tests covering token expiry edge cases, (6) update the API documentation, (7) coordinate with the frontend team on the refresh flow, (8) add a cleanup cron job for expired tokens, (9) preserve backward compatibility with the legacy mobile client..."
 TOOLS = [{"type": "function", "function": {"name": "bash", "description": "run shell", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}}]
+
+
+S9_PROMPT = """
+This is a large, multi-part review, audit, and remediation task across the entire
+AutoConduck codebase. The scope of this task is complex and additional planning and decomposition are required before any implementation begins. Treat it as a full architecture-level overhaul, not a list
+of quick fixes:
+
+1. Custom provider page (onboarding): the placeholder text for the OpenAI base
+   URL is wrong — it currently says "localhost" but should show a real
+   gateway-style URL such as https://opencode.ai/zen/go/v1 (example only; do not
+   hard-code that exact URL — derive it per provider).
+
+2. TUI main-menu rendering glitch: random stray lines are drawn on the main menu
+   screen of the AutoConduck TUI. Investigate the root cause (looks like a
+   rendering dirty-region bug) and remove them, or render them properly. While
+   investigating, we hit this traceback when opening the dashboard:
+
+   Traceback (most recent call last):
+     File "autoconduck/tui/dashboard.py", line 222, in on_mount
+       self._render_menu()
+   AttributeError: 'Dashboard' object has no attribute '_layout_rows'
+
+3. Post-onboarding navigation: after a successful onboarding/configuration run,
+   the user should be sent back to the main menu — not the live routing stats
+   page. Make this the case for all other sub-pages too (consistent return-to-
+   menu flow).
+
+4. Settings page interactions: (a) for toggleable True/False settings, pressing
+   Enter on a selected setting should flip the value directly — users must not
+   type "True"/"False"; (b) numerical decimal settings must accept only
+   increments of 0.05 and be capped at their documented maximum; (c) Log Level
+   should also toggle/cycle with Enter instead of free-text entry.
+
+5. Simple Tuning page: remove the headroom % field; the usd/tokens input should
+   be a toggle; keybinds must always be visible; input hints should display
+   separately; going back to the main menu with "b" is too hard — use Esc, and
+   support Esc + left-arrow on every page (except text-input pages, where only
+   Esc applies).
+
+6. Live routing stats page: must expose the same information density as the
+   "conduck stats" command.
+
+7. Advanced tuning mode: arrow keys currently do nothing — the keybind
+   configuration is almost certainly wired incorrectly. Fix it and show the user
+   which parameter is currently selected.
+
+8. Keybinding consistency: never use "b" to go back; always Esc. Unify keybinds
+   across all pages.
+
+9. Startup latency optimization: launching a coding agent from AutoConduck takes
+   too long, and `conduck start --headless` itself is slow. Profile the startup
+   pipeline end-to-end (lazy imports, model-catalog ingestion, provider warm-up)
+   and eliminate critical bottlenecks — especially I/O and heavy imports on the
+   hot path. If no significant optimization is possible, add a loading screen
+   immediately after the start command so the user knows it isn't frozen.
+   Examine concurrency and latency around process spawn and the failover
+   watchdog.
+
+10. Visual glitch: AutoConduck stays on screen after a coding agent is launched
+    from the launch menu — the process handoff/rollback path leaks the TUI.
+    Diagnose and fix.
+
+11. Preset model selection defaults: some models on some presets ship
+    pre-selected. They should all default to deselected, except presets with 6
+    models or fewer, which should have all selected. This may be a
+    migration/schema issue in the preset data.
+
+12. uninstall / update lifecycle: `autoconduck uninstall` and `autoconduck
+    update` must also kill the running AutoConduck process if one exists, and
+    must run in the foreground terminal (no background process spawning) so the
+    user sees completion.
+
+13. First-run onboarding install latency: installing AutoConduck onto a coding
+    agent takes too long on first onboarding. Optimize it and/or show a loading
+    screen before installation begins so users know it isn't frozen.
+
+14. At any point in time EXCEPT planning, autoconduck should be able to deploy subagents even in fast path. However, we need to make it actually useful, faster than a single model execution (minimal but accurate planning in fast path), not have merge/conflict issues like imports not having the same name or code implemented with the same idea but does not work together etc.
+
+15. command "conduck" doesn't actually start the proxy but it says proxy active on the top. It needs to work the same as conduck start, and leads us the to the main menu.
+
+16. Release: bump the version number to 0.2.1.
+
+This task spans multiple subsystems — TUI/keybinding architecture, FastAPI
+server startup, launcher/process lifecycle, preset data schema, routing
+configuration, and packaging — so a full plan with sub-agent decomposition, and
+a verification pass with tests for every change, is required.
+"""
 
 
 def main():
@@ -178,7 +296,57 @@ def main():
         assert plain_decision.reason == "complexity threshold"
         return slow(False, plain_prompt, use_tools=False)
     run("S8 plain complex slow", plain_complex_slow)
-    run("S3a streaming slow", lambda: slow(True))
+    def streaming_opt_out():
+        nonlocal cfg
+        opt_out_cfg = cfg.model_copy(deep=True)
+        opt_out_cfg.selection.slow_stream_progress = False
+        cm.get_config = lambda: opt_out_cfg; server.get_config = lambda: opt_out_cfg
+        server.app = None; server._cached.clear()
+        with client() as c:
+            with c.stream("POST", "/v1/chat/completions", json={"model": "autoconduck", "messages": [{"role": "user", "content": prompt}], "stream": True}) as response:
+                text = "".join(response.iter_text())
+        assert response.status_code == 200 and ANSWER in text
+        assert not any(f"[{label}]" in text for label in ("recon", "planner", "subagent", "executor")), text
+        cfg = cfg.model_copy(deep=True)
+        cm.get_config = lambda: cfg; server.get_config = lambda: cfg
+        server.app = None; server._cached.clear()
+        return "explicit config opt-out has no progress lines"
+    run("S3a streaming opt-out", streaming_opt_out)
+
+    def streaming_default_on():
+        # Rebuild from a fresh default config so this proves the default, not
+        # state inherited from the explicit opt-out scenario.
+        nonlocal cfg
+        cfg = config(base)
+        cm.get_config = lambda: cfg; server.get_config = lambda: cfg
+        server.app = None; server._cached.clear()
+        with client() as c:
+            with c.stream("POST", "/v1/chat/completions", json={"model": "autoconduck", "messages": [{"role": "user", "content": prompt}], "stream": True}) as response:
+                text = "".join(response.iter_text())
+        assert response.status_code == 200 and ANSWER in text
+        # Progress is part of the default stream contract; verify it precedes the answer.
+        labels = ("recon", "reading files", "planner", "subagents", "compactor", "executor")
+        positions = [text.index(f"[{label}]") for label in labels]
+        assert positions == sorted(positions) and all(position < text.index(ANSWER) for position in positions), text
+        return "default-on progress deltas precede final answer"
+    run("S10 default streaming progress", streaming_default_on)
+
+    def streaming_env_opt_out():
+        old = os.environ.get("AUTOCONDUCK_STREAM_PROGRESS")
+        os.environ["AUTOCONDUCK_STREAM_PROGRESS"] = "0"
+        try:
+            with client() as c:
+                with c.stream("POST", "/v1/chat/completions", json={"model": "autoconduck", "messages": [{"role": "user", "content": prompt}], "stream": True}) as response:
+                    text = "".join(response.iter_text())
+            assert response.status_code == 200
+            assert not any(f"[{label}]" in text for label in ("recon", "planner", "subagent", "executor")), text
+        finally:
+            if old is None:
+                os.environ.pop("AUTOCONDUCK_STREAM_PROGRESS", None)
+            else:
+                os.environ["AUTOCONDUCK_STREAM_PROGRESS"] = old
+        return "env 0 overrides default-on config"
+    run("S11 env streaming opt-out", streaming_env_opt_out)
     def tools():
         with client() as c:
             with c.stream("POST", "/v1/chat/completions", json={"model": "autoconduck-budget", "messages": [{"role": "user", "content": "please use bash tool"}], "tools": TOOLS, "stream": True}) as r: text = "".join(r.iter_text())
@@ -249,7 +417,156 @@ def main():
             assert sr.status_code==200 and ("content_block_start" in text or ANSWER in text)
             assert c.post("/v1/messages",json={**b,"stream":False,"messages":[{"role":"user","content":"tool result"}]}).status_code==200
         return "Anthropic shape/SSE"
-    run("S6 Anthropic", anthropic); upstream.shutdown(); LOG.unlink(missing_ok=True)
+    def s9_measure():
+        nonlocal cfg
+        cm.get_config = lambda: cfg; server.get_config = lambda: cfg
+        server.app = None; server._cached.clear()
+        s9_score = complexity_of(S9_PROMPT, cfg)
+        s9_decision = route([{"role": "user", "content": S9_PROMPT}], [], pseudo_model="autoconduck", config=cfg)
+        s9_fields = ("path", "confidence_band", "confidence", "complexity", "reason")
+        print(f"S9 complexity: {s9_score:.3f}")
+        print("S9 routing decision:", {k: getattr(s9_decision, k) for k in s9_fields})
+        assert s9_decision.path == "slow"
+
+        def execute(label, latency):
+            trace.clear()
+            Mock.latency = latency
+            before = len(Mock.seen)
+            started = time.perf_counter()
+            try:
+                with client() as c:
+                    response = c.post("/v1/chat/completions", json={
+                        "model": "autoconduck",
+                        "messages": [{"role": "user", "content": S9_PROMPT}],
+                    })
+                elapsed = time.perf_counter() - started
+                assert response.status_code == 200
+                assert ANSWER in response.text
+                canonical = []
+                subagent_seen = 0
+                for node in trace:
+                    if node == "subagents":
+                        subagent_seen += 1
+                        canonical.append("recon_subagent_pool" if subagent_seen == 1 else "subagent_pool")
+                    elif node != "idle":
+                        canonical.append(node)
+                expected = ["recon", "recon_subagent_pool", "planner", "subagent_pool", "compactor", "executor"]
+                assert all(node in canonical for node in expected), canonical
+                assert canonical.index("recon") < canonical.index("planner") < canonical.index("executor")
+                calls = len(Mock.seen) - before
+                print(f"S9 {label}: {elapsed:.2f}s")
+                print(f"S9 {label} upstream call tally: {calls}")
+                print(f"S9 {label} node trace: {canonical}")
+                return elapsed
+            finally:
+                Mock.latency = 0
+
+        ttft_0 = execute("TTFT_0s", 0)
+        ttft_20 = execute("TTFT_20s", 20)
+        print(f"S9 TTFT_0s: {ttft_0:.2f}s")
+        print(f"S9 TTFT_20s: {ttft_20:.2f}s")
+        print(f"S9 total upstream calls: {len(Mock.seen)}")
+        return f"TTFT_0s={ttft_0:.2f}s TTFT_20s={ttft_20:.2f}s"
+
+    def s12_tool_suppression():
+        nonlocal cfg
+        cfg = config(base); cm.get_config = lambda: cfg; server.get_config = lambda: cfg
+        server.app = None; server._cached.clear(); trace.clear()
+        dump = "\n".join(f"def generated_{i}(): return {i}" for i in range(40))
+        messages = [{"role": "user", "content": S8_PROMPT if "S8_PROMPT" in globals() else plain_prompt}, {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "bash", "arguments": "{}"}}]}, {"role": "user", "content": dump}]
+        from autoconduck.routing.dispatcher import route
+        decision = route(messages, [], config=cfg)
+        print("S12 routing decision:", {k: getattr(decision, k) for k in ("path", "confidence_band", "confidence", "complexity", "reason")})
+        assert decision.path == "fast"
+        with client() as c:
+            before_slow = c.get("/stats").json().get("path_counts", {}).get("SLOW", 0)
+            with c.stream("POST", "/v1/chat/completions", json={"model": "autoconduck", "messages": messages, "stream": True}) as response:
+                text = "".join(response.iter_text())
+            progress = [f"[{label}]" for label in ("recon", "planner", "subagents", "executor") if f"[{label}]" in text]
+            path_counts = c.get("/stats").json().get("path_counts", {})
+            print("S12 stream response status:", response.status_code)
+            print("S12 stream response text:", text)
+            print("S12 progress lines:", progress)
+            print("S12 path counts:", path_counts)
+            assert response.status_code == 200 and "Mock generic response." in text
+            assert not progress, text
+            assert path_counts.get("SLOW", 0) == before_slow
+        return "pi user-role tool result stays fast"
+
+    def s13_planner_recovery():
+        nonlocal cfg
+        cfg = config(base); cm.get_config = lambda: cfg; server.get_config = lambda: cfg
+        server.app = None; server._cached.clear(); trace.clear(); Mock.planner_calls = 0
+        with client() as c:
+            response = c.post("/v1/chat/completions", json={"model": "autoconduck", "messages": [{"role": "user", "content": prompt}]})
+            assert response.status_code == 200 and ANSWER in response.text
+        canonical = []
+        subagent_seen = 0
+        for node in trace:
+            if node == "subagents":
+                subagent_seen += 1
+                canonical.append("recon_subagent_pool" if subagent_seen == 1 else "subagent_pool")
+            elif node != "idle":
+                canonical.append(node)
+        print("S13 planner recovery: plain JSON primary; response_format fallback is truncated")
+        print("S13 planner calls:", Mock.planner_calls)
+        print("S13 mock branches:", Mock.branches)
+        print("S13 node trace:", canonical)
+        print("S13 final response:", response.text)
+        assert Mock.planner_calls == 1 and "TaskPlan-fallback" not in Mock.branches
+        assert canonical == ["recon", "recon_subagent_pool", "planner", "subagent_pool", "subagent_pool", "compactor", "executor"]
+        return "planner plain primary completed"
+
+    def s15_json_repair_rescue():
+        nonlocal cfg
+        cfg = config(base); cm.get_config = lambda: cfg; server.get_config = lambda: cfg
+        server.app = None; server._cached.clear(); trace.clear(); Mock.planner_calls = 0
+        Mock.planner_truncation = True
+        try:
+            with client() as c:
+                response = c.post("/v1/chat/completions", json={"model": "autoconduck", "messages": [{"role": "user", "content": prompt}]})
+            assert response.status_code == 200 and ANSWER in response.text
+            canonical = []
+            subagent_seen = 0
+            for node in trace:
+                if node == "subagents":
+                    subagent_seen += 1
+                    canonical.append("recon_subagent_pool" if subagent_seen == 1 else "subagent_pool")
+                elif node != "idle":
+                    canonical.append(node)
+            print("S15 repair rescue: unterminated planner JSON repaired on plain attempt")
+            print("S15 node trace:", canonical)
+            print("S15 final response:", response.text)
+            assert canonical == ["recon", "recon_subagent_pool", "planner", "subagent_pool", "subagent_pool", "compactor", "executor"]
+            return "unterminated string rescued; full pipeline completed"
+        finally:
+            Mock.planner_truncation = False
+
+    def s14_planner_total_failure():
+        nonlocal cfg
+        cfg = config(base); cm.get_config = lambda: cfg; server.get_config = lambda: cfg
+        server.app = None; server._cached.clear(); trace.clear(); Mock.planner_calls = 0
+        Mock.planner_failure = True
+        try:
+            with client() as c:
+                with c.stream("POST", "/v1/chat/completions", json={
+                    "model": "autoconduck", "messages": [{"role": "user", "content": prompt}], "stream": True,
+                }) as response:
+                    text = "".join(response.iter_text())
+            assert response.status_code == 200
+            assert "[planner]" in text
+            assert not any(f"[{label}]" in text for label in ("subagent", "executor")), text
+            return "total planner failure degraded to FAST"
+        finally:
+            Mock.planner_failure = False
+
+    run("S6 Anthropic", anthropic)
+    run("S12 tool-turn suppression", s12_tool_suppression)
+    run("S13 planner recovery", s13_planner_recovery)
+    run("S15 repair rescue", s15_json_repair_rescue)
+    run("S14 planner total failure", s14_planner_total_failure)
+    run("S9 measured slow path", s9_measure)
+    upstream.shutdown(); LOG.unlink(missing_ok=True)
     print("\nScenario | Result | Notes\n---------|--------|------"); [print(" | ".join(x)) for x in results]
     return int(any(x[1] != "PASS" for x in results))
 
