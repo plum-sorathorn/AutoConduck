@@ -155,6 +155,10 @@ def route(
             if path == "fast"
             else None
         )
+        if path == "fast" and not model:
+            from ..config import resolve_orchestrator_model
+
+            model = resolve_orchestrator_model(config)
         if model:
             from ..stats import record_selection
 
@@ -228,6 +232,10 @@ def route(
             if path == "fast"
             else None
         )
+        if path == "fast" and not model:
+            from ..config import resolve_orchestrator_model
+
+            model = resolve_orchestrator_model(config)
         if model:
             from ..stats import record_selection
 
@@ -259,6 +267,10 @@ def route(
         if result.path == "fast"
         else None
     )
+    if result.path == "fast" and not model:
+        from ..config import resolve_orchestrator_model
+
+        model = resolve_orchestrator_model(config)
     if model:
         from ..stats import record_selection
 

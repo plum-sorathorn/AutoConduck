@@ -138,9 +138,11 @@ def _model_name(cfg=None, task_value=0.5, config=None) -> str:
 
             config = get_config()
         lo, hi = config.selection.phase_bands["planner"]
+        from autoconduck.config import resolve_orchestrator_model
+
         return pricing.select_closest(
             pricing.pool_ids(config), lo + (hi - lo) * task_value, config, band=(lo, hi)
-        )
+        ) or resolve_orchestrator_model(config)
     except Exception:
         pass
     return "gpt-4o"

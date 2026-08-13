@@ -61,6 +61,8 @@ def _build():
     from fastapi.responses import JSONResponse, StreamingResponse
     from pydantic import BaseModel, Field
     import litellm
+    litellm.suppress_debug_info = True
+    litellm.set_verbose = False
     from .stats import install_recorder
 
     install_recorder(litellm)

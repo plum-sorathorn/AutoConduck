@@ -364,6 +364,14 @@ def load_config(path=None) -> Config:
                 "No API key is configured for model %s (set auth.yaml or api_key_env)",
                 entry.get("id") or entry.get("model_name") or "<unknown>",
             )
+    if not any(
+        isinstance(entry, dict) and entry.get("enabled", True)
+        for entry in _configured_model_sources(config)
+    ):
+        logging.getLogger("autoconduck").warning(
+            "No models are configured in %s - add a preset or model_list or every request will fall back to a hardcoded default and may fail auth.",
+            p,
+        )
     return config
 
 

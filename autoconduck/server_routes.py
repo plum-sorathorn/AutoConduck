@@ -103,10 +103,19 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
             if not model:
                 try:
                     from .routing.pricing import pool_ids, select_closest
-                    model = select_closest(pool_ids(cfg), .15, cfg, pseudo_model=body_model)
+                    from .config import resolve_orchestrator_model
+                    selected = select_closest(pool_ids(cfg), .15, cfg, pseudo_model=body_model)
+                    model = selected or resolve_orchestrator_model(cfg)
+                    if not selected:
+                        logging.getLogger("autoconduck").warning(
+                            "Model pool is empty - no models configured; falling back to %s",
+                            model,
+                        )
                 except Exception:
                     from .config import resolve_orchestrator_model
                     model = resolve_orchestrator_model(cfg)
+            if not model:
+                logging.getLogger("autoconduck").warning("No model available for request")
             target = model
         extra = litellm_params_for(target, cfg)
         extra.update(_path=path if body_model in PSEUDO_MODELS else "direct", _pseudo=body_model)

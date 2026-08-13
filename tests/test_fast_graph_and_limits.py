@@ -27,6 +27,22 @@ def test_expensive_model_limit_in_select_closest():
     assert selected == "cheap-fast-model"
 
 
+def test_fast_graph_empty_pool_uses_orchestrator_fallback():
+    cfg = Config(model_list=[])
+    state = SimpleNamespace(
+        path="fast",
+        config=cfg,
+        complexity=0.2,
+        pseudo_model="autoconduck",
+        model=None,
+    )
+
+    FastGraph()._node_model_select(state)
+
+    assert state.model == config_module.resolve_orchestrator_model(cfg)
+    assert state.model
+
+
 def test_deescalation_from_escalated_state():
     cfg = Config(
         selection=SelectionConfig(deescalation_threshold=0.40),

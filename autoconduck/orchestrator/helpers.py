@@ -16,6 +16,7 @@ def _executor_model(
     try:
         from autoconduck import pricing
         from autoconduck.config import get_config
+        from autoconduck.config import resolve_orchestrator_model
         from autoconduck.routing.evaluator import complexity_of
 
         cfg = cfg or get_config()
@@ -31,7 +32,7 @@ def _executor_model(
             cfg,
             pseudo_model=pseudo_model,
             band=(lo, hi),
-        )
+        ) or resolve_orchestrator_model(cfg)
     except Exception:
         pass
     from autoconduck.config import select_model_by_tier

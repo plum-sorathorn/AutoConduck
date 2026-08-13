@@ -79,3 +79,29 @@ async def test_streaming_completion_uses_qualified_model_and_api_base(monkeypatc
     assert captured["model"] == "openai/deepseek-v4-flash"
     assert captured["api_base"] == "https://example.test/v1"
     assert captured["drop_params"] is True
+
+
+@pytest.mark.asyncio
+async def test_route_target_empty_pool_falls_back_to_orchestrator_model(monkeypatch):
+    cfg = config_module.Config()
+    monkeypatch.setattr(config_module, "get_config", lambda: cfg)
+
+    app = _App()
+    cache = {}
+    helpers = (
+        lambda body: [], lambda tools: [], lambda choice: None,
+        messages.litellm_params_for, lambda text: 0,
+        lambda model, **kwargs: None, lambda result: "", lambda value: value,
+        lambda tools: tools, messages.messages_litellm_kwargs,
+    )
+    server_routes.install_routes(
+        app, Request, JSONResponse, StreamingResponse, BaseModel, Field,
+        helpers, lambda cfg: [], messages.PSEUDO_MODELS, cache,
+    )
+
+    target = await cache["_route_target"](
+        "autoconduck", [{"role": "user", "content": "hi"}]
+    )
+
+    assert target[0]
+    assert target[0] == config_module.resolve_orchestrator_model(cfg)

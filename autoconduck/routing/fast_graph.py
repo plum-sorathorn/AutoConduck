@@ -164,12 +164,14 @@ class FastGraph:
 
     def _node_model_select(self, state: FastGraphState) -> None:
         if state.path == "fast":
+            from ..config import resolve_orchestrator_model
+
             model = pricing.select_closest(
                 pricing.pool_ids(state.config),
                 state.complexity,
                 state.config,
                 pseudo_model=state.pseudo_model,
-            )
+            ) or resolve_orchestrator_model(state.config)
             state.model = model
             if model:
                 from ..stats import record_selection

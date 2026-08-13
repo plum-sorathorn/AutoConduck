@@ -87,13 +87,15 @@ async def run_subagent(
             if getattr(task, "role", "read") != "write"
             else None
         )
+        from autoconduck.config import resolve_orchestrator_model
+
         target_model = pricing.select_closest(
             pricing.pool_ids(cfg),
             target,
             cfg,
             band=cfg.selection.phase_bands["subagent"],
             max_scaled_cost=max_cost,
-        )
+        ) or resolve_orchestrator_model(cfg)
         params: Any = litellm_params_for(target_model, cfg)
         params["_path"] = "orchestrator-subagent"
         params["_pseudo"] = "autoconduck"

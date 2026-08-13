@@ -4,6 +4,8 @@ from unittest.mock import patch
 import pytest
 
 from autoconduck.orchestrator.compactor import compact
+from autoconduck.config import Config, resolve_orchestrator_model
+from autoconduck.orchestrator import helpers, planner, recon
 from autoconduck.orchestrator.planner import (
     OutputContract,
     SubTask,
@@ -12,7 +14,8 @@ from autoconduck.orchestrator.planner import (
     _read_files,
     build_task_plan,
 )
-from autoconduck.orchestrator.subagents import build_subagent_prompt
+from autoconduck.orchestrator.subagents import build_subagent_prompt, run_subagent
+from autoconduck.routing import pricing
 
 
 def valid_task():
@@ -173,10 +176,34 @@ def test_compact_dedupes_refs():
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_helpers_empty_pool_fall_back_to_orchestrator_model():
+    cfg = Config(model_list=[])
+    fallback = resolve_orchestrator_model(cfg)
+
+    assert fallback
+    assert recon._recon_model_name(cfg, task_value=0.5) == fallback
+    assert planner._model_name(cfg, task_value=0.5) == fallback
+    assert helpers._executor_model(
+        "autoconduck", cfg, task_value=0.7, compactor_summary="", subtask_count=0
+    ) == fallback
+    assert pricing.select_closest(pricing.pool_ids(cfg), 0.3, cfg) == ""
+
+    class Client:
+        model = None
+
+        def completion(self, **kwargs):
+            self.model = kwargs["model"]
+            return {"choices": [{"message": {"content": "subagent result"}}]}
+
+    client = Client()
+    assert await run_subagent(valid_task(), "", client, cfg=cfg) == "subagent result"
+
+
+@pytest.mark.asyncio
 async def test_run_fallback_when_planner_fails():
     import autoconduck.orchestrator.graph as graph
     with patch.object(graph, "_LANGGRAPH_AVAILABLE", True), patch.object(graph, "build_task_plan", return_value=None):
-        assert await graph.run([], None) is None
+        assert await graph.run([], None, task_value=0.7) is None
 
 
 @pytest.mark.asyncio

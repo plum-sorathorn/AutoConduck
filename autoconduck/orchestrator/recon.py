@@ -31,9 +31,11 @@ def _recon_model_name(cfg=None, task_value: float = 0.5) -> str:
         bands = getattr(getattr(cfg, "selection", None), "phase_bands", {}) or {}
         lo, hi = bands.get("recon", [0.10, 0.45])
         max_cost = float(getattr(getattr(cfg, "selection", None), "max_file_read_scaled_cost", 0.55))
+        from autoconduck.config import resolve_orchestrator_model
+
         return pricing.select_closest(
             pricing.pool_ids(cfg), lo + (hi - lo) * task_value, cfg, band=(lo, hi), max_scaled_cost=max_cost
-        )
+        ) or resolve_orchestrator_model(cfg)
     except Exception:
         pass
     return "gpt-4o-mini"
