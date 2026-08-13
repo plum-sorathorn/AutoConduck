@@ -56,17 +56,14 @@ def build_recon_plan(
         )
 
     try:
-        from autoconduck.config import (
-            get_config,
-            orchestrator_litellm_params,
-            qualify_model,
-        )
-        from autoconduck.messages_api import normalize_messages_for_llm
+        from autoconduck.config import get_config
+        from autoconduck.messages_api import normalize_messages_for_llm, litellm_params_for
 
         cfg = cfg or get_config()
-        params = orchestrator_litellm_params(cfg)
+        recon_model = _recon_model_name(cfg, task_value)
+        params = litellm_params_for(recon_model, cfg)
         params.setdefault("max_tokens", 300)
-        params["model"] = qualify_model(_recon_model_name(cfg, task_value))
+        params["drop_params"] = True
 
         user_text = "\n".join(
             str(m.get("content", "")) if isinstance(m, dict) else str(m)

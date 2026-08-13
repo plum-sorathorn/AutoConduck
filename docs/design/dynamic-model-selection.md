@@ -4,23 +4,27 @@
 
 ## 1a. Fast path — pure-math V ∈ [0,1]
 
-`evaluator.complexity_of` is evolved (not replaced) into a 7-factor weighted sum, all extracted by single-pass regex/counting over the prompt text — O(n) over a few KB, well under 5ms, zero I/O:
+`evaluator.complexity_of` is evolved (not replaced) into a 10-factor weighted sum, all extracted by single-pass regex/counting over the prompt text — O(n) over a few KB, well under 5ms, zero I/O:
 
 | Factor | Weight | Extraction | Rationale |
 | --- | --- | --- | --- |
-| `length` | 0.15 | `min(1, char_len/1200)` | scope proxy (down-weighted from 0.20 — weak signal alone) |
-| `refs` | 0.10 | `min(1, ref_count/3)`, `ref_count` = regex hits of `@\w+`, `#\d+`, backtick spans, URLs | cross-reference density |
-| `structural` | 0.25 | `min(1, structural_count/3)`, count of bullets/numbered lines/code fences/`##` headers | still dominant — multi-part asks are structurally visible (down from 0.50 to make room for new factors) |
-| `files` | 0.10 | `min(1, file_count/3)`, regex `[\w\-/\\]+\.\w{1,4}` | breadth of touched surface |
-| `keyword_domain` (NEW) | 0.15 | `(clip(hard_hits-easy_hits,-3,3)+3)/6`; hard lexicon: architecture, refactor, migrate, race condition, concurrency, security, distributed, optimize, algorithm; easy lexicon: typo, rename, format, comment, lint, simple | domain-difficulty signal independent of length |
-| `edit_intent` (NEW) | 0.15 | regex for imperative edit verbs (fix/implement/add/refactor/write/build) vs read/explain verbs (explain/what/why/describe/review/summarize) → 1.0 edit-only, 0.0 read-only, 0.5 both/neither | read/explain tasks need less firepower than write/edit tasks of similar length |
-| `multi_step` (NEW) | 0.10 | `min(1, marker_count/3)`, markers = "then\|next\|after that\|also\|finally" hits + max(0, numbered_items-1) | proxy for sequential complexity |
+| `length` | 0.08 | `min(1, log1p(len/400)/log(4))` | soft log-curve scope proxy |
+| `structural` | 0.12 | `min(1, marker_count/3)`, bullets/numbered lines/code fences/`##` headers (keyword-free) | structural formatting, no keyword double-counting |
+| `scope_breadth` | 0.12 | `min(1, distinct_entities/6)`, filenames, CamelCase names, path-like refs, totality markers | breadth of touched surface |
+| `code_density` | 0.05 | `min(1, hits/4)`, backtick spans, code fences, CLI flags, env vars | inline/block code concentration |
+| `abstraction_level` | 0.12 | `(clip(abstract_hits-concrete_hits,-4,4)+4)/8` | abstract concepts vs concrete micro-operations |
+| `uncertainty_hedge` | 0.08 | `min(1, hits/3)`, investigate/diagnose/debug/why-is/root-cause | discovery/diagnostic work needs capability |
+| `cross_domain` | 0.12 | `(clip(hard_hits-easy_hits,-3,3)+3)/6` | multi-domain hard vs easy keyword balance |
+| `task_novelty` | 0.08 | `clip((high_novelty-low_novelty)/3 + 0.5, 0, 1)` | building new vs operating on existing |
+| `imperative_strength` | 0.15 | graded verb bands (1.0/0.85/0.60/0.15, neutral 0.40) | action intensity replaces binary edit_intent |
+| `multi_step` | 0.08 | `min(1, markers/5)`, transition markers + numbered items | sequential complexity |
 
 Weights sum to 1.00, all config-driven. Formula unchanged in shape:
 
 ```
 complexity = min(1.0, Σ weight_i * factor_i)
 if stack_trace_detected: complexity = min(1.0, complexity + stack_trace_boost)  # +0.25, unchanged
+if escalation_signal:    complexity = min(1.0, complexity + 0.30)              # Layer-3 additive boost
 ```
 
 This IS the fast-path task value V — no separate computation needed; it's already produced by `evaluator.score()` today and simply gets richer. Path routing (fast/slow/ambiguous, hysteresis, ambiguous zone) is **unchanged** — only what happens with the resulting float changes.
@@ -30,7 +34,7 @@ This IS the fast-path task value V — no separate computation needed; it's alre
 Bands (bounds, not points) live in config:
 
 ```
-phase_bands: {planner: [0.55, 0.85], subagent: [0.10, 0.55], executor: [0.35, 0.70]}
+phase_bands: {recon: [0.10, 0.45], planner: [0.55, 0.85], subagent: [0.10, 0.55], executor: [0.35, 0.70]}
 ```
 
 **Planner** — target scales linearly with overall task value (no LLM call needed yet, uses the T_i evaluator already computed pre-orchestrator):
@@ -172,17 +176,21 @@ selection:
   closeness_epsilon: 0.02        # used only in tests/logging for tie-detection, not selection branching
   expose_value_in_stats: true
   phase_bands:
+    recon:    [0.10, 0.45]
     planner:  [0.55, 0.85]
     subagent: [0.10, 0.55]
     executor: [0.35, 0.70]
   complexity_weights:
-    length: 0.15
-    refs: 0.10
-    structural: 0.25
-    files: 0.10
-    keyword_domain: 0.15
-    edit_intent: 0.15
-    multi_step: 0.10
+    length: 0.08
+    structural: 0.12
+    scope_breadth: 0.12
+    code_density: 0.05
+    abstraction_level: 0.12
+    uncertainty_hedge: 0.08
+    cross_domain: 0.12
+    task_novelty: 0.08
+    imperative_strength: 0.15
+    multi_step: 0.08
 ```
 
 - `ModelEntry.tier` field: **kept**, becomes advisory/display-only — no selection code reads it anymore except through the deprecated `select_model_by_tier` label→value map. TUI keeps showing the label as a human hint; actual routing is price-driven.
@@ -195,7 +203,7 @@ New files: `tests/test_valuation.py`, `tests/test_pricing_select_closest.py`, `t
 
 1. `test_complexity_weights_sum_to_one_default` — config default sanity.
 2. `test_complexity_of_deterministic_fixed_prompt` — fixed string → pinned exact float (regression anchor).
-3. `test_complexity_of_edit_intent_raises_value` — "fix the race condition..." scores higher than "explain what this does".
+3. `test_complexity_of_imperative_strength_raises_value` — "fix the race condition..." scores higher than "explain what this does".
 4. `test_complexity_of_multistep_markers` — "...then...then...finally" > flat single-sentence prompt.
 5. `test_select_closest_picks_nearest_not_cheapest` — 5-model pool, value=0.5 → asserts the *middle*-cost model wins, not index 0/-1 (proves fixed-tier behavior is gone).
 6. `test_select_closest_pseudo_bias_shifts_target` — same pool, `autoconduck-budget` vs `autoconduck-expensive` select strictly lower/higher-cost models than plain `autoconduck`.
@@ -212,7 +220,7 @@ New files: `tests/test_valuation.py`, `tests/test_pricing_select_closest.py`, `t
 # 6. Implementation order
 
 1. **`config.py`** — add `SelectionConfig` dataclass + defaults, wire into `AppConfig`, preserve `tier:` YAML parsing.
-2. **`routing/evaluator.py`** — config-driven weights, add `keyword_domain`/`edit_intent`/`multi_step` factors, keep `complexity_of(text, config=None)` signature backward-compatible. Run `pytest tests/test_evaluator.py`.
+2. **`routing/evaluator.py`** — config-driven weights, add the ten factor weights (length/structural/scope_breadth/code_density/abstraction_level/uncertainty_hedge/cross_domain/task_novelty/imperative_strength/multi_step), keep `complexity_of(text, config=None)` signature backward-compatible. Run `pytest tests/test_evaluator.py`.
 3. **`routing/pricing.py`** — add `target_scaled_cost`, `select_closest`, `cheapest_enabled`, `_entry_effective_value` EMA blend; turn `select`/`select_model_by_tier` into thin deprecated wrappers. Run new `tests/test_pricing_select_closest.py`.
 4. **`routing/dispatcher.py`** — add `RoutingDecision.model`, populate on fast path, extend tiebreaker prompt+parsing.
 5. **`resolver.py`** — consume `decision.model` instead of calling `pricing.select` directly.

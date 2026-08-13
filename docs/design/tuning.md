@@ -21,7 +21,7 @@ from the maximum and receive weight 1.0. The guard is `rate * burst_factor`,
 with a `.001` floor. Per-model guards are `guard * (.3 + .7 * weight)`, where
 `weight = 1 - (log1p(blended) - log1p(c_min))/(log1p(c_max)-log1p(c_min))`.
 
-Under budget pressure `p`, `gamma` is `1 + 2.0p` (curving cost targets steeply towards cheaper models under high pressure), budget bias is `-.20-.20p`, expensive bias is `.20-.35p`, and phase bands shift down by respectively `.20p` (planner), `.20p` (subagent), and `.25p` (executor), with minimum width `.05` and lower bound `.02`. Ambiguity bounds become `(.55+.05p, .70+.05p)`. EMA alpha is `.10+.10p` and the quality floor is `.5`. Single-model pools retain pool-relative defaults and receive no override.
+Under budget pressure `p`, `gamma` is `1 + 2.0p` (curving cost targets steeply towards cheaper models under high pressure), budget bias is `-.20-.20p`, expensive bias is `.20-.35p`, and phase bands shift down by respectively `.20p` (planner), `.20p` (subagent), and `.25p` (executor), with minimum width `.05` and lower bound `.02`. Ambiguity bounds become `(.60+.05p, .75+.05p)`. EMA alpha is `.10+.10p` and the quality floor is `.5`. Single-model pools retain pool-relative defaults and receive no override.
 
 Projected spend is explicitly an estimate: demand and future mix are not
 observable, so the tool reports an open-loop caveat. Stats seed request shares
@@ -37,9 +37,10 @@ Runtime safeguards complement the open-loop profile:
 - The realized spend guard uses a 300-second rolling window by default, reducing
   one-request oscillation while preserving per-model `max_usd_per_min` limits.
 - Ambiguous prompts only invoke the paid LLM tiebreaker when heuristic complexity
-  is at least `0.45`; `autoconduck-budget` raises this floor to `0.65`. Lower-value
-  ambiguous work stays on the deterministic fast path, which saves both time and
-  the extra classification call.
+  is at least `0.45`; `autoconduck-budget` raises this floor to `0.65`. The
+  tiebreaker itself is opt-in (`tiebreaker_enabled`, default false) —
+  lower-value ambiguous work stays on the deterministic fast path, which saves
+  both time and the extra classification call.
 - The budget pseudo-model still applies its negative closest-cost bias; the
   tiebreaker floor is a latency/cost gate, not a second model-price adjustment.
 - Realized request cost is normalized back to USD per million observed tokens

@@ -47,18 +47,14 @@ class State(BaseModel):
 async def _call(client: Any, model: str, messages: list[dict[str, str]]) -> str:
     import asyncio
     from typing import Any as TypingAny
-    from autoconduck.config import (
-        orchestrator_litellm_params,
-        get_config,
-        qualify_model,
-    )
-    from autoconduck.messages_api import normalize_messages_for_llm
+    from autoconduck.config import get_config
+    from autoconduck.messages_api import normalize_messages_for_llm, litellm_params_for
 
     messages = normalize_messages_for_llm(messages)
-    params: TypingAny = orchestrator_litellm_params(get_config())
-    params["model"] = qualify_model(model)
+    params: TypingAny = litellm_params_for(model, get_config())
     params["_path"] = "orchestrator-executor"
     params["_pseudo"] = "autoconduck"
+    params["drop_params"] = True
     if client is not None and hasattr(client, "completion"):
         return _response_text(
             await asyncio.to_thread(client.completion, messages=messages, **params)

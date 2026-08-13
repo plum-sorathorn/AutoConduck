@@ -309,29 +309,10 @@ def select_model_by_tier(tier: str, cfg=None) -> str:
 
 def orchestrator_litellm_params(cfg=None) -> dict[str, str]:
     """Build LiteLLM kwargs for the configured orchestration model."""
+    from .messages_api import litellm_params_for
+
     model = resolve_orchestrator_model(cfg)
-    for entry in _configured_model_sources(cfg):
-        if not isinstance(entry, dict):
-            continue
-        raw = entry.get("id") or entry.get("model_name") or entry.get("model")
-        params = (
-            entry.get("litellm_params")
-            if isinstance(entry.get("litellm_params"), dict)
-            else entry
-        )
-        if str(raw or "").removeprefix("openai/") != str(model).removeprefix("openai/"):
-            continue
-        result = {"model": qualify_model(model)}
-        if params.get("base_url") or params.get("api_base"):
-            result["api_base"] = normalize_api_base(
-                params.get("base_url") or params["api_base"]
-            )
-        if params.get("api_key_env") or params.get("api_key") or params.get("provider"):
-            api_key = resolve_api_key(params, provider_for(entry, cfg))
-            if api_key:
-                result["api_key"] = api_key
-        return result
-    return {"model": qualify_model(model)}
+    return litellm_params_for(model, cfg or get_config())
 
 
 def home_dir() -> Path:

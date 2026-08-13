@@ -1,4 +1,5 @@
 """Unit tests for autoconduck.tuning — pure, sync, deterministic, no network."""
+
 import json
 import math
 
@@ -37,11 +38,16 @@ def _fixed_inputs(monthly_limit=87.0, headroom_pct=25.0, active_hours=160.0, bur
 # Pressure: monotonicity + clamping
 # --------------------------------------------------------------------------
 
+
 def test_pressure_decreases_as_budget_increases():
     limits = [1, 10, 87, 500, 5000]
-    pressures = [compute_tuning(_fixed_inputs(monthly_limit=m), POOL).pressure for m in limits]
+    pressures = [
+        compute_tuning(_fixed_inputs(monthly_limit=m), POOL).pressure for m in limits
+    ]
     for a, b in zip(pressures, pressures[1:]):
-        assert a >= b - 1e-9, f"pressure should be non-increasing as budget grows: {pressures}"
+        assert a >= b - 1e-9, (
+            f"pressure should be non-increasing as budget grows: {pressures}"
+        )
 
 
 def test_pressure_clamped_high_for_tiny_budget():
@@ -63,6 +69,7 @@ def test_pressure_clamped_low_for_huge_budget():
 # regress even though pressure itself is a nonlinear function of inputs).
 # --------------------------------------------------------------------------
 
+
 def test_fixed_pool_linear_formulas_exact():
     result = compute_tuning(_fixed_inputs(), POOL)
     p = result.pressure
@@ -76,8 +83,8 @@ def test_fixed_pool_linear_formulas_exact():
     assert tunables["value_to_cost_gamma"][1] == pytest.approx(1.0 + p * 2.0)
     assert tunables["pseudo_bias_budget"][1] == pytest.approx(-0.20 - p * 0.20)
     assert tunables["pseudo_bias_expensive"][1] == pytest.approx(0.20 - p * 0.35)
-    assert tunables["ambiguous_low"][1] == pytest.approx(0.55 + p * 0.05)
-    assert tunables["ambiguous_high"][1] == pytest.approx(0.70 + p * 0.05)
+    assert tunables["ambiguous_low"][1] == pytest.approx(0.60 + p * 0.05)
+    assert tunables["ambiguous_high"][1] == pytest.approx(0.75 + p * 0.05)
     assert tunables["ema_alpha"][1] == pytest.approx(0.10 + p * 0.10)
 
     rate = 65.25 / (160 * 60)
@@ -95,7 +102,12 @@ def test_fixed_pool_per_model_limits_weighted_by_price():
     # priciest model gets floor weight (weight=0 -> guard * 0.3)
     assert limits["gpt-5.6-luna"] == pytest.approx(guard * 0.3)
     # monotonic: cheaper price -> higher (or equal) limit
-    ordered = [limits["qwen3.7-flash"], limits["muse-spark-1.2"], limits["claude-sonnet-5"], limits["gpt-5.6-luna"]]
+    ordered = [
+        limits["qwen3.7-flash"],
+        limits["muse-spark-1.2"],
+        limits["claude-sonnet-5"],
+        limits["gpt-5.6-luna"],
+    ]
     for a, b in zip(ordered, ordered[1:]):
         assert a >= b - 1e-12
     # every limit formula matches guard * (0.3 + 0.7*weight) with weight in [0,1]
@@ -124,6 +136,7 @@ def test_fixed_pool_phase_bands_shift_and_min_width():
 # Single-model pool
 # --------------------------------------------------------------------------
 
+
 def test_single_model_pool_keeps_pool_relative_tunables_at_defaults():
     single = [{"id": "solo-model", "price_in": 1.0, "price_out": 3.0}]
     result = compute_tuning(_fixed_inputs(), single)
@@ -142,6 +155,7 @@ def test_single_model_pool_keeps_pool_relative_tunables_at_defaults():
 # Zero-price model / epsilon handling
 # --------------------------------------------------------------------------
 
+
 def test_zero_price_model_uses_epsilon_and_does_not_crash():
     pool = [
         {"id": "free-model", "price_in": 0.0, "price_out": 0.0},
@@ -155,7 +169,10 @@ def test_zero_price_model_uses_epsilon_and_does_not_crash():
 
 
 def test_all_zero_price_pool_does_not_crash():
-    pool = [{"id": "free-a", "price_in": 0.0, "price_out": 0.0}, {"id": "free-b", "price_in": 0.0, "price_out": 0.0}]
+    pool = [
+        {"id": "free-a", "price_in": 0.0, "price_out": 0.0},
+        {"id": "free-b", "price_in": 0.0, "price_out": 0.0},
+    ]
     result = compute_tuning(_fixed_inputs(), pool)
     assert math.isfinite(result.pressure)
     assert 0.0 <= result.pressure <= 1.0
@@ -165,6 +182,7 @@ def test_all_zero_price_pool_does_not_crash():
 # token_to_usd
 # --------------------------------------------------------------------------
 
+
 def test_token_to_usd_matches_blended_price_for_single_model():
     pool = [{"id": "m", "price_in": 1.0, "price_out": 3.0}]
     # ratio=3 -> blended = (3*1 + 3)/4 = 1.5 $/million tokens
@@ -173,7 +191,10 @@ def test_token_to_usd_matches_blended_price_for_single_model():
 
 
 def test_token_to_usd_averages_across_pool():
-    pool = [{"id": "a", "price_in": 1.0, "price_out": 1.0}, {"id": "b", "price_in": 3.0, "price_out": 3.0}]
+    pool = [
+        {"id": "a", "price_in": 1.0, "price_out": 1.0},
+        {"id": "b", "price_in": 3.0, "price_out": 3.0},
+    ]
     # both blended prices equal their flat rate (in==out): 1.0 and 3.0 -> avg 2.0
     assert token_to_usd(1_000_000, pool) == pytest.approx(2.0)
 
@@ -185,6 +206,7 @@ def test_token_to_usd_empty_pool_is_zero():
 # --------------------------------------------------------------------------
 # Unreachable-target warning
 # --------------------------------------------------------------------------
+
 
 def test_unreachable_target_warns_with_tiny_budget():
     result = compute_tuning(_fixed_inputs(monthly_limit=0.001, headroom_pct=0), POOL)
@@ -200,6 +222,7 @@ def test_reachable_target_has_no_unreachable_warning():
 # project_spend
 # --------------------------------------------------------------------------
 
+
 def test_project_spend_shares_sum_to_one_and_has_caveat():
     projection = project_spend({"expected_requests_per_month": 1000}, POOL)
     shares_total = sum(row["share"] for row in projection["rows"])
@@ -211,7 +234,9 @@ def test_project_spend_shares_sum_to_one_and_has_caveat():
 
 def test_project_spend_uses_observed_stats_when_available():
     stats = [{"model": "qwen3.7-flash"}] * 8 + [{"model": "gpt-5.6-luna"}] * 2
-    projection = project_spend({"expected_requests_per_month": 1000}, POOL, stats_records=stats)
+    projection = project_spend(
+        {"expected_requests_per_month": 1000}, POOL, stats_records=stats
+    )
     rows_by_model = {r["model"]: r for r in projection["rows"]}
     assert rows_by_model["qwen3.7-flash"]["share"] == pytest.approx(0.8)
     assert rows_by_model["gpt-5.6-luna"]["share"] == pytest.approx(0.2)
@@ -221,6 +246,7 @@ def test_project_spend_uses_observed_stats_when_available():
 # --------------------------------------------------------------------------
 # Profile round-trip (persisted via AUTOCONDUCK_HOME)
 # --------------------------------------------------------------------------
+
 
 def test_profile_round_trip_via_autoconduck_home(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOCONDUCK_HOME", str(tmp_path))
@@ -234,7 +260,9 @@ def test_profile_round_trip_via_autoconduck_home(tmp_path, monkeypatch):
     loaded = load_profile()
     assert loaded is not None
     assert loaded["inputs"]["monthly_limit"] == pytest.approx(inputs.monthly_limit)
-    assert loaded["tunables"]["ema_alpha"] == pytest.approx(result.tunables["ema_alpha"][1])
+    assert loaded["tunables"]["ema_alpha"] == pytest.approx(
+        result.tunables["ema_alpha"][1]
+    )
     assert loaded["per_model_limits"] == result.per_model_limits
 
 
@@ -256,6 +284,7 @@ def test_save_profile_explicit_path(tmp_path):
 # --------------------------------------------------------------------------
 # Reset-to-defaults semantics
 # --------------------------------------------------------------------------
+
 
 def test_reset_current_equal_to_defaults_matches_implicit_default():
     inputs = _fixed_inputs()
@@ -281,13 +310,14 @@ def test_defaults_match_default_bands_constant():
     defaults = _defaults()
     assert defaults["phase_bands"] == {k: list(v) for k, v in DEFAULT_BANDS.items()}
     assert defaults["value_to_cost_gamma"] == 1.0
-    assert defaults["ambiguous_low"] == 0.55
-    assert defaults["ambiguous_high"] == 0.70
+    assert defaults["ambiguous_low"] == 0.60
+    assert defaults["ambiguous_high"] == 0.75
 
 
 # --------------------------------------------------------------------------
 # CLI: `tune` subparser is registered with a handler
 # --------------------------------------------------------------------------
+
 
 def test_tune_subparser_registered_with_handler(monkeypatch):
     from autoconduck import main as cli

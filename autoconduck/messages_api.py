@@ -262,7 +262,14 @@ def litellm_params_for(model_id: str, cfg) -> dict:
 
     entry = custom_entry(cfg, model_id)
     if not entry:
-        return {"model": qualify_model(model_id)}
+        qual_model = qualify_model(model_id)
+        result = {"model": qual_model}
+        dummy = {"id": model_id}
+        provider = provider_for(dummy, cfg)
+        api_key = resolve_api_key(dummy, provider)
+        if api_key:
+            result["api_key"] = api_key
+        return result
 
     params = (
         entry.get("litellm_params")

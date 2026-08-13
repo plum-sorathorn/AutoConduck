@@ -1,4 +1,5 @@
 """Settings screen — expose configurable options from the TUI."""
+
 from __future__ import annotations
 
 from .onboarding import _TEXTUAL, _require_textual
@@ -14,22 +15,54 @@ if _TEXTUAL:
         """TUI settings page."""
 
         SETTINGS_DEFS = [
-            ("launch_in_new_terminal", "Launch proxy in new terminal",
-             "conduck start --agent opens the proxy in a new window", "bool"),
-            ("ambiguous_low",          "Ambiguous band lower edge",
-             "Confidence below this => ambiguous zone (default 0.55)", "float"),
-            ("ambiguous_high",         "Ambiguous band upper edge",
-             "Confidence above this => confident routing (default 0.70)", "float"),
-            ("selection.slow_threshold", "Slow-path threshold",
-             "Complexity at or above this => SLOW path (default 0.75)", "float"),
-            ("port",                   "Proxy listen port",
-             "Port the AutoConduck proxy binds to (default 11434)", "int"),
-            ("log_level",              "Log level",
-             "Proxy verbosity: DEBUG / INFO / WARNING / ERROR", "str"),
-            ("selection.tiebreaker_enabled", "Tiebreaker enabled",
-             "Use a cheap LLM to break routing ties in the ambiguous band", "bool"),
-            ("selection.tiebreaker_min_complexity", "Tiebreaker min complexity",
-             "Only invoke the tiebreaker when complexity >= this value (default 0.45)", "float"),
+            (
+                "launch_in_new_terminal",
+                "Launch proxy in new terminal",
+                "conduck start --agent opens the proxy in a new window",
+                "bool",
+            ),
+            (
+                "ambiguous_low",
+                "Ambiguous band lower edge",
+                "Confidence below this => ambiguous zone (default 0.60)",
+                "float",
+            ),
+            (
+                "ambiguous_high",
+                "Ambiguous band upper edge",
+                "Confidence above this => confident routing (default 0.75)",
+                "float",
+            ),
+            (
+                "selection.slow_threshold",
+                "Slow-path threshold",
+                "Complexity at or above this => SLOW path (default 0.75)",
+                "float",
+            ),
+            (
+                "port",
+                "Proxy listen port",
+                "Port the AutoConduck proxy binds to (default 11434)",
+                "int",
+            ),
+            (
+                "log_level",
+                "Log level",
+                "Proxy verbosity: DEBUG / INFO / WARNING / ERROR",
+                "str",
+            ),
+            (
+                "selection.tiebreaker_enabled",
+                "Tiebreaker enabled",
+                "Use a cheap LLM to break routing ties in the ambiguous band",
+                "bool",
+            ),
+            (
+                "selection.tiebreaker_min_complexity",
+                "Tiebreaker min complexity",
+                "Only invoke the tiebreaker when complexity >= this value (default 0.45)",
+                "float",
+            ),
         ]
 
         def __init__(self, controller=None):
@@ -73,9 +106,7 @@ if _TEXTUAL:
                 val = self._get_val(path)
                 mark = ">> " if i == self.cursor else "   "
                 row = f"{mark}{name}  \\[{val}]"
-                lines.append(
-                    f"[reverse]{row}[/reverse]" if i == self.cursor else row
-                )
+                lines.append(f"[reverse]{row}[/reverse]" if i == self.cursor else row)
             if self._message:
                 lines.append(f"\n{self._message}")
             return "\n".join(lines)
@@ -159,6 +190,7 @@ if _TEXTUAL:
             event.stop()
 
 else:
+
     class SettingsScreen:
         def __init__(self, *args, **kwargs):
             _require_textual()

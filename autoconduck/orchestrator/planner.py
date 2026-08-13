@@ -153,15 +153,14 @@ def _completion(
     task_value: float = 0.5,
     **kwargs: Any,
 ) -> Any:
-    from autoconduck.config import orchestrator_litellm_params
-    from autoconduck.messages_api import normalize_messages_for_llm
+    from autoconduck.messages_api import normalize_messages_for_llm, litellm_params_for
 
     messages = normalize_messages_for_llm(messages)
-    kwargs = {**orchestrator_litellm_params(cfg), **kwargs}
+    planner_model = _model_name(cfg, task_value=task_value)
+    params = litellm_params_for(planner_model, cfg)
+    kwargs = {**params, **kwargs}
     kwargs.setdefault("max_tokens", 500)
-    from autoconduck.config import qualify_model
-
-    kwargs["model"] = qualify_model(_model_name(cfg, task_value=task_value))
+    kwargs["drop_params"] = True
     if client is not None:
         if hasattr(client, "completion"):
             return client.completion(messages=messages, **kwargs)

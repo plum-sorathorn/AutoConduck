@@ -98,8 +98,8 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                                        task_value=float(getattr(decision, "complexity", .5)), request=request)
                     if result is not None:
                         return None, {"__answer__": result, "_path": path, "_pseudo": body_model}
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logging.getLogger("autoconduck").warning("Orchestrator execution failed: %s", exc)
             if not model:
                 try:
                     from .routing.pricing import pool_ids, select_closest

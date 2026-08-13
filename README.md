@@ -20,19 +20,20 @@ Agent → LiteLLM Proxy (streaming/provider abstraction)
           ▼
    Aurelio Semantic Router ── confidence ──┐
           │                                │
-      direct model                    cheap tiebreaker
+      direct model                    cheap tiebreaker (opt-in)
           │                                │
           └──────────────┬─────────────────┘
                          ▼
                  LangGraph async DAG
-              planner → Send subagents →
+              recon → planner → Send subagents →
                  compactor → executor
 ```
 
 1. **LiteLLM Proxy** provides provider abstraction, streaming, model usage,
    and the OpenAI-compatible `/v1/chat/completions` and `/v1/models` surface.
 2. **Aurelio Semantic Router** classifies fast/slow routes with embedding-based
-   confidence. `routing/dispatcher.py`, `routing/semantic_router.py`, and `routing/evaluator.py` add
+   confidence. `routing/dispatcher.py` (via the compiled micro-DAG in
+   `routing/fast_graph.py`), `routing/semantic_router.py`, and `routing/evaluator.py` add
    the routing judgment without I/O or LLM calls on the fast path.
 3. **LangGraph** runs the asynchronous subagent DAG through `orchestrator/`.
    The dashboard and Textual `tui/` make routing decisions inspectable.
@@ -106,9 +107,10 @@ with `autoconduck start --headless` for them.
    `messages_api.py`.
 2. Requests for `autoconduck`, `autoconduck-budget`, or `autoconduck-expensive`
    are intercepted and handed to `routing/dispatcher.py` through `_route_target`.
-3. `dispatcher.route()` runs the synchronous, zero-I/O fast path: 
-   `semantic_router.route()` → `evaluator.score()` → an optional tiebreaker.
-   This path is designed to stay under 5 ms.
+3. `dispatcher.route()` runs the synchronous, zero-I/O fast path through
+   `routing/fast_graph.py`: `semantic_router.route()` → `evaluator.score()` → an
+   optional (off-by-default) tiebreaker → `pricing.select_closest()`. This path
+   is designed to stay under 5 ms.
 4. A `FAST` decision lets `pricing.select_closest()` match a model to the
    task's computed complexity value; `RoutingDecision.model` is set by the
    dispatcher. A `SLOW` decision hands the whole request to the LangGraph
@@ -134,22 +136,27 @@ token-overlap matching over the examples is used; no match returns
 The evaluator is pure math on the fast path:
 
 ```text
-complexity = 0.15·length + 0.10·refs + 0.25·structural + 0.10·files
-           + 0.15·keyword_domain + 0.15·edit_intent + 0.10·multi_step
+complexity = 0.08·length + 0.12·structural + 0.12·scope_breadth + 0.05·code_density
+           + 0.12·abstraction_level + 0.08·uncertainty_hedge + 0.12·cross_domain
+           + 0.08·task_novelty + 0.15·imperative_strength + 0.08·multi_step
 ```
 
 Each term is clamped so the final score is at most 1. Confidence is
-`max(0, complexity × 0.75)`, with a `+0.25` stack-trace boost when the prompt
-contains a traceback. After an escalation (previous decision ≥ `0.80`) and
-without a new stack trace, hysteresis clamps complexity to `≤ 0.50`, preventing
-the system from staying hot.
+`max(router_confidence, complexity × 0.75)` plus a `+0.25` stack-trace boost
+and `+0.30` escalation boost. After an escalation (previous decision ≥ `0.80`)
+and without a new stack trace, hysteresis clamps complexity to `≤ 0.50`; a
+simple turn below `deescalation_threshold` (0.40) actively drops back to the
+fast path, and in-flight tool loops stay on the fast path unless an
+escalation or stack-trace signal fires.
 
-The ambiguous zone is `[0.55, 0.70]`: confidence in that zone (or below its
-low bound) invokes a cheap two-token LLM tiebreaker (“Reply only FAST or
-SLOW”); exceptions return `fast`. The current slow rule is
-`complexity >= 0.6 OR (route == slow_path AND confidence >= 0.70)`, so complex
-prompts escalate even when the semantic router says fast. The budget pseudo-model multiplies confidence by `1.15`; expensive multiplies
-it by `0.85`. Both instead shift the selection target: budget applies a `−0.20`
+The ambiguous zone is `[0.60, 0.75]` (scaled by the pseudo-model multiplier).
+The LLM tiebreaker is disabled by default (`tiebreaker_enabled: false`); when
+enabled it fires only for complexity ≥ `0.45` (≥ `0.65` for budget) and
+otherwise resolves deterministically. The slow rule is
+`complexity >= 0.75 OR (route == slow_path AND confidence >= boundary_high)`,
+so complex prompts escalate even when the semantic router says fast. The
+budget pseudo-model multiplies the zone bounds by `1.15`; expensive multiplies
+by `0.85`. Both instead shift the selection target: budget applies a `−0.20`
 bias and expensive a `+0.20` bias.
 
 ### Pricing (`routing/pricing.py`)
@@ -166,9 +173,16 @@ bias (budget `−0.20`, expensive `+0.20`). `select()` and
 
 ### LangGraph orchestrator (`orchestrator/`)
 
-The graph is `planner → subagent_pool → (compactor | end) → executor → END`.
-Its `after_plan` edge retries or falls back; if the plan is `None` twice, the
-graph returns `None` and the request uses the fast path.
+The graph is `recon → recon_subagent_pool → planner → subagent_pool →
+(compactor | end) → executor → END`. Requests below
+`min_orchestrator_complexity` (0.62) short-circuit to a direct executor call.
+`recon` (`orchestrator/recon.py`) discovers up to five target files
+(zero-LLM-cost when the request names explicit paths) and feeds them to the
+planner as ground truth. Its `after_plan` edge retries or falls back; if the
+plan is `None` twice, the graph returns `None` and the request uses the fast
+path. With `enable_executor_subagents` (default off), the executor fans out
+per-file write-draft subagents (`FileClaimRegistry` guards overlapping scopes)
+before synthesis.
 
 `build_task_plan()` uses a few-shot, strict JSON prompt to produce a `TaskPlan`
 of `SubTask{id, goal, scope, output_contract, constraints, depends_on,
@@ -187,7 +201,7 @@ The compactor is deterministic and LLM-free, not a synthesis model call. It
 drops lines whose `file:line` references appeared in an earlier report, drops
 exact duplicate lines, and truncates the result at about 950 words (about 1k
 tokens) while preserving complete lines. The result is stored in
-`state.compacted`. Phase bands are planner `[0.55,0.85]`, subagents
+`state.compacted`. Phase bands are recon `[0.10,0.45]`, planner `[0.55,0.85]`, subagents
 `[0.10,0.55]`, and executor `[0.35,0.70]`, each with on-the-fly targets from
 task value, subtask prompt/role/plan breadth and planner `budget_hint`, or
 compactor-summary complexity and integration count. The compactor costs
@@ -237,8 +251,8 @@ Configuration is `config.yaml` under `~/.autoconduck` or `$AUTOCONDUCK_HOME`:
 
 | Tunable | Default |
 | --- | ---: |
-| `ambiguous_low` | 0.55 |
-| `ambiguous_high` | 0.70 |
+| `ambiguous_low` | 0.60 |
+| `ambiguous_high` | 0.75 |
 | `escalation_threshold` | 0.80 |
 | `hysteresis_floor` | 0.50 |
 | `stack_trace_boost` | 0.25 |
@@ -246,11 +260,17 @@ Configuration is `config.yaml` under `~/.autoconduck` or `$AUTOCONDUCK_HOME`:
 | `degraded_error_rate` | 0.20 |
 | `degraded_window_s` | 300 |
 | `pseudo_model` | `autoconduck` |
-| `phase_bands` | planner, subagent, executor ranges |
-| `complexity_weights` | seven evaluator factor weights |
+| `phase_bands` | recon, planner, subagent, executor ranges |
+| `complexity_weights` | ten evaluator factor weights |
 | `value_to_cost_gamma` | 1.0 |
 | `pseudo_bias_budget` / `pseudo_bias_expensive` / `pseudo_bias_enabled` | -0.20 / 0.20 / true |
 | `ema_min_samples` | 3 |
+| `min_orchestrator_complexity` | 0.62 |
+| `max_file_read_scaled_cost` | 0.55 |
+| `deescalation_threshold` | 0.40 |
+| `tiebreaker_enabled` | false |
+| `enable_fast_path_graph` | true |
+| `enable_executor_subagents` | false |
 | `expose_value_in_stats` | true |
 | `model_list` | id, prices, enabled; `tier` is advisory/display-only |
 
@@ -272,11 +292,14 @@ tests for the whole system”.
 
 ### Module map
 
-`routing/dispatcher.py` (sequence) · `routing/semantic_router.py` · `routing/evaluator.py` ·
+`routing/dispatcher.py` (sequence) · `routing/fast_graph.py` (compiled micro-DAG) ·
+`routing/semantic_router.py` · `routing/evaluator.py` · `routing/complexity.py` ·
 `routing/pricing.py` · `config.py` (`resolve_orchestrator_model`, `qualify_model`,
-`resolve_api_key`, `normalize_api_base`) · `providers.py` · `launcher.py`
+`resolve_api_key`, `normalize_api_base`) · `auth.py` (auth.yaml) · `resolver.py` ·
+`providers.py` · `launcher.py`
 (shims and ensure/release refcounting) · `messages_api.py` (Anthropic shim) ·
-`orchestrator/{graph,planner,subagents,compactor}.py` · `agents/` (external
+`orchestrator/{graph,recon,planner,subagents,compactor}.py` · `stats.py` ·
+`agents/` (external
 CLI adapters) · `tui/` (Textual dashboard).
 
 ## Development

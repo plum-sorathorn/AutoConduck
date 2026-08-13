@@ -73,13 +73,11 @@ async def run_subagent(
     try:
         import asyncio
         from typing import Any
-        from autoconduck.config import get_config, qualify_model
+        from autoconduck.config import get_config
+        from autoconduck import pricing
+        from autoconduck.messages_api import litellm_params_for
 
         cfg = cfg or get_config()
-        from autoconduck import pricing
-        from autoconduck.config import orchestrator_litellm_params
-
-        params: Any = orchestrator_litellm_params(cfg)
         prompt = build_subagent_prompt(task, upstream_summaries)
         target = subagent_target(
             prompt, getattr(task, "role", "read"), plan_breadth, budget_hint, cfg
@@ -89,17 +87,17 @@ async def run_subagent(
             if getattr(task, "role", "read") != "write"
             else None
         )
-        params["model"] = qualify_model(
-            pricing.select_closest(
-                pricing.pool_ids(cfg),
-                target,
-                cfg,
-                band=cfg.selection.phase_bands["subagent"],
-                max_scaled_cost=max_cost,
-            )
+        target_model = pricing.select_closest(
+            pricing.pool_ids(cfg),
+            target,
+            cfg,
+            band=cfg.selection.phase_bands["subagent"],
+            max_scaled_cost=max_cost,
         )
+        params: Any = litellm_params_for(target_model, cfg)
         params["_path"] = "orchestrator-subagent"
         params["_pseudo"] = "autoconduck"
+        params["drop_params"] = True
         params.setdefault("max_tokens", 650)
         params.setdefault("timeout", 12.0)
         logging.getLogger("autoconduck.orchestrator").debug(

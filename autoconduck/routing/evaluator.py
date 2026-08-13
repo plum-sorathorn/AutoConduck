@@ -1,14 +1,22 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from .complexity import (
+    complexity_of,
+    clean_routing_text,
+    has_stack_trace,
+    has_escalation_signal,
+    _context_boost,
+    _first_user_complexity,
+    _routing_text,
+    _intent_drift,
+)
 from .semantic_router import RouteMatch
-from .complexity import (complexity_of, clean_routing_text, has_stack_trace,
-    has_escalation_signal, _context_boost, _first_user_complexity, _routing_text,
-    _last, _intent_drift)
 
 STACK_TRACE_BOOST = 0.25
 ESCALATION_THRESHOLD = 0.80
 HYSTERESIS_FLOOR = 0.50
+
 
 def _first_user_complexity_text(messages: list) -> str:
     for msg in messages:
@@ -18,6 +26,7 @@ def _first_user_complexity_text(messages: list) -> str:
                 return clean_routing_text(content)
     return ""
 
+
 @dataclass(frozen=True)
 class Score:
     confidence_band: Literal["fast", "slow", "ambiguous"]
@@ -25,6 +34,7 @@ class Score:
     confidence: float
     complexity: float
     reason: str
+
 
 def is_tool_loop(messages: list, config=None) -> bool:
     """Return True if the message sequence is an in-flight tool loop turn.
@@ -84,16 +94,18 @@ def is_tool_loop(messages: list, config=None) -> bool:
 
     # Long tool chain soft-escalation: if >12 tool turns have fired, allow re-scoring
     tool_turn_count = sum(
-        1 for m in messages
-        if isinstance(m, dict) and (
-            m.get("role") in ("tool", "function") or "tool_calls" in m
-        )
+        1
+        for m in messages
+        if isinstance(m, dict)
+        and (m.get("role") in ("tool", "function") or "tool_calls" in m)
     )
     if tool_turn_count > 12:
         return False
 
     cfg_sel = getattr(config, "selection", config) if config else None
-    slow_threshold = float(getattr(cfg_sel, "slow_threshold", 0.75) if cfg_sel else 0.75)
+    slow_threshold = float(
+        getattr(cfg_sel, "slow_threshold", 0.75) if cfg_sel else 0.75
+    )
     first_complexity = complexity_of(_first_user_complexity_text(messages), config)
     if first_complexity >= slow_threshold:
         # Only bypass tool-loop suppression when the *current* message also
@@ -106,6 +118,7 @@ def is_tool_loop(messages: list, config=None) -> bool:
 
     return True
 
+
 def score(
     messages: list,
     history,
@@ -114,10 +127,12 @@ def score(
     config=None,
 ) -> Score:
     cfg = config
-    low = float(getattr(cfg, "ambiguous_low", 0.55) if cfg else 0.55)
-    high = float(getattr(cfg, "ambiguous_high", 0.70) if cfg else 0.70)
+    low = float(getattr(cfg, "ambiguous_low", 0.60) if cfg else 0.60)
+    high = float(getattr(cfg, "ambiguous_high", 0.75) if cfg else 0.75)
     stack_trace_boost = float(
-        getattr(cfg, "stack_trace_boost", STACK_TRACE_BOOST) if cfg else STACK_TRACE_BOOST
+        getattr(cfg, "stack_trace_boost", STACK_TRACE_BOOST)
+        if cfg
+        else STACK_TRACE_BOOST
     )
     hysteresis_floor = float(
         getattr(cfg, "hysteresis_floor", HYSTERESIS_FLOOR) if cfg else HYSTERESIS_FLOOR
@@ -157,7 +172,9 @@ def score(
         )
 
     deescalation_threshold = float(
-        getattr(getattr(cfg, "selection", None), "deescalation_threshold", 0.40) if cfg else 0.40
+        getattr(getattr(cfg, "selection", None), "deescalation_threshold", 0.40)
+        if cfg
+        else 0.40
     )
 
     previous = history[-1] if isinstance(history, list) and history else history
@@ -173,8 +190,15 @@ def score(
     )
     # DE-ESCALATION: If session was escalated but current turn is simple (< deescalation_threshold)
     # and carries no stack trace or escalation signals, active de-escalate back to fast path.
-    if escalated and complexity < deescalation_threshold and not trace and not escalation:
-        return Score("fast", "fast", confidence, complexity, "de-escalated to fast path")
+    if (
+        escalated
+        and complexity < deescalation_threshold
+        and not trace
+        and not escalation
+    ):
+        return Score(
+            "fast", "fast", confidence, complexity, "de-escalated to fast path"
+        )
 
     if escalated:
         complexity = min(complexity, hysteresis_floor)
@@ -185,8 +209,9 @@ def score(
     elif pseudo_model.endswith("expensive"):
         multiplier = 0.85
 
-    boundary_low, boundary_high = min(1.0, low * multiplier), min(
-        1.0, high * multiplier
+    boundary_low, boundary_high = (
+        min(1.0, low * multiplier),
+        min(1.0, high * multiplier),
     )
 
     if boundary_low <= confidence <= boundary_high:
