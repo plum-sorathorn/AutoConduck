@@ -128,7 +128,7 @@ def _format_file_contents(files: dict[str, str]) -> str:
     return "\n".join(parts)
 
 
-def _model_name(cfg=None, task_value=0.5, config=None) -> str:
+def _select_planner_model(retry: bool = False, cfg=None, task_value=0.5, config=None) -> str:
     try:
         from autoconduck import pricing
 
@@ -142,6 +142,8 @@ def _model_name(cfg=None, task_value=0.5, config=None) -> str:
             from autoconduck.config import qualify_model
 
             return qualify_model(str(override).strip())
+        if retry and getattr(config.selection, "planner_retry_cheaper", True):
+            return pricing.cheapest_enabled(config) or "gpt-4o"
         lo, hi = config.selection.phase_bands["planner"]
         from autoconduck.config import resolve_orchestrator_model
 
@@ -153,17 +155,22 @@ def _model_name(cfg=None, task_value=0.5, config=None) -> str:
     return "gpt-4o"
 
 
+def _model_name(cfg=None, task_value=0.5, config=None) -> str:
+    return _select_planner_model(False, cfg, task_value, config)
+
+
 def _completion(
     client: Any,
     messages: list[dict[str, str]],
     cfg=None,
     task_value: float = 0.5,
+    retry: bool = False,
     **kwargs: Any,
 ) -> Any:
     from autoconduck.messages_api import normalize_messages_for_llm, litellm_params_for
 
     messages = normalize_messages_for_llm(messages)
-    planner_model = _model_name(cfg, task_value=task_value)
+    planner_model = _select_planner_model(retry, cfg, task_value=task_value)
     params = litellm_params_for(planner_model, cfg)
     kwargs = {**params, **kwargs}
     kwargs["max_tokens"] = 4000
@@ -204,7 +211,8 @@ def build_task_plan(
         file_block = _format_file_contents(_read_files(paths))
         if ground_truth:
             file_block += f"\n\nRECON GROUND TRUTH EVIDENCE:\n{ground_truth}"
-        system_content = PLANNER_SYSTEM_PROMPT + file_block
+        from .roles import role_card
+        system_content = (role_card("planner") + "\n" if getattr(getattr(cfg, "selection", None), "phase_role_cards", True) else "") + PLANNER_SYSTEM_PROMPT + file_block
         user_messages = [
             message for message in messages
             if isinstance(message, dict) and message.get("role") == "user"
@@ -216,8 +224,10 @@ def build_task_plan(
             if isinstance(message, dict)
         )
         logger = logging.getLogger("autoconduck.orchestrator")
-        logger.info("Planning with model %s", _model_name(cfg, task_value=task_value))
-        logger.debug("PLANNER PROMPT:\n%s\n---\n%s", system_content, user_msg)
+        first_model = _select_planner_model(False, cfg, task_value=task_value)
+        logger.info("Planning with model %s", first_model)
+        prompt_log = logger.info if getattr(getattr(cfg, "selection", None), "dump_prompts", True) else logger.debug
+        prompt_log("PLANNER PROMPT:\n%s\n---\n%s", system_content, user_msg)
         raw = ""
         for attempt in range(2):
             try:
@@ -228,7 +238,11 @@ def build_task_plan(
                         kwargs["response_format"] = {"type": "json_object"}
                     elif mode == "json_schema":
                         kwargs["response_format"] = {"type": "json_schema", "json_schema": {"name": "TaskPlan", "schema": schema, "strict": True}}
-                response = _completion(client, prompt_messages, cfg=cfg, task_value=task_value, **kwargs)
+                retry = attempt == 1
+                model = _select_planner_model(retry, cfg, task_value=task_value)
+                if retry and model != first_model:
+                    logger.info("Planner attempt 2 using cheaper model %s (was %s)", model, first_model)
+                response = _completion(client, prompt_messages, cfg=cfg, task_value=task_value, retry=retry, **kwargs)
                 raw = _content(response)
                 parsed, repair_error, preview = parse_json_text(raw)
                 if parsed is None:

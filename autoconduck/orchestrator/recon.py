@@ -4,7 +4,7 @@ import logging
 from typing import Any
 from pydantic import BaseModel, Field
 
-from .planner import _extract_file_paths, _read_files, _format_file_contents
+from .planner import _extract_file_paths
 from autoconduck.jsonutil import parse_json_text
 
 
@@ -46,17 +46,10 @@ def build_recon_plan(
 ) -> ReconTarget:
     """Build a lightweight recon plan identifying candidate files to inspect.
 
-    If explicit file paths are found in the request text, uses those directly at zero LLM cost.
-    Otherwise asks a cheap/medium model for candidate file targets.
+    Always asks a cheap/medium model for candidate file targets. Explicit paths are
+    supplied as candidates so the model can verify and shortlist them.
     """
     explicit = _extract_file_paths(messages if isinstance(messages, list) else [])
-    if explicit:
-        return ReconTarget(
-            files=explicit[:5],
-            query="Explicit file paths from request",
-            reasoning="Found explicit matching file paths in request text",
-        )
-
     try:
         from autoconduck.config import get_config
         from autoconduck.messages_api import normalize_messages_for_llm, litellm_params_for
@@ -74,14 +67,23 @@ def build_recon_plan(
             if not isinstance(m, dict) or m.get("role", "user") == "user"
         )
 
+        candidate_hint = (
+            f"\n\nCandidate files (verify and select the most relevant up to 5): "
+            f"{', '.join(explicit[:12])}"
+            if explicit
+            else ""
+        )
         prompt_messages = normalize_messages_for_llm(
             [
-                {"role": "system", "content": RECON_SYSTEM_PROMPT},
-                {"role": "user", "content": f"User request:\n{user_text}"},
+                {"role": "system", "content": __import__("autoconduck.orchestrator.roles", fromlist=["role_card"]).role_card("scout") + "\n" + RECON_SYSTEM_PROMPT if getattr(cfg.selection, "phase_role_cards", True) else RECON_SYSTEM_PROMPT},
+                {"role": "user", "content": f"User request:\n{user_text}{candidate_hint}"},
             ]
         )
 
         schema = ReconTarget.model_json_schema()
+        logger = logging.getLogger("autoconduck.orchestrator")
+        prompt_log = logger.info if getattr(getattr(cfg, "selection", None), "dump_prompts", True) else logger.debug
+        prompt_log("RECON PROMPT:\n%s\n---\n%s", prompt_messages[0]["content"], prompt_messages[1]["content"])
         for attempt in range(2):
             call_params = dict(params)
             if attempt == 1:

@@ -5,10 +5,42 @@ import asyncio, json, os, sys, threading, time, traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+# Progress deltas contain unicode glyphs (● ✓ ⏳ ·); Windows consoles often
+# default stdout to cp1252, which can't encode them. Force utf-8 so printing
+# real progress transcripts doesn't crash the simulation.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 LOG = ROOT / "scripts" / "mock_prompts.log"
 ANSWER = "FINAL_EXECUTOR_ANSWER_MOCK: done."
+
+
+def _sse_content(raw_sse_text: str) -> str:
+    """Decode raw ``data: {...}\n\n`` SSE frames into the assembled delta
+    content text. Needed because json.dumps(ensure_ascii=True) escapes the
+    progress glyphs (⠋ ✓ ⏳) as literal ``\\uXXXX`` sequences in the wire
+    text, so substring checks against real unicode glyphs must run against
+    the *decoded* content, not the raw SSE bytes."""
+    parts = []
+    for line in raw_sse_text.splitlines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[len("data: "):]
+        if payload.strip() == "[DONE]":
+            continue
+        try:
+            obj = json.loads(payload)
+        except Exception:
+            continue
+        for choice in obj.get("choices", []):
+            content = (choice.get("delta") or {}).get("content")
+            if content:
+                parts.append(content)
+    return "".join(parts)
 
 
 class Mock(BaseHTTPRequestHandler):
@@ -18,6 +50,8 @@ class Mock(BaseHTTPRequestHandler):
     planner_calls = 0
     planner_failure = False
     planner_truncation = False
+    planner_retry = False
+    role_plan = False
 
     def log_message(self, *_): pass
 
@@ -71,7 +105,16 @@ class Mock(BaseHTTPRequestHandler):
                 text = ""
                 self.reply(body, text)
                 return
-            clean_plan = json.dumps({"subtasks": [{"id":"t1","goal":"Inspect dispatcher routing behavior.","scope":["autoconduck/routing/dispatcher.py"],"output_contract":{"description":"Summarize routing.","verify":[]},"constraints":["Do not propose code changes."],"depends_on":[],"verified_context":[],"read_budget":5,"role":"read"}],"summary":"Inspect routing.","budget_hint":0.7})
+            if self.__class__.role_plan:
+                clean_plan = json.dumps({"subtasks": [
+                    {"id":"review-auth","goal":"Review the auth flow changes for regressions","scope":["autoconduck/config.py"],"output_contract":{"description":"Review findings.","verify":[]},"constraints":["Do not edit."],"depends_on":[],"verified_context":[],"read_budget":5,"role":"read"},
+                    {"id":"logging-helper","goal":"Implement a logging helper","scope":["autoconduck/config.py"],"output_contract":{"description":"Implementation draft.","verify":[]},"constraints":["Stay in scope."],"depends_on":[],"verified_context":[],"read_budget":5,"role":"write"}],"summary":"Role test.","budget_hint":0.7})
+            else:
+                clean_plan = json.dumps({"subtasks": [{"id":"t1","goal":"Inspect dispatcher routing behavior.","scope":["autoconduck/routing/dispatcher.py"],"output_contract":{"description":"Summarize routing.","verify":[]},"constraints":["Do not propose code changes."],"depends_on":[],"verified_context":[],"read_budget":5,"role":"read"}],"summary":"Inspect routing.","budget_hint":0.7})
+            if self.__class__.planner_retry and self.__class__.planner_calls == 1:
+                text = "{broken planner json"
+                self.reply(body, text)
+                return
             if self.__class__.planner_truncation and response_format_type is None:
                 text = '{"subtasks":[{"id":"t1","goal":"Inspect auth'
             elif schema_name is None and response_format_type is None:
@@ -88,7 +131,7 @@ class Mock(BaseHTTPRequestHandler):
             text = "SLOW 8"
         elif "Original request:" in last_user:
             text = ANSWER
-        elif "ROLE: You are" in last_user:
+        elif "ROLE: You are" in last_user or "subagent" in last_user:
             text = "Mock analyst findings for this subtask."
         elif "tools" in body:
             return self.reply(body, "", {"id":"call_1","name":"bash","arguments":{"command":"ls"}})
@@ -114,7 +157,13 @@ class Mock(BaseHTTPRequestHandler):
 def config(base, timeout=120.0, slow_stream_progress=True):
     from autoconduck.config import Config, SelectionConfig
     s = SelectionConfig(subagent_timeout_s=timeout, enable_executor_subagents=False, enable_fast_path_graph=True, min_orchestrator_complexity=.4, slow_threshold=.75, ambiguous_low=.40, slow_stream_progress=slow_stream_progress)
-    entries = [{"id": n, "provider": "mock", "api_base": base, "api_key": "dummy", "input_cost_per_token": 1e-6, "output_cost_per_token": 1e-6, "tier": t} for n, t in (("autoconduck", "fast"), ("autoconduck-budget", "fast"), ("autoconduck-expensive", "slow"))]
+    # NOTE: pricing.py's _entry()/_configured_entry() lookup keys off
+    # ``price_in``/``price_out`` (USD per million tokens), matching
+    # config.ModelEntry's schema -- NOT the litellm-style
+    # ``input_cost_per_token``/``output_cost_per_token`` keys. Using the
+    # wrong key here silently zeroes every entry's effective cost, making
+    # cheapest_enabled() tie-break alphabetically instead of by price.
+    entries = [{"id": n, "provider": "mock", "api_base": base, "api_key": "dummy", "price_in": cost, "price_out": cost, "tier": t} for n, t, cost in (("autoconduck", "fast", 1.0), ("autoconduck-budget", "fast", 1.0), ("autoconduck-expensive", "slow", 1.0), ("mock-cheapest", "fast", 1e-6))]
     return Config(model_list=entries, selection=s, fast_path_digest_enabled=False)
 
 
@@ -304,9 +353,9 @@ def main():
         server.app = None; server._cached.clear()
         with client() as c:
             with c.stream("POST", "/v1/chat/completions", json={"model": "autoconduck", "messages": [{"role": "user", "content": prompt}], "stream": True}) as response:
-                text = "".join(response.iter_text())
+                text = _sse_content("".join(response.iter_text()))
         assert response.status_code == 200 and ANSWER in text
-        assert not any(f"[{label}]" in text for label in ("recon", "planner", "subagent", "executor")), text
+        assert not any(f"{label} ·" in text for label in ("recon", "planner", "subagent", "executor")), text
         cfg = cfg.model_copy(deep=True)
         cm.get_config = lambda: cfg; server.get_config = lambda: cfg
         server.app = None; server._cached.clear()
@@ -322,11 +371,19 @@ def main():
         server.app = None; server._cached.clear()
         with client() as c:
             with c.stream("POST", "/v1/chat/completions", json={"model": "autoconduck", "messages": [{"role": "user", "content": prompt}], "stream": True}) as response:
-                text = "".join(response.iter_text())
+                text = _sse_content("".join(response.iter_text()))
         assert response.status_code == 200 and ANSWER in text
-        # Progress is part of the default stream contract; verify it precedes the answer.
-        labels = ("recon", "reading files", "planner", "subagents", "compactor", "executor")
-        positions = [text.index(f"[{label}]") for label in labels]
+        # Progress is part of the default stream contract; verify it precedes
+        # the answer. Real deltas are formatted by ProgressFormatter
+        # (progress.py) as e.g. "● recon · running · ..." -- not the legacy
+        # bracketed "[recon]" strings, which only applied to the now-unused
+        # dict-shaped event branch. Anchor on the leading glyph+space so
+        # "subagent_pool" doesn't spuriously match inside
+        # "recon_subagent_pool" (a substring collision).
+        node_names = ("recon", "recon_subagent_pool", "planner", "subagent_pool", "compactor", "executor")
+        needles = [f"● {name} \u00b7" for name in node_names]
+        positions = [text.index(n) for n in needles if n in text]
+        assert positions == sorted(positions) and positions
         assert positions == sorted(positions) and all(position < text.index(ANSWER) for position in positions), text
         return "default-on progress deltas precede final answer"
     run("S10 default streaming progress", streaming_default_on)
@@ -337,9 +394,9 @@ def main():
         try:
             with client() as c:
                 with c.stream("POST", "/v1/chat/completions", json={"model": "autoconduck", "messages": [{"role": "user", "content": prompt}], "stream": True}) as response:
-                    text = "".join(response.iter_text())
+                    text = _sse_content("".join(response.iter_text()))
             assert response.status_code == 200
-            assert not any(f"[{label}]" in text for label in ("recon", "planner", "subagent", "executor")), text
+            assert not any(f"{label} ·" in text for label in ("recon", "planner", "subagent", "executor")), text
         finally:
             if old is None:
                 os.environ.pop("AUTOCONDUCK_STREAM_PROGRESS", None)
@@ -481,8 +538,8 @@ def main():
         with client() as c:
             before_slow = c.get("/stats").json().get("path_counts", {}).get("SLOW", 0)
             with c.stream("POST", "/v1/chat/completions", json={"model": "autoconduck", "messages": messages, "stream": True}) as response:
-                text = "".join(response.iter_text())
-            progress = [f"[{label}]" for label in ("recon", "planner", "subagents", "executor") if f"[{label}]" in text]
+                text = _sse_content("".join(response.iter_text()))
+            progress = [f"{label} ·" for label in ("recon", "planner", "subagents", "executor") if f"{label} ·" in text]
             path_counts = c.get("/stats").json().get("path_counts", {})
             print("S12 stream response status:", response.status_code)
             print("S12 stream response text:", text)
@@ -552,19 +609,62 @@ def main():
                 with c.stream("POST", "/v1/chat/completions", json={
                     "model": "autoconduck", "messages": [{"role": "user", "content": prompt}], "stream": True,
                 }) as response:
-                    text = "".join(response.iter_text())
+                    text = _sse_content("".join(response.iter_text()))
             assert response.status_code == 200
-            assert "[planner]" in text
-            assert not any(f"[{label}]" in text for label in ("subagent", "executor")), text
+            assert response.status_code == 200
+            assert not any(f"{label} ·" in text for label in ("subagent", "executor")), text
             return "total planner failure degraded to FAST"
         finally:
             Mock.planner_failure = False
+
+    def s16_cheaper_planner_retry():
+        nonlocal cfg
+        cfg = config(base); cm.get_config = lambda: cfg; server.get_config = lambda: cfg
+        server.app = None; server._cached.clear(); trace.clear(); Mock.planner_calls = 0; Mock.planner_retry = True
+        Mock.seen.clear()
+        try:
+            with client() as c:
+                with c.stream("POST", "/v1/chat/completions", json={"model":"autoconduck", "messages":[{"role":"user","content":prompt}], "stream":True}) as response:
+                    text = _sse_content("".join(response.iter_text()))
+            planner_models = [b.get("model") for b in Mock.seen if any("coding-task planner" in str(m.get("content","")) for m in b.get("messages",[]))]
+            assert len(planner_models) >= 2 and "mock-cheapest" in str(planner_models[-1])
+            # Real deltas are ProgressFormatter (progress.py) glyph lines, e.g.
+            # "⠋ recon · running · ..." / "⏳ N subagents" / "✓ Workflow completed.",
+            # not the legacy bracketed "[recon]" strings.
+            needles = ["recon ·", "planner ·", "subagents", "compactor ·", "executor ·", "Workflow completed.", ANSWER]
+            assert all(n in text for n in needles), text
+            print("S16 cheaper retry models:", planner_models)
+            print("S16 verbose progress:", text)
+            return "broken JSON retried with cheaper planner model"
+        finally:
+            Mock.planner_retry = False
+
+    def s17_role_cards():
+        nonlocal cfg
+        cfg = config(base); cm.get_config = lambda: cfg; server.get_config = lambda: cfg
+        server.app = None; server._cached.clear(); trace.clear(); Mock.planner_calls = 0; Mock.role_plan = True; Mock.seen.clear()
+        try:
+            with client() as c:
+                with c.stream("POST", "/v1/chat/completions", json={"model":"autoconduck", "messages":[{"role":"user","content":prompt}], "stream":True}) as response:
+                    text = _sse_content("".join(response.iter_text()))
+            assert "subagent 1/2 (reviewer)" in text and "subagent 2/2 (worker)" in text, text
+            sub = [b for b in Mock.seen if any("subagent" in str(m.get("content","")).lower() for m in b.get("messages",[]))]
+            assert any("review subagent" in json.dumps(b).lower() and "single writer thread" not in json.dumps(b).lower() for b in sub)
+            assert any("single writer thread" in json.dumps(b).lower() for b in sub)
+            assert any("decision authority" in json.dumps(b).lower() for b in Mock.seen)
+            assert any("scouting subagent" in json.dumps(b).lower() for b in Mock.seen)
+            print("S17 role progress:", text)
+            return "reviewer/worker cards and executor card verified"
+        finally:
+            Mock.role_plan = False
 
     run("S6 Anthropic", anthropic)
     run("S12 tool-turn suppression", s12_tool_suppression)
     run("S13 planner recovery", s13_planner_recovery)
     run("S15 repair rescue", s15_json_repair_rescue)
     run("S14 planner total failure", s14_planner_total_failure)
+    run("S16 cheaper planner retry", s16_cheaper_planner_retry)
+    run("S17 role cards", s17_role_cards)
     run("S9 measured slow path", s9_measure)
     upstream.shutdown(); LOG.unlink(missing_ok=True)
     print("\nScenario | Result | Notes\n---------|--------|------"); [print(" | ".join(x)) for x in results]

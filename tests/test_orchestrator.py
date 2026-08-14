@@ -382,13 +382,21 @@ async def test_run_no_subagent_outputs_reaches_compactor():
                 assert isinstance(result, (str, type(None)))
 
 
-def test_build_recon_plan_explicit_path():
+def test_build_recon_plan_explicit_path_calls_llm():
     from autoconduck.orchestrator.recon import build_recon_plan
-    target = build_recon_plan([{"role": "user", "content": "Check autoconduck/orchestrator/planner.py"}])
-    assert "autoconduck/orchestrator/planner.py" in target.files
-    assert target.query == "Explicit file paths from request"
 
+    class Client:
+        def completion(self, **kwargs):
+            self.kwargs = kwargs
+            return {"choices": [{"message": {"content": '{"files": ["autoconduck/orchestrator/planner.py"], "query": "planner", "reasoning": "relevant"}'}}]}
 
+    client = Client()
+    target = build_recon_plan(
+        [{"role": "user", "content": "Check autoconduck/orchestrator/planner.py"}],
+        client=client,
+    )
+    assert target.files == ["autoconduck/orchestrator/planner.py"]
+    assert "Candidate files" in client.kwargs["messages"][-1]["content"]
 def test_build_recon_plan_llm():
     from autoconduck.orchestrator.recon import build_recon_plan
     class Client:
@@ -397,4 +405,5 @@ def test_build_recon_plan_llm():
     target = build_recon_plan([{"role": "user", "content": "How does config loading work?"}], client=Client())
     assert target.files == ["autoconduck/config.py"]
     assert target.query == "config"
+
 

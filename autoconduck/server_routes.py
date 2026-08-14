@@ -174,8 +174,14 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                 task = asyncio.create_task(_route_target(body.model, body.messages, request, on_progress))
                 try:
                     first = await first_event
-                    target, extra = await task if str(first.get("path", "")).upper() != "SLOW" else (None, None)
-                    if str(first.get("path", "")).upper() == "SLOW":
+                    first_path = (
+                        getattr(first, "path", None)
+                        or (first.get("path") if isinstance(first, dict) else "")
+                        or ""
+                    )
+                    is_slow = str(first_path).upper() == "SLOW"
+                    target, extra = await task if not is_slow else (None, None)
+                    if is_slow:
                         labels = {"recon": "recon", "recon_subagent_pool": "reading files",
                                   "planner": "planner", "subagent_pool": "subagents",
                                   "compactor": "compactor", "executor": "executor"}
@@ -183,12 +189,26 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                         sent_role = False
                         while True:
                             event = await progress_q.get()
-                            if event.get("kind") == "route":
+                            delta_text = None
+                            if isinstance(event, str):
+                                delta_text, node = event, "progress"
+                            elif isinstance(event, dict):
+                                if event.get("kind") == "route":
+                                    continue
+                                node = event.get("node", "progress")
+                                detail = event.get("step_detail") or node
+                                label = labels.get(node, node)
+                                delta_text = f"[{label}] {detail}\n"
+                            else:
+                                from .progress import ProgressFormatter
+                                formatted = ProgressFormatter(cfg).format(event)
+                                node = getattr(event, "name", "progress")
+                                if not formatted:
+                                    continue
+                                delta_text = formatted + "\n"
+                            if delta_text is None:
                                 continue
-                            node = event.get("node", "progress")
-                            detail = event.get("step_detail") or node
-                            label = labels.get(node, node)
-                            delta = {"content": f"[{label}] {detail}\n"}
+                            delta = {"content": delta_text}
                             if not sent_role:
                                 delta["role"] = "assistant"
                                 sent_role = True

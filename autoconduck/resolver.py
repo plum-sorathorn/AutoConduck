@@ -109,8 +109,19 @@ async def _do_router_dispatch(messages, body_model, cfg):
 
 async def _do_slow_route(messages, body_model, on_progress=None):
     from .orchestrator import run
+    from .progress import ProgressFormatter, ProgressEvent
+    cfg = _get_config()
+    formatter = ProgressFormatter(cfg)
+    callback = None
+    if on_progress is not None:
+        def callback(event):
+            if isinstance(event, dict):
+                event = ProgressEvent(event.get("kind", "node"), event.get("name", event.get("node", "")), event.get("state", "running"), event.get("detail", event.get("step_detail", "")), event.get("index", 0), event.get("total", event.get("subtasks_total", 0)), event.get("elapsed_s", 0.0))
+            text = formatter.format(event)
+            if text is not None:
+                on_progress(text)
     try:
-        return await run(messages, [], pseudo_model=body_model, on_progress=on_progress)
+        return await run(messages, [], pseudo_model=body_model, on_progress=callback)
     except Exception:
         return None
 

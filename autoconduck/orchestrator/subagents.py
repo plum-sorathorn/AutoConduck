@@ -24,13 +24,15 @@ def subagent_target(subtask_prompt, role, plan_breadth, budget_hint, config):
     return lo + (hi - lo) * max(0, min(1, raw))
 
 
-def build_subagent_prompt(task: SubTask, upstream_summaries: str = "") -> str:
+def build_subagent_prompt(task: SubTask, upstream_summaries: str = "", cfg=None) -> str:
+    from .roles import assign_subagent_role, role_card
+    assigned_role = assign_subagent_role(task.goal)
     role_header = (
         "ROLE: You are a read-only file analyst. You do not propose fixes or write code."
         if task.role != "write"
         else "ROLE: You are a file change drafting analyst."
     )
-    parts = [
+    parts = ([role_card(assigned_role)] if cfg is not None and getattr(getattr(cfg, "selection", None), "phase_role_cards", True) else []) + [
         role_header,
         f"TASK: {task.goal}",
         f"FILES IN SCOPE (only these): {', '.join(task.scope)}",
@@ -78,10 +80,15 @@ async def run_subagent(
         from autoconduck.messages_api import litellm_params_for
 
         cfg = cfg or get_config()
-        prompt = build_subagent_prompt(task, upstream_summaries)
+        from .roles import assign_subagent_role
+        assigned_role = assign_subagent_role(task.goal)
+        prompt = build_subagent_prompt(task, upstream_summaries, cfg)
         target = subagent_target(
             prompt, getattr(task, "role", "read"), plan_breadth, budget_hint, cfg
         )
+        if getattr(getattr(cfg, "selection", None), "phase_role_cards", True):
+            from .roles import ROLES
+            target *= ROLES[assigned_role].band_bias
         max_cost = (
             float(getattr(cfg.selection, "max_file_read_scaled_cost", 0.55))
             if getattr(task, "role", "read") != "write"
@@ -103,7 +110,8 @@ async def run_subagent(
         params.setdefault("max_tokens", int(getattr(cfg.selection, "subagent_max_tokens", 4096)))
         timeout_s = float(getattr(cfg.selection, "subagent_timeout_s", 120.0))
         params.setdefault("timeout", timeout_s)
-        logging.getLogger("autoconduck.orchestrator").debug(
+        prompt_log = logging.getLogger("autoconduck.orchestrator").info if getattr(getattr(cfg, "selection", None), "dump_prompts", True) else logging.getLogger("autoconduck.orchestrator").debug
+        prompt_log(
             "SUBAGENT PROMPT [%s]:\n%s", task.id, prompt
         )
         messages = [{"role": "user", "content": prompt}]

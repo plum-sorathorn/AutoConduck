@@ -1,6 +1,7 @@
 """Fault-tolerant LangGraph orchestration for the slow path."""
 
 from typing import Any
+import logging
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +21,8 @@ from .helpers import _response_text, _executor_model
 
 
 from .recon import ReconTarget, build_recon_plan
+from autoconduck.progress import ProgressEvent
+from .roles import assign_subagent_role, role_card
 
 
 PHASE_BANDS = {
@@ -56,10 +59,18 @@ async def _call(client: Any, model: str, messages: list[dict[str, str]]) -> str:
     from autoconduck.messages_api import normalize_messages_for_llm, litellm_params_for
 
     messages = normalize_messages_for_llm(messages)
-    params: TypingAny = litellm_params_for(model, get_config())
+    cfg = get_config()
+    params: TypingAny = litellm_params_for(model, cfg)
     params["_path"] = "orchestrator-executor"
     params["_pseudo"] = "autoconduck"
     params["drop_params"] = True
+    logger = logging.getLogger("autoconduck.orchestrator")
+    prompt_log = logger.info if getattr(getattr(cfg, "selection", None), "dump_prompts", True) else logger.debug
+    prompt_log(
+        "EXECUTOR PROMPT (%s):\n%s",
+        model,
+        "\n".join(m.get("content", "") if isinstance(m, dict) else str(m) for m in messages),
+    )
     if client is not None and hasattr(client, "completion"):
         return _response_text(
             await asyncio.to_thread(client.completion, messages=messages, **params)
@@ -148,7 +159,7 @@ async def _run_executor_subagents(
         return await _call(
             client,
             _executor_model(pseudo_model, cfg, task_value, compacted, 0),
-            [{"role": "user", "content": f"Original request:\n{user_text}\n\nAnalyst summary:\n{compacted}"}],
+            [{"role": "user", "content": (role_card("executor") + "\n" if getattr(cfg.selection, "phase_role_cards", True) else "") + f"Original request:\n{user_text}\n\nAnalyst summary:\n{compacted}"}],
         )
 
     async def _draft_for_group(group_id: str, group: dict) -> tuple:
@@ -198,7 +209,7 @@ async def _run_executor_subagents(
         return await _call(
             client,
             _executor_model(pseudo_model, cfg, task_value, compacted, 0),
-            [{"role": "user", "content": f"Original request:\n{user_text}\n\nAnalyst summary:\n{compacted}"}],
+            [{"role": "user", "content": (role_card("executor") + "\n" if getattr(cfg.selection, "phase_role_cards", True) else "") + f"Original request:\n{user_text}\n\nAnalyst summary:\n{compacted}"}],
         )
 
     drafts_text = "\n\n".join(
@@ -206,7 +217,7 @@ async def _run_executor_subagents(
         for gid, text in sorted(drafts.items())
     )
     synthesis_prompt = (
-        "You are the final executor. Below are proposed change drafts from per-file analysts. "
+        (role_card("executor") + "\n" if getattr(cfg.selection, "phase_role_cards", True) else "") + "You are the final executor. Below are proposed change drafts from per-file analysts. "
         "Synthesize them into a single coherent response to the original request. "
         "If drafts overlap for the same file, merge them intelligently.\n\n"
         f"ORIGINAL REQUEST:\n{user_text}\n\n"
@@ -239,13 +250,48 @@ async def run(
         log = logging.getLogger("autoconduck.orchestrator")
 
         def _emit(**kw: Any) -> None:
-            try:
-                stats.update_active_routing(**kw)
-            except Exception:
-                pass
+            is_subagent_row = kw.get("kind") == "subagent"
+            if not is_subagent_row:
+                try:
+                    stats.update_active_routing(**kw)
+                except Exception:
+                    pass
             if on_progress is not None:
                 try:
-                    on_progress(dict(kw))
+                    name = kw.get("node", "")
+                    active = kw.get("active", True)
+                    state = "running" if active else "done"
+                    detail = kw.get("step_detail", kw.get("detail", ""))
+                    if kw.get("kind") == "subagent":
+                        # Per-subagent row: name carries the role, index/total
+                        # identify this subagent within the pool.
+                        kind = "subagent"
+                        name = kw.get("role", name)
+                        index = kw.get("index", 0)
+                        total = kw.get("total", 0)
+                    elif name == "idle" and not active:
+                        # Terminal footer row for the whole workflow.
+                        kind = "footer"
+                        index = 0
+                        total = 0
+                    elif name == "subagent_pool":
+                        kind = "pool"
+                        index = 0
+                        total = kw.get("subtasks_total", 0)
+                    else:
+                        kind = "node"
+                        index = 0
+                        total = kw.get("subtasks_total", 0)
+                    on_progress(
+                        ProgressEvent(
+                            kind=kind,
+                            name=name,
+                            state=state,
+                            detail=detail,
+                            index=index,
+                            total=total,
+                        )
+                    )
                 except Exception:
                     pass
 
@@ -284,14 +330,49 @@ async def run(
         async def recon_subagent_pool_node(state: State) -> dict:
             if state.recon is None or not getattr(state.recon, "files", []):
                 return {"compacted": ""}
+            import asyncio
             files = state.recon.files[:5]
             log.info("Starting recon_subagent_pool node with %d files", len(files))
             _emit(node="recon_subagent_pool", subtasks_total=len(files),
-                  step_detail=f"Reading {', '.join(files[:5])}")
-            from .planner import _read_files
-            raw_files = _read_files(files)
-            evidence = [f"[{path}]\n{content[:1500]}" for path, content in raw_files.items()]
-            return {"compacted": compact(evidence)}
+                  step_detail=f"Scouting {', '.join(files[:5])}")
+            from .planner import OutputContract, SubTask
+
+            started = {path: time.time() for path in files}
+            for index, path in enumerate(files, 1):
+                _emit(kind="subagent", active=True, node="recon_subagent_pool",
+                      index=index, total=len(files), role="scout",
+                      step_detail=f"scout · inspecting {path}")
+
+            async def scout(index: int, path: str) -> tuple[str, str | Exception]:
+                task = SubTask(
+                    id=f"recon-scout-{index}",
+                    goal=f"Scout and inspect {path}; read that file or the relevant area and return concise focused findings.",
+                    scope=[path],
+                    output_contract=OutputContract(
+                        description="A concise findings block: relevant symbols, behavior, and any risks; no proposed edits."
+                    ),
+                    constraints=["Read only the listed file", "Do not modify files", "Keep findings concise"],
+                    role="read",
+                )
+                try:
+                    return path, await run_subagent(
+                        task, "", client=client, cfg=cfg,
+                        plan_breadth=len(files), budget_hint=state.task_value,
+                    )
+                except Exception as exc:
+                    return path, exc
+
+            results = await asyncio.gather(*(scout(i, path) for i, path in enumerate(files, 1)))
+            findings = []
+            for index, (path, result) in enumerate(results, 1):
+                elapsed = max(0.0, time.time() - started[path])
+                _emit(kind="subagent", active=False, node="recon_subagent_pool",
+                      index=index, total=len(files), role="scout", elapsed_s=elapsed,
+                      step_detail=f"scout · inspecting {path}")
+                if isinstance(result, Exception) or _is_subagent_error(str(result)):
+                    continue
+                findings.append(f"[{path}]\n{str(result)[:1500]}")
+            return {"compacted": compact(findings)}
 
         async def planner_node(state: State) -> dict:
             if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
@@ -318,9 +399,14 @@ async def run(
                 return {"fallback": True}
             completed: dict[str, str] = {}
             pending = list(state.plan.subtasks)
+            total_subtasks = len(pending)
+            subtask_order = {task.id: i + 1 for i, task in enumerate(state.plan.subtasks)}
+            task_started_at: dict[str, float] = {}
             log.info("Starting subagent_pool node with %d subtasks", len(pending))
             _emit(node="subagent_pool", subtasks_total=len(pending),
                   step_detail=f"Running {len(pending)} analyst subagent(s) in parallel...")
+            # SSE text deltas render as separate client rows; true glyph animation
+            # requires client-side rendering and is intentionally out of scope.
             while pending:
                 if request is not None and hasattr(request, "is_disconnected") and await request.is_disconnected():
                     return {"fallback": True}
@@ -333,6 +419,13 @@ async def run(
                     return {"fallback": True}
                 import asyncio
                 import inspect
+
+                for task in ready:
+                    task_started_at[task.id] = time.time()
+                    ready_role = assign_subagent_role(task.goal) if getattr(cfg.selection, "phase_role_cards", True) else task.role
+                    _emit(kind="subagent", active=True, node="subagent",
+                          index=subtask_order.get(task.id, 0), total=total_subtasks,
+                          role=ready_role, step_detail=f"{ready_role} · {task.goal[:60]}")
 
                 calls = [
                     run_subagent(
@@ -361,8 +454,15 @@ async def run(
                     Send("subagent_pool", {"task_id": task.id})
                     completed[task.id] = result
                     pending.remove(task)
+                    done_role = assign_subagent_role(task.goal) if getattr(cfg.selection, "phase_role_cards", True) else task.role
+                    elapsed = max(0.0, time.time() - task_started_at.get(task.id, time.time()))
+                    _emit(kind="subagent", active=False, node="subagent",
+                          index=subtask_order.get(task.id, 0), total=total_subtasks,
+                          role=done_role, elapsed_s=elapsed,
+                          step_detail=f"{done_role} · {task.goal[:60]}")
+                role = assign_subagent_role(task.goal) if getattr(cfg.selection, "phase_role_cards", True) else task.role
                 _emit(node="subagent_pool", subtasks_completed=len(completed),
-                      step_detail=f"subagent {len(completed)}/{len(state.plan.subtasks)} complete")
+                      step_detail=f"subagent {len(completed)}/{len(state.plan.subtasks)} ({role}) complete")
             error_count = sum(_is_subagent_error(value) for value in completed.values())
             return {"subagent_outputs": completed, "subagent_error_count": error_count}
 
@@ -377,7 +477,7 @@ async def run(
                 if task.id in state.subagent_outputs
                 and not _is_subagent_error(state.subagent_outputs[task.id])
             ]
-            merged = state.compacted + "\n" + compact(ordered) if state.compacted else compact(ordered)
+            merged = (role_card("compactor") + "\n" if getattr(cfg.selection, "phase_role_cards", True) else "") + (state.compacted + "\n" + compact(ordered) if state.compacted else compact(ordered))
             return {"compacted": merged}
 
         async def executor_node(state: State) -> dict:

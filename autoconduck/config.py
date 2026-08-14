@@ -2,7 +2,7 @@ import logging
 import os
 from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import yaml
 
 
@@ -22,8 +22,12 @@ class ModelEntry(BaseModel):
 
 
 class SelectionConfig(BaseModel):
+    phase_role_cards: bool = True
+    dump_prompts: bool = True
     planner_model_override: str | None = None
     planner_response_format: str = "json_object"
+    planner_retry_cheaper: bool = True
+    progress_verbosity: str = "verbose"
     """Selection controls; pool entries may set quality_score and max_usd_per_min."""
 
     value_to_cost_gamma: float = 1.0
@@ -86,6 +90,11 @@ class SelectionConfig(BaseModel):
     # keep disabled by default and only enable for truly complex batch tasks.
     enable_executor_subagents: bool = False
     slow_stream_progress: bool = True
+
+    @field_validator("progress_verbosity", mode="before")
+    @classmethod
+    def _valid_progress_verbosity(cls, value):
+        return value if value in {"off", "terse", "verbose"} else "terse"
 
 
 class ClaudeCodeSettings(BaseModel):
