@@ -178,7 +178,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
 }
 PRESETS.update(FALLBACK_PRESETS)
 
-PRESET_ORDER = ["custom", "openai", "anthropic", "google", "mistral", "llmgateway", "opencodego"]
+PRESET_ORDER = ["custom", "openai", "anthropic", "google", "mistral", "llmgateway"]
 
 # Compatibility exports from the original ``model_presets`` module.  Keep
 # these derived from PRESETS so the catalog cannot silently drift from the

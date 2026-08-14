@@ -66,7 +66,7 @@ if _TEXTUAL:
             )
 
     class ModelSourceScreen(Screen):
-        SOURCES = ["Anthropic", "OpenAI", "Google", "LLM Gateway", "OpenCode Go", "Custom endpoint…"]
+        SOURCES = ["Anthropic", "OpenAI", "Google", "LLM Gateway", "Custom endpoint…"]
 
         def __init__(self, app_controller=None, selected=None):
             super().__init__()
@@ -95,7 +95,7 @@ if _TEXTUAL:
                     "llmgateway"
                     if self.cursor == 3
                     else (
-                        "opencodego"
+                        "custom"
                         if self.cursor == 4
                         else self.SOURCES[self.cursor].lower()
                     )
