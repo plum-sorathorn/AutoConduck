@@ -2,6 +2,8 @@
 
 from typing import Any
 import logging
+import asyncio
+from pathlib import Path
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +20,7 @@ from .compactor import compact
 from .planner import TaskPlan, build_task_plan
 from .subagents import run_subagent
 from .helpers import _response_text, _executor_model
+from .executor_loop import run_executor_tool_loop
 
 
 from .recon import ReconTarget, build_recon_plan
@@ -524,6 +527,27 @@ async def run(
 
             analyst_summary = state.compacted
             prompt = f"Original request:\n{user_text}\n\nAnalyst summary:\n{analyst_summary}"
+            if getattr(getattr(cfg, "selection", None), "executor_enable_tools", True):
+                allowed_scope = sorted({s for st in (state.plan.subtasks if state.plan else []) for s in st.scope})
+                workspace_root = Path.cwd()
+                try:
+                    result = await asyncio.wait_for(
+                        run_executor_tool_loop(
+                            client,
+                            _executor_model(state.pseudo_model, cfg, task_value, analyst_summary, len(valid_outputs)),
+                            system_prompt=role_card("executor"),
+                            user_prompt=prompt,
+                            allowed_scope=allowed_scope,
+                            workspace_root=workspace_root,
+                            cfg=cfg,
+                            max_rounds=getattr(cfg.selection, "executor_max_tool_rounds", 10),
+                            time_budget_s=getattr(cfg.selection, "executor_tool_time_budget_s", 180.0),
+                        ),
+                        timeout=getattr(cfg.selection, "executor_tool_time_budget_s", 180.0) + 5,
+                    )
+                    return {"result": result}
+                except Exception as exc:
+                    log.warning("executor tool loop failed, falling back to text synthesis: %s", exc)
             return {
                 "result": await _call(
                     client,

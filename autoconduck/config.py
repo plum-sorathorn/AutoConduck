@@ -89,6 +89,11 @@ class SelectionConfig(BaseModel):
     # Executor-subagent fan-out doubles LLM call count for multi-subtask plans;
     # keep disabled by default and only enable for truly complex batch tasks.
     enable_executor_subagents: bool = False
+    executor_enable_tools: bool = True
+    executor_max_tool_rounds: int = 10
+    executor_tool_time_budget_s: float = 180.0
+    executor_max_read_bytes: int = 200_000
+    executor_enable_bash: bool = False
     slow_stream_progress: bool = True
 
     @field_validator("progress_verbosity", mode="before")

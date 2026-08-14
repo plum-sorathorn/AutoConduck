@@ -60,6 +60,8 @@ raw = 0.5*task_value + 0.3*complexity_of(compactor_summary) + 0.2*accumulation
 executor_target = lo + (hi - lo) * clip(raw, 0, 1)
 ```
 
+The executor now runs a bounded tool-calling loop (`orchestrator/executor_loop.py` → `orchestrator/tools.py`) with read/grep/glob/list/edit/write tools and opt-in `bash` (default off). Tool use is gated by `SelectionConfig.executor_enable_tools` (default on) and edits/writes fail closed outside `TaskPlan.subtasks[*].scope`; any tool-loop error degrades to text synthesis.
+
 `TaskPlan.budget_hint: float | None = None` — planner LLM is prompted to *optionally* emit it (0.0–1.0); any missing/out-of-range/non-numeric value falls back deterministically to `task_value`. The selection math itself (the formulas above and `select_closest`) is 100% pure — only the *input* `budget_hint` is LLM-informed, never the arithmetic.
 
 ## 1c. Role constrains range, not a number
