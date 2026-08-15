@@ -54,7 +54,7 @@ def default_enabled_ids(models: list[dict[str, Any]], existing_overrides: list[d
     model_ids = {model["id"] for model in models}
     if existing_overrides:
         return {row["id"] for row in existing_overrides if row.get("id") in model_ids}
-    return model_ids if len(models) <= 5 else set()
+    return model_ids if len(models) <= 6 else set()
 
 def upsert_custom_models(existing: list[dict[str, Any]], provider: str, base_url: str, api_key_env: str, model_ids: list[str], anthropic_base_url: str = "") -> list[dict[str, Any]]:
     result = [row for row in existing if row.get("provider") != provider]

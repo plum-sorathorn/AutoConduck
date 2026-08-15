@@ -1,6 +1,6 @@
 {
   "name": "autoconduck",
-  "version": "0.1.4",
+  "version": "0.2.1",
   "description": "Local zero-overhead model router + task orchestrator — npm shim",
   "bin": {
     "autoconduck": "bin/autoconduck.js",

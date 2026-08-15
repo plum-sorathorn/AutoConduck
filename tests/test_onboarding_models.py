@@ -36,9 +36,12 @@ def test_custom_models_distinguish_environment_names_from_literal_keys(monkeypat
     assert calls == [("local", "ABCDEF123456")]
 
 def test_large_presets_start_empty_but_preserve_overrides():
-    models = [{"id": str(i)} for i in range(6)]
-    assert default_enabled_ids(models, None) == set()
-    assert default_enabled_ids(models, [{"id": "2"}, {"id": "missing"}]) == {"2"}
+    small_models = [{"id": str(i)} for i in range(6)]
+    assert default_enabled_ids(small_models, None) == {"0", "1", "2", "3", "4", "5"}
+
+    large_models = [{"id": str(i)} for i in range(7)]
+    assert default_enabled_ids(large_models, None) == set()
+    assert default_enabled_ids(large_models, [{"id": "2"}, {"id": "missing"}]) == {"2"}
 
 def test_apply_api_key_environment_name_is_immutable():
     entries = [{"id": "a", "api_key": "old", "provider": "openai"}]

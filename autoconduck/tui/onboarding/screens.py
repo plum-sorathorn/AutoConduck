@@ -193,7 +193,7 @@ if _TEXTUAL:
                     pass
 
         def _confirm(self):
-            if len(self.models) > 5 and not self.enabled:
+            if len(self.models) > 6 and not self.enabled:
                 self._error = "Select at least one model (enter to toggle)"
                 self.query_one("#footer").update(self._footer())
                 return
@@ -210,9 +210,9 @@ if _TEXTUAL:
             )
 
         def _finish(self):
-            from ..dashboard import DashboardScreen
+            from ..dashboard import MainMenuScreen
 
-            self.controller.switch_screen(DashboardScreen())
+            self.controller.switch_screen(MainMenuScreen())
 
         def action_focus_search(self):
             self.query_one("#search", Input).focus()

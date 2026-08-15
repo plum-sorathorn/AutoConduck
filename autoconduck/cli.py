@@ -10,7 +10,9 @@ from .config import get_config, load_config, save_config, home_dir
 # ---------- Lightweight modules always imported -------------------------------------------
 # Heavy deps (fastapi, pydantic-core, litellm, textual, uvicorn) are deferred until a
 # server/CLI command actually needs them.
-DEFAULT_PORT = 11434
+from .server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
+from .cli_launch import cmd_launch_agent, cmd_install, cmd_tune, _open_new_terminal
+
 def cmd_start(args):
     flags = [
         getattr(args, "claude", False),
@@ -133,7 +135,10 @@ def cmd_start(args):
         _check_port_available(port)
         try:
             from .tui.app import AutoConduckApp
-            AutoConduckApp(configured=bool(getattr(cfg, "model_list", []))).run()
+            res = AutoConduckApp(configured=bool(getattr(cfg, "model_list", []))).run()
+            if isinstance(res, str) and res.startswith("launch:"):
+                agent_id = res.split("launch:", 1)[1]
+                cmd_launch_agent(agent_id)
         except (ImportError, RuntimeError):
             _check_port_available(port)
             _run_proxy(
@@ -195,12 +200,23 @@ def _run_detached_self_destruct(command_args, cwd=None):
         os.execvp(command_args[0], command_args)
 def cmd_uninstall(args):
     cmd_reset(args)
-    from . import update
+    from . import update, launcher
+    cfg = load_config()
+    port = getattr(cfg, "port", None) or DEFAULT_PORT
+    try:
+        launcher.stop_server(port)
+        launcher.kill_existing_on_port(port)
+    except Exception:
+        pass
     method = update.detect_install_method()
     command = update.uninstall_hint(method)
     if command:
         print(f"Uninstalling package via: {command}")
-        _run_detached_self_destruct(command.split())
+        tool = shutil.which(command.split()[0])
+        if tool:
+            subprocess.run([tool, *command.split()[1:]], check=False)
+        else:
+            subprocess.run(command, shell=True, check=False)
 def purge_home_dir(home: Path) -> None:
     """Remove state, refusing obvious catastrophic paths."""
     import shutil
@@ -240,12 +256,19 @@ def cmd_update(args):
             cwd = str(source_dir)
         elif (Path.cwd() / "pyproject.toml").exists():
             cwd = str(Path.cwd())
+    cfg = load_config()
+    port = getattr(cfg, "port", None) or DEFAULT_PORT
     try:
-        launcher.stop_server()
+        launcher.stop_server(port)
+        launcher.kill_existing_on_port(port)
     except Exception:
         pass
-    print("Upgrade spawned in background; run autoconduck --version to confirm the new version when done.")
-    _run_detached_self_destruct([tool, *command.split()[1:]], cwd=cwd)
+    print(f"Running upgrade: {command}")
+    res = subprocess.run([tool, *command.split()[1:]], cwd=cwd, check=False)
+    if res.returncode == 0:
+        print("Upgrade completed successfully. Run autoconduck --version to confirm.")
+    else:
+        print(f"Upgrade finished with exit code {res.returncode}.")
 def cmd_ensure(args):
     from . import launcher
     launcher.ensure_server(args.port)

@@ -97,9 +97,9 @@ if _TEXTUAL:
                     self.query_one("#error").update(str(exc))
 
             def _finish(self):
-                from ..dashboard import DashboardScreen
+                from ..dashboard import MainMenuScreen
 
-                self.controller.switch_screen(DashboardScreen())
+                self.controller.switch_screen(MainMenuScreen())
 
         class CustomProvidersScreen(Screen):
             def __init__(self, controller, agents):
@@ -207,9 +207,9 @@ if _TEXTUAL:
                         LauncherIntegrationScreen(self.controller, self.agents)
                     )
                 else:
-                    from ..dashboard import DashboardScreen
+                    from ..dashboard import MainMenuScreen
 
-                    self.controller.switch_screen(DashboardScreen())
+                    self.controller.switch_screen(MainMenuScreen())
 
 
 from .screens_extra import ProviderFormScreen, LauncherIntegrationScreen

@@ -217,17 +217,7 @@ if _TEXTUAL:
                 self._msg = f"Agent '{ag['id']}' is not configured — run: autoconduck install {ag['id']}"
                 self.query_one("#rows").update(self._render_rows())
                 return
-            # Launch in a background thread so the TUI stays responsive
-            import threading
-            from autoconduck.main import cmd_launch_agent
-
-            self._msg = f"Launching {ag['id']}…"
-            self.query_one("#rows").update(self._render_rows())
-
-            def _run():
-                cmd_launch_agent(ag["id"])
-
-            threading.Thread(target=_run, daemon=True).start()
+            self.app.exit(result=f"launch:{ag['id']}")
 
         def on_key(self, event):
             if event.key == "down":
@@ -258,6 +248,9 @@ if _TEXTUAL:
             self.paused = False
             self.duck_frame = 0
             self.totals = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cost": 0.0}
+            self.models_breakdown: dict[str, dict] = {}
+            self.paths: dict[str, int] = {}
+            self.pseudos: dict[str, int] = {}
 
         def compose(self):
             yield Vertical(
@@ -265,7 +258,7 @@ if _TEXTUAL:
                 Static(self._graph_view(), id="graph", markup=True),
                 Static(self._stats_summary(), id="stats", markup=True),
                 Static("recent routing decisions\n" + render_log_rows(self.records, self.cursor), id="log", markup=True),
-                Static("[up/down] move  [d] details  [/] filter  [p] pause  [left] back  [ctrl+c] quit", id="footer", markup=False),
+                Static("[up/down] move  [d] details  [/] filter  [p] pause  [esc/left] back  [ctrl+c] quit", id="footer", markup=False),
             )
 
         def on_mount(self):
@@ -285,11 +278,14 @@ if _TEXTUAL:
         def _update_stats(self):
             try:
                 from autoconduck import stats
-                records = stats.load_records(limit=50)
+                records = stats.load_records(limit=100)
                 if records:
                     self.records = list(reversed(records))
                     agg = stats.aggregate(records)
                     self.totals = agg.get("totals", self.totals)
+                    self.models_breakdown = agg.get("models", {})
+                    self.paths = agg.get("paths", {})
+                    self.pseudos = agg.get("pseudos", {})
             except Exception:
                 pass
 
@@ -351,16 +347,25 @@ if _TEXTUAL:
             status_label = "PAUSED" if self.paused else "RUNNING"
             status_color = "yellow" if self.paused else "green"
             duck = self.DUCK_FRAMES[self.duck_frame]
-            return f"{duck} [{status_color}][{status_label}][/{status_color}]\n  \\___)"
+            return f"{duck} [{status_color}][{status_label}][/{status_color}]\n   \\___)"
 
         def _stats_summary(self):
             t = self.totals
-            return (
-                f"+----- Usage & Cost Tracker --------------------------------+\n"
-                f"| Calls: [bold]{t['calls']}[/bold]  Tokens: [bold]{t['total_tokens']:,}[/bold] ({t['prompt_tokens']:,} in / {t['completion_tokens']:,} out) |\n"
-                f"| Spend: [bold green]${t['cost']:.4f}[/bold green] USD                                       |\n"
-                f"+-----------------------------------------------------------+"
-            )
+            lines = [
+                "+----- Usage & Cost Accounting ---------------------------------------------+",
+                f"| Calls: [bold]{t['calls']}[/bold]  Tokens: [bold]{t['total_tokens']:,}[/bold] ({t['prompt_tokens']:,} in / {t['completion_tokens']:,} out)  Spend: [bold green]${t['cost']:.4f}[/bold green] USD |",
+            ]
+            if self.models_breakdown:
+                lines.append("+---------------------------------------------------------------------------+")
+                lines.append(f"| {'Model':<30} | {'Calls':<6} | {'Tokens':<12} | {'Spend ($)':<10} |")
+                lines.append("| " + "-" * 73 + " |")
+                for m, row in list(self.models_breakdown.items())[:5]:
+                    lines.append(f"| {m:<30} | {row['calls']:<6} | {row['total_tokens']:<12,}" f" | ${row['cost']:<9.4f} |")
+            if self.paths or self.pseudos:
+                path_str = ", ".join(f"{k}={v}" for k, v in sorted(self.paths.items()))
+                lines.append(f"| Paths: {path_str:<66} |")
+            lines.append("+---------------------------------------------------------------------------+")
+            return "\n".join(lines)
 
         def on_key(self, event):
             if event.key == "down":
@@ -369,7 +374,7 @@ if _TEXTUAL:
             elif event.key == "up":
                 self.cursor = move_cursor(self.cursor, -1, len(self.records))
                 self.query_one("#log").update("recent routing decisions\n" + render_log_rows(self.records, self.cursor))
-            elif event.key == "left":
+            elif event.key in ("left", "escape", "b"):
                 self.app.pop_screen()
 
         def action_pause(self):

@@ -501,9 +501,6 @@ async def run(
                 for task_id, output in state.subagent_outputs.items()
                 if not _is_subagent_error(output)
             }
-
-            plan = state.plan
-
             plan = state.plan
             use_subagents = (
                 plan is not None
@@ -523,12 +520,14 @@ async def run(
                         pseudo_model=state.pseudo_model,
                         task_value=task_value,
                     )
-                    return {"result": result}
+                    if result and str(result).strip():
+                        return {"result": result}
                 except Exception:
                     pass
 
             analyst_summary = state.compacted
             prompt = f"Original request:\n{user_text}\n\nAnalyst summary:\n{analyst_summary}"
+            result = None
             if getattr(getattr(cfg, "selection", None), "executor_enable_tools", True):
                 allowed_scope = sorted({s for st in (state.plan.subtasks if state.plan else []) for s in st.scope}) or ["."]
                 workspace_root = Path.cwd()
@@ -547,22 +546,32 @@ async def run(
                         ),
                         timeout=getattr(cfg.selection, "executor_tool_time_budget_s", 180.0) + 5,
                     )
-                    return {"result": result}
                 except Exception as exc:
                     log.warning("executor tool loop failed, falling back to text synthesis: %s", exc)
-            return {
-                "result": await _call(
-                    client,
-                    _executor_model(
-                        state.pseudo_model,
-                        cfg,
-                        task_value,
-                        analyst_summary,
-                        len(valid_outputs),
-                    ),
-                    [{"role": "user", "content": prompt}],
-                )
-            }
+
+            if not result or not str(result).strip():
+                try:
+                    result = await _call(
+                        client,
+                        _executor_model(
+                            state.pseudo_model,
+                            cfg,
+                            task_value,
+                            analyst_summary,
+                            len(valid_outputs),
+                        ),
+                        [{"role": "user", "content": prompt}],
+                    )
+                except Exception as exc:
+                    log.warning("executor fallback synthesis failed: %s", exc)
+
+            if not result or not str(result).strip():
+                # Provide a structured plan + findings summary rather than empty output
+                plan_summary = state.plan.summary if state.plan and state.plan.summary else "Multi-agent task analysis completed."
+                subtask_details = "\n".join(f"- **{st.id}** ({st.goal}): {valid_outputs.get(st.id, 'Completed')}" for st in (state.plan.subtasks if state.plan else []))
+                result = f"### Orchestrator Task Plan\n{plan_summary}\n\n### Subtask Findings\n{subtask_details or analyst_summary}\n\n### Summary\n{analyst_summary or 'Analysis completed successfully.'}"
+
+            return {"result": result}
 
         def after_plan(state: State):
             if state.plan is not None:

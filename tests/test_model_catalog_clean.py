@@ -15,8 +15,8 @@ def test_catalog_ids_are_condensed():
 
 
 def test_default_enabled_ids():
-    small = [{"id": str(i)} for i in range(5)]
-    large = [{"id": str(i)} for i in range(6)]
-    assert default_enabled_ids(small) == {str(i) for i in range(5)}
+    small = [{"id": str(i)} for i in range(6)]
+    large = [{"id": str(i)} for i in range(7)]
+    assert default_enabled_ids(small) == {str(i) for i in range(6)}
     assert default_enabled_ids(large) == set()
     assert default_enabled_ids(large, [{"id": "2"}, {"id": "missing"}]) == {"2"}

@@ -16,6 +16,14 @@ if _TEXTUAL:
         CSS = "Screen { padding: 1; } #footer { color: $text-muted; } #header { color: $success; } .focused { background: $boost; color: $text; }"
         def __init__(self, configured=False, tune_mode=None): super().__init__(); self.configured = configured; self.tune_mode = tune_mode; self.paused = False
         def on_mount(self):
+            try:
+                from autoconduck.launcher import ensure_server
+                from autoconduck.config import get_config
+                cfg = get_config()
+                port = getattr(cfg, "port", None) or 11434
+                ensure_server(port)
+            except Exception:
+                pass
             if self.tune_mode:
                 from .tune import TuneScreen, SimpleTuneScreen, AdvancedTuneScreen
                 screen = SimpleTuneScreen(self) if self.tune_mode == "simple" else AdvancedTuneScreen(self) if self.tune_mode == "advanced" else TuneScreen(self)

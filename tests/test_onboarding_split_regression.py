@@ -117,7 +117,7 @@ def test_api_key_save_resolves_auth_import_and_finishes(monkeypatch):
     assert len(cfg.preset_overrides["openai"]) == 1
     assert cfg.preset_overrides["openai"][0]["id"] == "gpt-test"
     assert len(screen.controller.switched) == 1
-    assert screen.controller.switched[0].__class__.__name__ == "DashboardScreen"
+    assert screen.controller.switched[0].__class__.__name__ == "MainMenuScreen"
 
 
 def test_private_helpers_resolve_through_split_star_imports():

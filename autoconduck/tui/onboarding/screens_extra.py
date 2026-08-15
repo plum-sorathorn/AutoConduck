@@ -63,7 +63,7 @@ class ProviderFormScreen(Screen):
             ),
             Input(
                 value=old.get("base_url", ""),
-                placeholder="OpenAI / Default base_url (e.g. http://localhost:8000/v1)",
+                placeholder="OpenAI / Default base_url (e.g. https://api.openai.com/v1 or https://gateway.ai/v1)",
                 id="base_url",
             ),
             Input(
@@ -260,8 +260,15 @@ class LauncherIntegrationScreen(Screen):
         )
 
     def _install(self):
+        try:
+            self.query_one("#agents").update("[bold cyan]Installing AutoConduck agent integrations… please wait…[/bold cyan]")
+        except Exception:
+            pass
         if launcher is not None:
-            launcher.install_shims(sorted(self.checked))
+            try:
+                launcher.install_shims(sorted(self.checked))
+            except Exception:
+                pass
         self._finish()
 
     def _finish(self):
