@@ -503,6 +503,8 @@ async def run(
             }
 
             plan = state.plan
+
+            plan = state.plan
             use_subagents = (
                 plan is not None
                 and getattr(getattr(cfg, "selection", None), "enable_executor_subagents", False)
@@ -528,7 +530,7 @@ async def run(
             analyst_summary = state.compacted
             prompt = f"Original request:\n{user_text}\n\nAnalyst summary:\n{analyst_summary}"
             if getattr(getattr(cfg, "selection", None), "executor_enable_tools", True):
-                allowed_scope = sorted({s for st in (state.plan.subtasks if state.plan else []) for s in st.scope})
+                allowed_scope = sorted({s for st in (state.plan.subtasks if state.plan else []) for s in st.scope}) or ["."]
                 workspace_root = Path.cwd()
                 try:
                     result = await asyncio.wait_for(
@@ -565,7 +567,7 @@ async def run(
         def after_plan(state: State):
             if state.plan is not None:
                 return "pool"
-            return "end" if state.attempt >= 2 else "retry"
+            return "end"
 
         def after_pool(state: State):
             return "end" if state.fallback else "compact"
@@ -584,7 +586,7 @@ async def run(
         graph.add_conditional_edges(
             "planner",
             after_plan,
-            {"pool": "subagent_pool", "retry": "planner", "end": END},
+            {"pool": "subagent_pool", "end": END},
         )
         graph.add_conditional_edges(
             "subagent_pool", after_pool, {"compact": "compactor", "end": END}

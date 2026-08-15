@@ -13,6 +13,22 @@ class OutputContract(BaseModel):
     description: str = ""
     verify: list[str] = Field(default_factory=list)
 
+    @field_validator("description", mode="before")
+    @classmethod
+    def _coerce_description(cls, value: Any) -> str:
+        if isinstance(value, list):
+            return " ".join(str(x) for x in value if x is not None)
+        return str(value or "")
+
+    @field_validator("verify", mode="before")
+    @classmethod
+    def _coerce_verify(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        if isinstance(value, list):
+            return [str(x).strip() for x in value if x is not None and str(x).strip()]
+        return []
+
     def __str__(self) -> str:
         return self.description
 
@@ -28,23 +44,74 @@ class SubTask(BaseModel):
     read_budget: int = 5
     role: str = "read"
 
+    @field_validator("id", mode="before")
+    @classmethod
+    def _coerce_id(cls, value: Any) -> str:
+        return str(value or "task")
+
+    @field_validator("goal", mode="before")
+    @classmethod
+    def _coerce_goal(cls, value: Any) -> str:
+        return str(value or "Analyze task area")
+
+    @field_validator("scope", "constraints", "depends_on", "verified_context", mode="before")
+    @classmethod
+    def _coerce_str_list(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [s.strip() for s in value.split(",") if s.strip()] if value else []
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if item is not None and str(item).strip()]
+        return []
+
     @field_validator("output_contract", mode="before")
     @classmethod
     def _coerce_output_contract(cls, value: Any) -> Any:
+        if isinstance(value, OutputContract):
+            return value
+        if isinstance(value, dict):
+            return value
         if isinstance(value, str):
             return OutputContract(description=value)
-        return value
+        if isinstance(value, list):
+            return OutputContract(description=" ".join(str(item) for item in value if item is not None))
+        return OutputContract(description=str(value or ""))
+
+    @field_validator("read_budget", mode="before")
+    @classmethod
+    def _coerce_read_budget(cls, value: Any) -> int:
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            digits = re.findall(r"\d+", value)
+            if digits:
+                return int(digits[0])
+        return 5
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def _coerce_role(cls, value: Any) -> str:
+        return str(value or "read")
 
 
 class TaskPlan(BaseModel):
-    subtasks: list[SubTask]
+    subtasks: list[SubTask] = Field(default_factory=list)
     summary: str = ""
     budget_hint: float | None = None
 
+    @field_validator("subtasks", mode="before")
+    @classmethod
+    def _coerce_subtasks(cls, value: Any) -> list[Any]:
+        if isinstance(value, dict):
+            return list(value.values())
+        if isinstance(value, list):
+            return value
+        return []
+
 
 PLANNER_SYSTEM_PROMPT = """You are a coding-task planner. Return only JSON matching the supplied schema.
-Create a realistic DAG of read-only analysis tasks. Goals are single imperative sentences; scope contains
-resolved file paths, never vague descriptions; constraints explicitly say what the analyst must not do.
+Create a realistic, focused DAG of at most 3 to 5 critical read-only analysis tasks (do not generate more than 5 subtasks).
+Goals are single imperative sentences; scope contains resolved file paths, never vague descriptions;
+constraints explicitly say what the analyst must not do.
 
 When FILE CONTENTS are provided below, base each subtask's scope paths on those files and the request.
 For every subtask, populate verified_context with up to 8 short factual bullet strings (<15 words each)
@@ -142,13 +209,14 @@ def _select_planner_model(retry: bool = False, cfg=None, task_value=0.5, config=
             from autoconduck.config import qualify_model
 
             return qualify_model(str(override).strip())
-        if retry and getattr(config.selection, "planner_retry_cheaper", True):
+        if retry and getattr(config.selection, "planner_retry_cheaper", False):
             return pricing.cheapest_enabled(config) or "gpt-4o"
         lo, hi = config.selection.phase_bands["planner"]
+        target = hi if retry else (lo + (hi - lo) * task_value)
         from autoconduck.config import resolve_orchestrator_model
 
         return pricing.select_closest(
-            pricing.pool_ids(config), lo + (hi - lo) * task_value, config, band=(lo, hi)
+            pricing.pool_ids(config), target, config, band=(lo, hi)
         ) or resolve_orchestrator_model(config)
     except Exception:
         pass
@@ -173,7 +241,6 @@ def _completion(
     planner_model = _select_planner_model(retry, cfg, task_value=task_value)
     params = litellm_params_for(planner_model, cfg)
     kwargs = {**params, **kwargs}
-    kwargs["max_tokens"] = 4000
     kwargs.setdefault("temperature", 0.0)
     kwargs["drop_params"] = True
     if client is not None:
@@ -190,8 +257,21 @@ def _content(response: Any) -> str:
     if isinstance(response, str):
         return response
     if isinstance(response, dict):
-        return str(response["choices"][0]["message"]["content"])
-    return str(response.choices[0].message.content)
+        choices = response.get("choices", [])
+        if not choices:
+            return ""
+        message = choices[0].get("message", {})
+        content = message.get("content")
+        if content is None:
+            content = message.get("reasoning_content") or ""
+        return str(content)
+    if hasattr(response, "choices") and response.choices:
+        msg = response.choices[0].message
+        content = getattr(msg, "content", None)
+        if content is None:
+            content = getattr(msg, "reasoning_content", None) or ""
+        return str(content)
+    return ""
 
 
 def build_task_plan(
@@ -232,16 +312,15 @@ def build_task_plan(
         for attempt in range(2):
             try:
                 kwargs = {}
-                if attempt == 1:
-                    mode = getattr(getattr(cfg, "selection", None), "planner_response_format", "json_object")
-                    if mode == "json_object":
-                        kwargs["response_format"] = {"type": "json_object"}
-                    elif mode == "json_schema":
-                        kwargs["response_format"] = {"type": "json_schema", "json_schema": {"name": "TaskPlan", "schema": schema, "strict": True}}
+                mode = getattr(getattr(cfg, "selection", None), "planner_response_format", "json_object")
+                if mode == "json_object":
+                    kwargs["response_format"] = {"type": "json_object"}
+                elif mode == "json_schema":
+                    kwargs["response_format"] = {"type": "json_schema", "json_schema": {"name": "TaskPlan", "schema": schema, "strict": True}}
                 retry = attempt == 1
                 model = _select_planner_model(retry, cfg, task_value=task_value)
                 if retry and model != first_model:
-                    logger.info("Planner attempt 2 using cheaper model %s (was %s)", model, first_model)
+                    logger.info("Planner attempt 2 using fallback model %s (was %s)", model, first_model)
                 response = _completion(client, prompt_messages, cfg=cfg, task_value=task_value, retry=retry, **kwargs)
                 raw = _content(response)
                 parsed, repair_error, preview = parse_json_text(raw)
@@ -256,4 +335,3 @@ def build_task_plan(
     except (ImportError, ModuleNotFoundError):
         return None
     return None
-

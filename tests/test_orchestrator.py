@@ -176,7 +176,7 @@ def test_planner_plain_first_forced_budget_temperature_and_user_context():
         def completion(self, messages, **kwargs):
             calls.append((messages, kwargs))
             if len(calls) == 1:
-                assert "response_format" not in kwargs
+                assert kwargs.get("response_format", {}).get("type") == "json_object"
             return {"choices": [{"message": {"content": plan.model_dump_json()}}]}
 
     with patch("autoconduck.messages_api.litellm_params_for", return_value={"model": "openai/test", "max_tokens": 500}):
@@ -192,7 +192,7 @@ def test_planner_plain_first_forced_budget_temperature_and_user_context():
     assert result is not None
     assert len(calls) == 1
     assert calls[0][1].get("temperature") == 0.0
-    assert calls[0][1].get("max_tokens") == 4000
+    assert calls[0][1].get("max_tokens") == 500
     prompt = calls[0][0]
     assert any("Please inspect" in str(message.get("content")) for message in prompt)
     assert not any("long answer" in str(message.get("content")) for message in prompt)
@@ -211,13 +211,66 @@ def test_planner_fallback_uses_json_schema():
 
     with patch.object(planner, "_completion", side_effect=completion):
         assert build_task_plan([], client=object(), cfg=Config()) is not None
-    assert "response_format" not in calls[0]
+    assert calls[0]["response_format"]["type"] == "json_object"
     assert calls[1]["response_format"]["type"] == "json_object"
 
 
 def test_planner_model_override_is_qualified():
     cfg = Config(selection={"planner_model_override": "deepseek-v4-flash"})
     assert planner._model_name(cfg) == "openai/deepseek-v4-flash"
+
+
+def test_compact_dedupes_refs():
+    result = compact(["Issue at src/auth.py:10", "Same issue at src/auth.py:10", "Other at src/token.py:4"])
+    assert result.count("src/auth.py:10") == 1
+    assert "src/token.py:4" in result
+    assert len(result.split()) < 1000
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_helpers_empty_pool_fall_back_to_orchestrator_model():
+    cfg = Config(model_list=[])
+    fallback = resolve_orchestrator_model(cfg)
+
+    assert fallback
+    assert recon._recon_model_name(cfg, task_value=0.5) == fallback
+    assert planner._model_name(cfg, task_value=0.5) == fallback
+    assert helpers._executor_model(
+        "autoconduck", cfg, task_value=0.7, compactor_summary="", subtask_count=0
+    ) == fallback
+    assert pricing.select_closest(pricing.pool_ids(cfg), 0.3, cfg) == ""
+
+    class Client:
+        model = None
+
+        def completion(self, **kwargs):
+            self.model = kwargs["model"]
+            return {"choices": [{"message": {"content": "subagent result"}}]}
+
+    client = Client()
+    assert await run_subagent(valid_task(), "", client, cfg=cfg) == "subagent result"
+
+
+@pytest.mark.asyncio
+async def test_run_fallback_when_planner_fails():
+    import autoconduck.orchestrator.graph as graph
+    with patch.object(graph, "_LANGGRAPH_AVAILABLE", True), patch.object(graph, "build_task_plan", return_value=None):
+        assert await graph.run([], None, task_value=0.7) is None
+
+
+@pytest.mark.asyncio
+async def test_run_happy_path():
+    import autoconduck.orchestrator.graph as graph
+    plan = TaskPlan(subtasks=[valid_task()])
+    class Client:
+        def completion(self, **kwargs):
+            if kwargs["messages"][0]["role"] == "system":
+                return {"choices": [{"message": {"content": plan.model_dump_json()}}]}
+            return {"choices": [{"message": {"content": "final answer"}}]}
+    with patch.object(graph, "_LANGGRAPH_AVAILABLE", True):
+        with patch.object(graph, "build_task_plan", return_value=plan):
+            with patch.object(graph, "run_subagent", return_value="Finding at src/auth.py:1"):
+                assert await graph.run([], None, client=Client()) == "final answer"
 
 
 def test_compact_dedupes_refs():
@@ -287,14 +340,12 @@ async def test_run_double_planner_failure_then_end():
     def failing_planner(*args, **kwargs):
         call_count[0] += 1
         return None
-
     with patch.object(graph, "_LANGGRAPH_AVAILABLE", True):
         with patch.object(graph, "build_task_plan", side_effect=failing_planner):
             # task_value=0.8 bypasses the direct-executor short-circuit
             result = await graph.run([], None, task_value=0.8)
     assert result is None
-    assert call_count[0] == 2  # LangGraph retries the planner node once (attempt<2), then routes to END
-
+    assert call_count[0] == 1  # Planner is called once, graph routes directly to END on failure
 
 
 @pytest.mark.asyncio

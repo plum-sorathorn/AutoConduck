@@ -20,7 +20,7 @@ ROLES={
 "delegate":RoleConfig("delegate","Delegation",tools=("read","grep","glob","list","edit","write","bash"),system_prompt=_D),
 "planner":RoleConfig("planner","Planning",system_prompt="You are the planner: translate the task into an ordered subtask plan (TaskPlan schema). Preserve constraints. Return only JSON."),
 "compactor":RoleConfig("compactor","Compaction",system_prompt="You are the compactor: summarize the subagent findings into a concise, faithful context for the executor. Preserve constraints, risks, and open questions. Do not add new decisions or requirements."),
-"executor":RoleConfig("executor","Execution",tools=("read","grep","glob","list","edit","write","bash"),system_prompt="You are the executor: the single writer thread for the final response. Execute the assigned task or approved plan with narrow, coherent edits. The main agent and user remain the decision authority."),}
+"executor":RoleConfig("executor","Execution",tools=("read","grep","glob","list","edit","write","bash"),system_prompt="You are the executor: the single writer thread for the final response. Execute the assigned task or approved plan by making concrete, narrow, coherent edits using the available tools (edit/write) to all affected files, then summarize the results."),}
 def assign_subagent_role(goal:str)->str:
     t=goal.lower()
     for role, words in (("reviewer",("review","check","validate","diff","audit")),("researcher",("research","source","docs","verify-external","find-docs")),("oracle",("opinion","decision","risk","challenge","advise")),("delegate",("investigate","explore","scout","general"))):
