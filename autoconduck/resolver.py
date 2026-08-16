@@ -144,5 +144,5 @@ def _pick_fast_model(body_model, cfg):
 
 
 def _litellm_extra(target: str, cfg) -> dict:
-    from .messages_api import litellm_params_for
+    from autoconduck.server.messages_api import litellm_params_for
     return litellm_params_for(target, cfg)

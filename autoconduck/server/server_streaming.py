@@ -3,8 +3,8 @@
 import argparse, asyncio, ctypes, json, logging, os, sys, time, subprocess, shutil, signal
 from contextlib import asynccontextmanager
 from typing import Any
-from . import config
-from .config import get_config, home_dir
+from autoconduck import config
+from autoconduck.config import get_config, home_dir
 
 
 DEFAULT_PORT = 11434
@@ -63,7 +63,7 @@ def _build():
     import litellm
     litellm.suppress_debug_info = True
     litellm.set_verbose = False
-    from .stats import install_recorder
+    from autoconduck.stats import install_recorder
 
     install_recorder(litellm)
     from .messages_api import (
@@ -160,7 +160,7 @@ def _run_supervisor(
     Five failures within one minute are treated as a persistent startup fault;
     giving up lets the normal ensure_server watchdog perform the next revive.
     """
-    from .launcher import _create_kill_on_close_job, daemon_python
+    from autoconduck.launcher import _create_kill_on_close_job, daemon_python
 
     log_path = home_dir() / "run" / "server.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -274,7 +274,7 @@ def _run_supervisor(
 
 
 def _check_port_available(port: int) -> None:
-    from .launcher import find_process_on_port, kill_process, prompt_kill_port
+    from autoconduck.launcher import find_process_on_port, kill_process, prompt_kill_port
 
     pid = find_process_on_port(port)
     if pid is None:

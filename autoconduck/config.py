@@ -137,8 +137,6 @@ class Config(BaseModel):
     host: str = "127.0.0.1"
     port: int = 11434
     log_level: str = "INFO"
-    # Tightened from 0.55/0.70 — reduces the ambiguous zone so fewer messages
-    # trigger the expensive tiebreaker/orchestrator resolution path.
     ambiguous_low: float = 0.60
     ambiguous_high: float = 0.75
     hysteresis_floor: float = 0.50
@@ -162,8 +160,6 @@ class Config(BaseModel):
     preset_overrides: dict[str, list[dict]] = Field(default_factory=dict)
     shims: dict[str, str] = Field(default_factory=dict)
     managed_server: bool = False
-    # When True, `conduck start --[agent]` spawns the AutoConduck proxy in a
-    # separate terminal window and runs the agent in the calling terminal.
     launch_in_new_terminal: bool = False
     selection: SelectionConfig = Field(default_factory=SelectionConfig)
     claude_code: ClaudeCodeSettings = Field(default_factory=ClaudeCodeSettings)
@@ -195,7 +191,7 @@ def provider_for(entry: dict, cfg=None) -> str:
 def resolve_api_key(entry: dict, provider=None) -> str:
     global _legacy_key_warning
     try:
-        from .auth import get_provider_key
+        from autoconduck.auth.auth import get_provider_key
 
         auth_key = get_provider_key(provider or provider_for(entry))
         if auth_key is not None:
@@ -250,11 +246,7 @@ def normalize_api_base(base_url: str) -> str:
 
 
 def _repair_base_url_scheme(base_url: str) -> str:
-    """Repair a malformed/missing URL scheme so base URLs are always usable.
-
-    Fixes the classic ``ttps://`` typo and bare hostnames without changing
-    values that already carry a valid HTTP(S) scheme.
-    """
+    """Repair a malformed/missing URL scheme so base URLs are always usable."""
     value = str(base_url or "").strip()
     if not value:
         return value
@@ -330,7 +322,7 @@ def select_model_by_tier(tier: str, cfg=None) -> str:
 
 def orchestrator_litellm_params(cfg=None) -> dict[str, str]:
     """Build LiteLLM kwargs for the configured orchestration model."""
-    from .messages_api import litellm_params_for
+    from autoconduck.server.messages_api import litellm_params_for
 
     model = resolve_orchestrator_model(cfg)
     return litellm_params_for(model, cfg or get_config())
@@ -384,7 +376,7 @@ def load_config(path=None) -> Config:
         for s in (config.model_list, config.custom_models)
         for e in s
     ):
-        from .auth import migrate_from_config
+        from autoconduck.auth.auth import migrate_from_config
 
         migrate_from_config(config)
     for entry in _configured_model_sources(config):

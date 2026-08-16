@@ -229,7 +229,7 @@ New files: `tests/test_valuation.py`, `tests/test_pricing_select_closest.py`, `t
 6. **`orchestrator/planner.py`** — add `TaskPlan.budget_hint`, replace `_model_name` with `planner_target` + `select_closest`, update planner system prompt.
 7. **`orchestrator/subagents.py`** — thread `role`/`plan_breadth`/`budget_hint` through subagent dispatch, implement `subagent_target`, replace the line-45 `select_model_by_tier("cheap", cfg)` call.
 8. **`orchestrator/graph.py`** — replace `_executor_model` (lines 55-66) with `executor_target` + `select_closest`, threading `task_value`/`compactor_summary`/`subtask_count`.
-9. **`model_presets.py`** — no functional change; tier labels remain purely advisory (comment only).
+9. **`presets/model_presets.py`** — no functional change; tier labels remain purely advisory (comment only).
 10. **`/stats` surface** — add `last_task_value`/`last_target_scaled_cost`/`last_selected_model` fields gated by `expose_value_in_stats`.
 11. **`tui/`** — cosmetic pass on any copy implying tier controls routing (P2, non-blocking).
 12. New test files per §5, plus updates to existing orchestrator/dispatcher tests replacing tier assertions with value/band assertions.

@@ -12,7 +12,7 @@ import json
 import os
 import uuid
 from typing import Any
-from .config import normalize_api_base, qualify_model, resolve_api_key
+from autoconduck.config import normalize_api_base, qualify_model, resolve_api_key
 
 from .messages_models import PSEUDO_MODELS
 
@@ -242,7 +242,7 @@ def serve_model_ids(cfg) -> list[str]:
 
 
 def custom_entry(cfg, model_id: str) -> dict | None:
-    from .config import _configured_model_sources
+    from autoconduck.config import _configured_model_sources
 
     def matches(entry: dict) -> bool:
         candidate = entry.get("id") or entry.get("model_name") or entry.get("model")
@@ -258,7 +258,7 @@ def custom_entry(cfg, model_id: str) -> dict | None:
 
 
 def litellm_params_for(model_id: str, cfg) -> dict:
-    from .config import provider_for
+    from autoconduck.config import provider_for
 
     entry = custom_entry(cfg, model_id)
     if not entry:
@@ -324,7 +324,7 @@ def litellm_params_for(model_id: str, cfg) -> dict:
 
 
 def messages_litellm_kwargs(model_id: str, extra: dict | None = None) -> dict:
-    from .config import qualify_model
+    from autoconduck.config import qualify_model
     kwargs = dict(extra or {})
     kwargs["model"] = qualify_model(model_id)
     return kwargs

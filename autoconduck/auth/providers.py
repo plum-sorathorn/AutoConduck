@@ -1,7 +1,7 @@
 import os
 import httpx
 from pydantic import BaseModel, Field
-from .config import normalize_api_base, resolve_api_key
+from autoconduck.config import normalize_api_base, resolve_api_key
 class CustomEndpoint(BaseModel):
     display_name: str; base_url: str; anthropic_base_url: str | None = None; api_key_env: str | None = None; api_key: str | None = None; models: list[str] = Field(default_factory=list)
 def discover_models(endpoint):

@@ -22,7 +22,7 @@ Example: {"files": ["autoconduck/routing/dispatcher.py", "autoconduck/config.py"
 
 def _recon_model_name(cfg=None, task_value: float = 0.5) -> str:
     try:
-        from autoconduck import pricing
+        from autoconduck.routing import pricing
 
         if cfg is None:
             from autoconduck.config import get_config
@@ -52,7 +52,7 @@ def build_recon_plan(
     explicit = _extract_file_paths(messages if isinstance(messages, list) else [])
     try:
         from autoconduck.config import get_config
-        from autoconduck.messages_api import normalize_messages_for_llm, litellm_params_for
+        from autoconduck.server.messages_api import normalize_messages_for_llm, litellm_params_for
 
         cfg = cfg or get_config()
         recon_model = _recon_model_name(cfg, task_value)

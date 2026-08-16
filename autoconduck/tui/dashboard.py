@@ -27,6 +27,33 @@ def render_log_rows(records: list[dict], cursor: int) -> str:
     return "\n".join(lines)
 
 
+def _cell_len(s: str) -> int:
+    try:
+        from rich.text import Text
+        return Text.from_markup(s).cell_len
+    except Exception:
+        import re
+        return len(re.sub(r'\[/?[a-zA-Z0-9_ =#,-]+\]', '', s))
+
+
+def _format_box_lines(title: str, lines: list[str], width: int = 76) -> list[str]:
+    title_len = _cell_len(title)
+    dashes = max(0, width - 6 - title_len)
+    top = f"+-- {title} {'-' * dashes}+"
+    bottom = f"+{'-' * (width - 2)}+"
+
+    result = [top]
+    for line in lines:
+        if line.startswith("-") and set(line) == {"-"}:
+            result.append(f"+{'-' * (width - 2)}+")
+            continue
+        l_len = _cell_len(line)
+        pad = max(0, width - 4 - l_len)
+        result.append(f"| {line}{' ' * pad} |")
+    result.append(bottom)
+    return result
+
+
 try:
     from textual.containers import Vertical
     from textual.screen import Screen
@@ -234,7 +261,7 @@ if _TEXTUAL:
     class DashboardScreen(Screen):
         """Live routing decisions log — accessible from the main menu."""
 
-        BINDINGS = [("d", "drill", "drill"), ("/", "filter", "filter"), ("p", "pause", "pause")]
+        BINDINGS = [("d", "drill", "drill"), ("p", "pause", "pause")]
         DUCK_FRAMES = [
             '  __(o<   [bold cyan]AutoConduck[/bold cyan] . [green]proxy active[/green]',
             '  __(.<   [bold cyan]AutoConduck[/bold cyan] . [green]proxy active[/green]',
@@ -258,7 +285,7 @@ if _TEXTUAL:
                 Static(self._graph_view(), id="graph", markup=True),
                 Static(self._stats_summary(), id="stats", markup=True),
                 Static("recent routing decisions\n" + render_log_rows(self.records, self.cursor), id="log", markup=True),
-                Static("[up/down] move  [d] details  [/] filter  [p] pause  [esc/left] back  [ctrl+c] quit", id="footer", markup=False),
+                Static("[up/down] move  [d] details  [p] pause  [esc/left] back  [ctrl+c] quit", id="footer", markup=False),
             )
 
         def on_mount(self):
@@ -313,35 +340,29 @@ if _TEXTUAL:
                 e_n = "[bold yellow]● EXECUTOR[/bold yellow]" if node == "executor" else "[dim]○ EXECUTOR[/dim]"
 
                 lines = [
-                    "+----- [bold cyan]LangGraph SLOW Path Execution[/bold cyan] -----------------------------+",
-                    f"| Target: [bold]{model}[/bold] | Task Value V: [bold yellow]{val:.2f}[/bold yellow]                           |",
-                    "|                                                                           |",
-                    f"|  [START] ──► {p_n} ──► {s_n} ──► {c_n} ──► {e_n} ──► [END] |",
-                    "|                                                                           |",
-                    f"| Status: [bold cyan]{detail}[/bold cyan]",
-                    "+---------------------------------------------------------------------------+"
+                    f"Target: [bold]{model}[/bold] | Task Value V: [bold yellow]{val:.2f}[/bold yellow]",
+                    "",
+                    f"[START] ──► {p_n} ──► {s_n} ──► {c_n} ──► {e_n} ──► [END]",
+                    "",
+                    f"Status: [bold cyan]{detail}[/bold cyan]",
                 ]
-                return "\n".join(lines)
+                return "\n".join(_format_box_lines("[bold cyan]LangGraph SLOW Path Execution[/bold cyan]", lines, width=76))
             elif is_active and path == "FAST":
                 lines = [
-                    "+----- [bold green]Direct FAST Path Execution[/bold green] ----------------------------------+",
-                    f"| Selected Model: [bold green]{model}[/bold green] | Task Value V: [bold]{val:.2f}[/bold]                  |",
-                    "|                                                                           |",
-                    f"|  [START] ──────────► [⚡ FAST DIRECT DISPATCH] ──────────► [END]         |",
-                    "|                                                                           |",
-                    f"| Status: [bold green]{detail}[/bold green]",
-                    "+---------------------------------------------------------------------------+"
+                    f"Selected Model: [bold green]{model}[/bold green] | Task Value V: [bold]{val:.2f}[/bold]",
+                    "",
+                    "[START] ──────────► [⚡ FAST DIRECT DISPATCH] ──────────► [END]",
+                    "",
+                    f"Status: [bold green]{detail}[/bold green]",
                 ]
-                return "\n".join(lines)
+                return "\n".join(_format_box_lines("[bold green]Direct FAST Path Execution[/bold green]", lines, width=76))
             else:
                 lines = [
-                    "+----- [bold dim]Routing Mechanism Standby[/bold dim] ----------------------------------+",
-                    f"| Engine: [bold]AutoConduck Proxy[/bold] | Standby | Exposure: Active              |",
-                    "|                                                                           |",
-                    "|  [START] ──► [● ROUTER READY] ──► (FAST Direct / SLOW Orchestrator)      |",
-                    "+---------------------------------------------------------------------------+"
+                    "Engine: [bold]AutoConduck Proxy[/bold] | Standby | Exposure: Active",
+                    "",
+                    "[START] ──► [● ROUTER READY] ──► (FAST Direct / SLOW Orchestrator)",
                 ]
-                return "\n".join(lines)
+                return "\n".join(_format_box_lines("[bold dim]Routing Mechanism Standby[/bold dim]", lines, width=76))
 
         def _mascot_header(self):
             status_label = "PAUSED" if self.paused else "RUNNING"
@@ -352,20 +373,21 @@ if _TEXTUAL:
         def _stats_summary(self):
             t = self.totals
             lines = [
-                "+----- Usage & Cost Accounting ---------------------------------------------+",
-                f"| Calls: [bold]{t['calls']}[/bold]  Tokens: [bold]{t['total_tokens']:,}[/bold] ({t['prompt_tokens']:,} in / {t['completion_tokens']:,} out)  Spend: [bold green]${t['cost']:.4f}[/bold green] USD |",
+                f"Calls: [bold]{t['calls']}[/bold]    Spend: [bold green]${t['cost']:.4f}[/bold green] USD",
+                f"Tokens: [bold]{t['total_tokens']:,}[/bold] ({t['prompt_tokens']:,} in / {t['completion_tokens']:,} out)",
             ]
             if self.models_breakdown:
-                lines.append("+---------------------------------------------------------------------------+")
-                lines.append(f"| {'Model':<30} | {'Calls':<6} | {'Tokens':<12} | {'Spend ($)':<10} |")
-                lines.append("| " + "-" * 73 + " |")
+                lines.append("-" * 72)
+                lines.append(f"{'Model':<28} | {'Calls':<6} | {'Tokens':<12} | {'Spend ($)':<10}")
+                lines.append("-" * 72)
                 for m, row in list(self.models_breakdown.items())[:5]:
-                    lines.append(f"| {m:<30} | {row['calls']:<6} | {row['total_tokens']:<12,}" f" | ${row['cost']:<9.4f} |")
+                    m_display = m[:28]
+                    lines.append(f"{m_display:<28} | {row['calls']:<6} | {row['total_tokens']:<12,} | ${row['cost']:<9.4f}")
             if self.paths or self.pseudos:
+                lines.append("-" * 72)
                 path_str = ", ".join(f"{k}={v}" for k, v in sorted(self.paths.items()))
-                lines.append(f"| Paths: {path_str:<66} |")
-            lines.append("+---------------------------------------------------------------------------+")
-            return "\n".join(lines)
+                lines.append(f"Paths: {path_str}")
+            return "\n".join(_format_box_lines("Usage & Cost Accounting", lines, width=76))
 
         def on_key(self, event):
             if event.key == "down":
@@ -380,9 +402,6 @@ if _TEXTUAL:
         def action_pause(self):
             self.paused = not self.paused
             self.query_one("#header").update(self._mascot_header())
-
-        def action_filter(self):
-            self.mount(Input(placeholder="filter by agent/model/path", id="filter"))
 
         def action_drill(self):
             record = self.records[self.cursor] if self.records else {}

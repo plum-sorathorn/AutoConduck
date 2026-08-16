@@ -2,12 +2,12 @@
 from __future__ import annotations
 import os, sys, subprocess, shutil, json, signal, time
 from pathlib import Path
-from . import config
-from .config import get_config, load_config, save_config, home_dir
-from .server import DEFAULT_PORT
+from autoconduck import config
+from autoconduck.config import get_config, load_config, save_config, home_dir
+from autoconduck.server import DEFAULT_PORT
 def cmd_install(args):
-    from . import launcher
-    from .agents import all_adapters
+    from autoconduck import launcher
+    from autoconduck.agents import all_adapters
 
     adapters = all_adapters()
     selected = args.agents or [
@@ -109,8 +109,8 @@ def cmd_launch_agent(agent_id: str, port: int | None = None, new_terminal: bool 
     the proxy daemon is launched in a new visible terminal window so the
     caller's terminal stays clean for the agent.
     """
-    from . import launcher
-    from .agents import all_adapters
+    from autoconduck import launcher
+    from autoconduck.agents import all_adapters
 
     # Find the adapter by ID
     adapter = next((a for a in all_adapters() if a.id == agent_id), None)
@@ -275,7 +275,7 @@ def cmd_launch_agent(agent_id: str, port: int | None = None, new_terminal: bool 
 def cmd_tune(args):
     """Launch tuning UI, with a useful deterministic fallback."""
     try:
-        from .tui.app import AutoConduckApp
+        from autoconduck.tui.app import AutoConduckApp
 
         mode = getattr(args, "mode", None) or "select"
         app = AutoConduckApp(configured=True, tune_mode=mode)

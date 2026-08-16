@@ -216,7 +216,7 @@ def _create_kill_on_close_job():
 
 def _clear_dead_owner_claim() -> bool:
     """Remove an owner marker left by a crashed supervisor."""
-    from . import launcher
+    from autoconduck import launcher
     _, claims, log = launcher._files()
     with launcher._claims_lock():
         try:
@@ -250,7 +250,7 @@ def _clear_dead_owner_claim() -> bool:
 
 
 def _read_pid():
-    from . import launcher
+    from autoconduck import launcher
     pid, _, _ = launcher._files()
     try:
         return int(pid.read_text().strip())

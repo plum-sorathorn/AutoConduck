@@ -214,7 +214,7 @@ def _format_file_contents(files: dict[str, str], ground_truth: str = "") -> str:
 
 def _select_planner_model(retry: bool = False, cfg=None, task_value=0.5, config=None) -> str:
     try:
-        from autoconduck import pricing
+        from autoconduck.routing import pricing
 
         config = config or cfg
         if config is None:
@@ -252,7 +252,7 @@ def _completion(
     retry: bool = False,
     **kwargs: Any,
 ) -> Any:
-    from autoconduck.messages_api import normalize_messages_for_llm, litellm_params_for
+    from autoconduck.server.messages_api import normalize_messages_for_llm, litellm_params_for
 
     messages = normalize_messages_for_llm(messages)
     planner_model = _select_planner_model(retry, cfg, task_value=task_value)
@@ -300,7 +300,7 @@ def build_task_plan(
     direct-executor path rather than spending a second LLM call on a retry.
     """
     try:
-        from autoconduck.messages_api import normalize_messages_for_llm
+        from autoconduck.server.messages_api import normalize_messages_for_llm
 
         messages = normalize_messages_for_llm(messages if isinstance(messages, list) else [])
         schema = TaskPlan.model_json_schema()

@@ -4,13 +4,14 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from .config import backups_dir, home_dir, provider_for
+from autoconduck.config import backups_dir, home_dir, provider_for
 
 log = logging.getLogger("autoconduck")
 
@@ -24,9 +25,11 @@ def auth_path() -> Path:
 
 def load_auth() -> dict[str, str]:
     try:
-        if not auth_path().exists():
+        auth_fn = getattr(sys.modules.get("autoconduck.auth"), "auth_path", auth_path)
+        if not auth_fn().exists():
             return {}
-        data = yaml.safe_load(auth_path().read_text(encoding="utf-8")) or {}
+        auth_fn = getattr(sys.modules.get("autoconduck.auth"), "auth_path", auth_path)
+        data = yaml.safe_load(auth_fn().read_text(encoding="utf-8")) or {}
         providers = data.get("providers", {}) if isinstance(data, dict) else {}
         return {str(k): str(v) for k, v in providers.items() if isinstance(v, (str, int, float))}
     except Exception as exc:
@@ -35,7 +38,8 @@ def load_auth() -> dict[str, str]:
 
 
 def save_auth(mapping: dict[str, str]) -> None:
-    path = auth_path()
+    auth_fn = getattr(sys.modules.get("autoconduck.auth"), "auth_path", auth_path)
+    path = auth_fn()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump({"providers": mapping}, sort_keys=True), encoding="utf-8")
     if os.name != "nt":
@@ -43,7 +47,8 @@ def save_auth(mapping: dict[str, str]) -> None:
 
 
 def get_provider_key(provider: str) -> str | None:
-    value = load_auth().get(provider)
+    load_fn = getattr(sys.modules.get("autoconduck.auth"), "load_auth", load_auth)
+    value = load_fn().get(provider)
     if value is None:
         return None
     if value.startswith("env:"):
@@ -52,7 +57,8 @@ def get_provider_key(provider: str) -> str | None:
 
 
 def set_provider_key(provider: str, value: str) -> None:
-    mapping = load_auth()
+    load_fn = getattr(sys.modules.get("autoconduck.auth"), "load_auth", load_auth)
+    mapping = load_fn()
     mapping[provider] = value
     save_auth(mapping)
 
@@ -65,7 +71,8 @@ def migrate_from_config(cfg: Any) -> int:
                     if isinstance(entry, dict) and entry.get("api_key")]
         if not literals:
             return 0
-        mapping = load_auth()
+        load_fn = getattr(sys.modules.get("autoconduck.auth"), "load_auth", load_auth)
+        mapping = load_fn()
         changed = False
         for entry, provider in literals:
             if provider not in mapping:
@@ -82,7 +89,7 @@ def migrate_from_config(cfg: Any) -> int:
                 backup.mkdir(parents=True, exist_ok=True)
                 stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
                 shutil.copy2(source, backup / f"{stamp}.bak")
-            from .config import save_config
+            from autoconduck.config import save_config
             save_config(cfg)
         return len(literals)
     except Exception as exc:

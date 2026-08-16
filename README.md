@@ -104,7 +104,7 @@ with `autoconduck start --headless` for them.
 
 1. Claude Code, OpenCode, or another client calls the OpenAI-compatible
    LiteLLM Proxy at `127.0.0.1:11434`, or the Anthropic `/v1/messages` shim in
-   `messages_api.py`.
+   `server/messages_api.py`.
 2. Requests for `autoconduck`, `autoconduck-budget`, or `autoconduck-expensive`
    are intercepted and handed to `routing/dispatcher.py` through `_route_target`.
 3. `dispatcher.route()` runs the synchronous, zero-I/O fast path through
@@ -229,7 +229,7 @@ inter-phase LLM summarization layer; final synthesis is the executor's job.
 
 Every planner and subagent call is a plain `litellm` completion to the resolved
 gateway model, not a subprocess spawn of Claude Code. The `agents/` adapters
-only configure external CLIs through `launcher.py` shims.
+only configure external CLIs through `launcher/launcher.py` shims.
 
 The subagent prompt template is:
 
@@ -295,12 +295,11 @@ tests for the whole system”.
 `routing/dispatcher.py` (sequence) · `routing/fast_graph.py` (compiled micro-DAG) ·
 `routing/semantic_router.py` · `routing/evaluator.py` · `routing/complexity.py` ·
 `routing/pricing.py` · `config.py` (`resolve_orchestrator_model`, `qualify_model`,
-`resolve_api_key`, `normalize_api_base`) · `auth.py` (auth.yaml) · `resolver.py` ·
-`providers.py` · `launcher.py`
-(shims and ensure/release refcounting) · `messages_api.py` (Anthropic shim) ·
+`resolve_api_key`, `normalize_api_base`) · `auth/auth.py` (auth.yaml) · `resolver.py` ·
+`auth/providers.py` · `launcher/launcher.py`
+(shims and ensure/release refcounting) · `server/messages_api.py` (Anthropic shim) ·
 `orchestrator/{graph,recon,planner,subagents,compactor}.py` · `stats.py` ·
-`agents/` (external
-CLI adapters) · `tui/` (Textual dashboard).
+`agents/` (external CLI adapters) · `tui/` (Textual dashboard).
 
 ## Development
 
@@ -310,11 +309,11 @@ pip install -e .
 pytest
 ```
 
-The project is Python 3.11+; `providers.py` supports generic OpenAI-compatible
+The project is Python 3.11+; `auth/providers.py` supports generic OpenAI-compatible
 gateways and model discovery, while `routing/pricing.py` chooses capable models.
 
 ## TUI keymap highlights
 
-`j`/`k` navigate, `/` filters, `d` opens routing drill-down, `p` pauses or
+`j`/`k` navigate, `d` opens routing drill-down, `p` pauses or
 resumes routing, `e` edits models, `[ctrl+c]` quits, and `?` shows all keys.
 Textual's default Ctrl+Q is disabled; Ctrl+C is the single quit chord.

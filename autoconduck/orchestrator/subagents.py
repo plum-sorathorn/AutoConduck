@@ -76,8 +76,8 @@ async def run_subagent(
         import asyncio
         from typing import Any
         from autoconduck.config import get_config
-        from autoconduck import pricing
-        from autoconduck.messages_api import litellm_params_for
+        from autoconduck.routing import pricing
+        from autoconduck.server.messages_api import litellm_params_for
 
         cfg = cfg or get_config()
         from .roles import assign_subagent_role

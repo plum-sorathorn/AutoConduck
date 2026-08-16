@@ -16,18 +16,17 @@ SUPERVISOR_MAX_BACKOFF = _server._impl.SUPERVISOR_MAX_BACKOFF
 
 def _build():
     global app
-    if app is None:
-        _server._impl.app = None
+    _server._impl.app = None
     result = _server._build()
-    app = _server.app
+    app = _server.app or _server._impl.app
     globals().update(_server._impl._cached)
     return result
 
 
 def _get_app():
-    result = _server._get_app()
     global app
-    app = result
+    result = _server._get_app()
+    app = _server.app or _server._impl.app
     globals().update(_server._impl._cached)
     return result
 
@@ -54,6 +53,8 @@ def cmd_start(args):
     for name in ("load_config", "home_dir", "_check_port_available", "subprocess", "sys", "time"):
         if name in globals():
             setattr(_cli, name, globals()[name])
+            if hasattr(_cli, "cli"):
+                setattr(_cli.cli, name, globals()[name])
     return _cli.cmd_start(args)
 
 
@@ -68,4 +69,6 @@ def main(argv=None):
     ):
         if name in globals():
             setattr(_cli, name, globals()[name])
+            if hasattr(_cli, "cli"):
+                setattr(_cli.cli, name, globals()[name])
     return _cli.main(argv)

@@ -63,7 +63,7 @@ async def _call(client: Any, model: str, messages: list[dict[str, str]]) -> str:
     import asyncio
     from typing import Any as TypingAny
     from autoconduck.config import get_config
-    from autoconduck.messages_api import normalize_messages_for_llm, litellm_params_for
+    from autoconduck.server.messages_api import normalize_messages_for_llm, litellm_params_for
 
     messages = normalize_messages_for_llm(messages)
     cfg = get_config()
@@ -112,7 +112,7 @@ async def run(
         import time
         import logging
         from autoconduck.config import get_config
-        from autoconduck.messages_api import normalize_messages_for_llm
+        from autoconduck.server.messages_api import normalize_messages_for_llm
         from autoconduck import stats
         log = logging.getLogger("autoconduck.orchestrator")
 

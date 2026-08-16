@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .config import ModelEntry
+from autoconduck.config import ModelEntry
 from .presets_data import *
 from . import presets_ingest as _ingest_module
 from .presets_ingest import (

@@ -5,31 +5,33 @@ import ctypes, errno, os, re, signal, subprocess, sys, tempfile, time
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.request import urlopen
-from . import config
+from autoconduck import config
 from .launcher_procs import (
     _parse_netstat_output, _parse_lsof_output, _parse_ss_output,
     find_process_on_port, kill_process, prompt_kill_port, _pid_alive,
     _pid_alive_windows, _create_kill_on_close_job, _clear_dead_owner_claim, _read_pid,
 )
 
+def _pkg():
+    return sys.modules.get("autoconduck.launcher") or sys.modules.get(__name__)
+
 
 @contextmanager
 def _claims_lock():
     """Serialize claims read-modify-writes across shim processes."""
-    lock_path = _run_dir() / "server.claims.lock"
+    mod = _pkg()
+    run_dir_fn = getattr(mod, "_run_dir", _run_dir)
+    lock_path = run_dir_fn() / "server.claims.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+b") as stream:
-        # Append while unlocked: byte zero may be locked by another process,
-        # while appends are always made outside that lock region.  The lock
-        # file is deliberately never replaced (the claims file is).
         stream.seek(0, os.SEEK_END)
         if stream.tell() == 0:
             stream.write(b"\0")
             stream.flush()
         stream.seek(0)
-        if os.name == "nt":
+        os_mod = getattr(mod, "os", os)
+        if os_mod.name == "nt":
             import msvcrt
-
             deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline:
                 try:
@@ -43,12 +45,11 @@ def _claims_lock():
                 raise TimeoutError(f"timed out acquiring claims lock: {lock_path}")
         else:
             import fcntl
-
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
         try:
             yield
         finally:
-            if os.name == "nt":
+            if os_mod.name == "nt":
                 stream.seek(0)
                 msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
             else:
@@ -56,38 +57,57 @@ def _claims_lock():
 
 
 def shims_dir() -> Path:
-    return config.home_dir() / "bin"
+    mod = _pkg()
+    cfg = getattr(mod, "config", config)
+    return cfg.home_dir() / "bin"
 
 
 def _run_dir() -> Path:
-    return config.run_dir()
+    mod = _pkg()
+    cfg = getattr(mod, "config", config)
+    return cfg.run_dir()
 
 
 def _files():
+    mod = _pkg()
+    files_fn = getattr(mod, "_files", None)
+    if files_fn and files_fn is not _files:
+        return files_fn()
+    run_dir_fn = getattr(mod, "_run_dir", _run_dir)
+    d = run_dir_fn()
     return (
-        _run_dir() / "server.pid",
-        _run_dir() / "server.claims",
-        _run_dir() / "server.log",
+        d / "server.pid",
+        d / "server.claims",
+        d / "server.log",
     )
 
 
 def _port(port):
-    return port or config.get_config().port
+    mod = _pkg()
+    cfg = getattr(mod, "config", config)
+    return port or cfg.get_config().port
 
 
 def daemon_python() -> str:
     """Use the windowless Windows interpreter when it is available."""
-    if os.name == "nt" and sys.executable.lower().endswith("python.exe"):
-        pythonw = Path(sys.executable).with_name("pythonw.exe")
+    mod = _pkg()
+    os_mod = getattr(mod, "os", os)
+    sys_mod = getattr(mod, "sys", sys)
+    path_cls = getattr(mod, "Path", Path)
+    if os_mod.name == "nt" and sys_mod.executable.lower().endswith("python.exe"):
+        pythonw = path_cls(sys_mod.executable).with_name("pythonw.exe")
         if pythonw.exists():
             return str(pythonw)
-    return sys.executable
+    return sys_mod.executable
 
 
 def server_alive(port=None, timeout=0.5) -> bool:
+    mod = _pkg()
+    urlopen_fn = getattr(mod, "urlopen", urlopen)
+    port_fn = getattr(mod, "_port", _port)
     try:
-        with urlopen(
-            f"http://127.0.0.1:{_port(port)}/healthz", timeout=timeout
+        with urlopen_fn(
+            f"http://127.0.0.1:{port_fn(port)}/healthz", timeout=timeout
         ) as response:
             return response.status == 200
     except Exception:
@@ -98,27 +118,20 @@ def _parse_netstat_output(text: str, port: int | None = None) -> int | None:
     for line in text.splitlines():
         fields = line.split()
         if len(fields) >= 5 and fields[0].upper() == "TCP":
-            local = fields[1].rsplit(":", 1)
-            if (
-                len(local) == 2
-                and fields[3].upper() == "LISTENING"
-                and (port is None or local[1] == str(port))
-            ):
-                try:
-                    return int(fields[4])
-                except ValueError:
-                    pass
+            local_addr = fields[1]
+            state = fields[3]
+            pid_str = fields[4]
+            if state.upper() == "LISTENING" and pid_str.isdigit():
+                if port is None or local_addr.endswith(f":{port}"):
+                    return int(pid_str)
     return None
 
 
 def _parse_lsof_output(text: str) -> int | None:
-    for line in text.splitlines()[1:]:
+    for line in text.splitlines():
         fields = line.split()
-        if len(fields) >= 2:
-            try:
-                return int(fields[1])
-            except ValueError:
-                pass
+        if len(fields) >= 2 and fields[1].isdigit():
+            return int(fields[1])
     return None
 
 
@@ -127,35 +140,32 @@ def _parse_ss_output(text: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-
-def _write_claim(owned, owner=False, pid=None):
-    _, claims, _ = _files()
+def _write_claim(is_owner: bool = False, owner: bool | None = None, pid: int | None = None) -> None:
+    mod = _pkg()
+    files_fn = getattr(mod, "_files", _files)
+    claims_lock_ctx = getattr(mod, "_claims_lock", _claims_lock)
+    os_mod = getattr(mod, "os", os)
+    _, claims, _ = files_fn()
     claims.parent.mkdir(parents=True, exist_ok=True)
-    with _claims_lock():
-        try:
-            lines = claims.read_text().splitlines() if claims.exists() else []
-        except OSError:
-            lines = []
-        lines.append(
-            f"{os.getpid() if pid is None else pid} {'owner' if owner else (1 if owned else 0)}"
-        )
-        fd, name = tempfile.mkstemp(dir=claims.parent, prefix="claims.")
-        try:
-            with os.fdopen(fd, "w") as f:
-                f.write("\n".join(lines) + "\n")
-            os.replace(name, claims)
-        finally:
-            try:
-                os.unlink(name)
-            except OSError:
-                pass
+    target_pid = pid if pid is not None else os_mod.getpid()
+    actual_owner = is_owner if owner is None else owner
+    tag = "owner" if actual_owner else "0"
+    with claims_lock_ctx():
+        with claims.open("a", encoding="utf-8") as stream:
+            stream.write(f"{target_pid} {tag}\n")
 
 
-def _start_daemon(port):
-    pid, _, log = _files()
-    log.parent.mkdir(parents=True, exist_ok=True)
+def _start_daemon(port: int, extra_flags: list[str] | None = None) -> int:
+    mod = _pkg()
+    files_fn = getattr(mod, "_files", _files)
+    daemon_fn = getattr(mod, "daemon_python", daemon_python)
+    subproc_mod = getattr(mod, "subprocess", subprocess)
+    os_mod = getattr(mod, "os", os)
+    pid, claims, log = files_fn()
+    pid.parent.mkdir(parents=True, exist_ok=True)
+    flags = [flag for flag in (extra_flags or []) if flag != "--daemon"]
     command = [
-        daemon_python(),
+        daemon_fn(),
         "-m",
         "autoconduck",
         "start",
@@ -163,23 +173,19 @@ def _start_daemon(port):
         "--supervisor",
         "--port",
         str(port),
+        *flags,
     ]
     with log.open("ab") as stream:
-        if os.name == "nt":
-            flags = (
-                subprocess.DETACHED_PROCESS
-                | subprocess.CREATE_NEW_PROCESS_GROUP
-                | subprocess.CREATE_NO_WINDOW
-            )
-            child = subprocess.Popen(
+        if os_mod.name == "nt":
+            child = subproc_mod.Popen(
                 command,
                 stdout=stream,
                 stderr=stream,
-                creationflags=flags,
-                close_fds=True,
+                creationflags=getattr(subproc_mod, "CREATE_NO_WINDOW", 0x08000000)
+                | getattr(subproc_mod, "DETACHED_PROCESS", 0x00000008),
             )
         else:
-            child = subprocess.Popen(
+            child = subproc_mod.Popen(
                 command, stdout=stream, stderr=stream, start_new_session=True
             )
     pid.write_text(str(child.pid))
@@ -187,34 +193,40 @@ def _start_daemon(port):
 
 
 def kill_existing_on_port(port: int) -> None:
-    """Forcefully kill any process listening on *port*.
-
-    This is called by ``cmd_launch_agent`` so every --claude launch gets a
-    fresh server process instead of reusing stale ones.
-    """
-    pid = find_process_on_port(port)
+    mod = _pkg()
+    find_proc_fn = getattr(mod, "find_process_on_port", find_process_on_port)
+    kill_fn = getattr(mod, "kill_process", kill_process)
+    pid = find_proc_fn(port)
     if pid is not None:
-        kill_process(pid)
-        time.sleep(0.3)  # brief grace period for OS to release the socket
+        kill_fn(pid)
+        time.sleep(0.3)
 
 
 def ensure_server(port=None) -> bool:
-    port = _port(port)
-    pid, _, _ = _files()
-    _clear_dead_owner_claim()
-    if server_alive(port):
-        _write_claim(False)
+    mod = _pkg()
+    port_fn = getattr(mod, "_port", _port)
+    port = port_fn(port)
+    files_fn = getattr(mod, "_files", _files)
+    pid, _, _ = files_fn()
+    clear_dead_fn = getattr(mod, "_clear_dead_owner_claim", _clear_dead_owner_claim)
+    clear_dead_fn()
+    alive_fn = getattr(mod, "server_alive", server_alive)
+    if alive_fn(port):
+        write_claim_fn = getattr(mod, "_write_claim", _write_claim)
+        write_claim_fn(False)
         return False
-    existing_pid = find_process_on_port(port)
+    find_proc_fn = getattr(mod, "find_process_on_port", find_process_on_port)
+    existing_pid = find_proc_fn(port)
     if existing_pid is not None:
-        if not prompt_kill_port(port, existing_pid) or not kill_process(existing_pid):
+        prompt_fn = getattr(mod, "prompt_kill_port", prompt_kill_port)
+        kill_fn = getattr(mod, "kill_process", kill_process)
+        if not prompt_fn(port, existing_pid) or not kill_fn(existing_pid):
             return False
     try:
-        _start_daemon(port)
+        start_daemon_fn = getattr(mod, "_start_daemon", _start_daemon)
+        start_daemon_fn(port)
     except OSError:
         return False
-    # Exponential-backoff polling avoids hammering the health endpoint while
-    # allowing the first LiteLLM import to use the full cold-start budget.
     try:
         ready_budget = max(
             30.0, float(os.environ.get("AUTOCONDUCK_READY_TIMEOUT", "60.0"))
@@ -224,8 +236,9 @@ def ensure_server(port=None) -> bool:
     deadline = time.monotonic() + ready_budget
     attempt = 0
     while time.monotonic() < deadline:
-        if server_alive(port, timeout=min(0.5, max(0.01, deadline - time.monotonic()))):
-            _write_claim(True)
+        if alive_fn(port, timeout=min(0.5, max(0.01, deadline - time.monotonic()))):
+            write_claim_fn = getattr(mod, "_write_claim", _write_claim)
+            write_claim_fn(True)
             return True
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -239,10 +252,12 @@ def ensure_server(port=None) -> bool:
     return False
 
 
-
 def stop_server(port=None) -> bool:
-    pidfile, claims, _ = _files()
-    pid = _read_pid()
+    mod = _pkg()
+    files_fn = getattr(mod, "_files", _files)
+    pidfile, claims, _ = files_fn()
+    read_pid_fn = getattr(mod, "_read_pid", _read_pid)
+    pid = read_pid_fn()
     if pid is None:
         return False
     child_path = pidfile.parent / "child.pid"
@@ -250,43 +265,46 @@ def stop_server(port=None) -> bool:
         child_pid = int(child_path.read_text().strip())
     except (OSError, ValueError):
         child_pid = None
-    if child_pid is not None and _pid_alive(child_pid):
+    pid_alive_fn = getattr(mod, "_pid_alive", _pid_alive)
+    os_mod = getattr(mod, "os", os)
+    subproc_mod = getattr(mod, "subprocess", subprocess)
+    if child_pid is not None and pid_alive_fn(child_pid):
         try:
-            if os.name == "nt":
-                subprocess.run(
+            if os_mod.name == "nt":
+                subproc_mod.run(
                     ["taskkill", "/PID", str(child_pid), "/F"],
                     check=False,
                     capture_output=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    creationflags=getattr(subproc_mod, "CREATE_NO_WINDOW", 0x08000000),
                 )
             else:
-                os.kill(child_pid, signal.SIGTERM)
+                os_mod.kill(child_pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError, OSError):
             pass
     try:
-        if os.name == "nt":
-            subprocess.run(
+        if os_mod.name == "nt":
+            subproc_mod.run(
                 ["taskkill", "/PID", str(pid), "/T", "/F"],
                 check=False,
                 capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=getattr(subproc_mod, "CREATE_NO_WINDOW", 0x08000000),
             )
         else:
-            killpg = getattr(os, "killpg", None)
+            killpg = getattr(os_mod, "killpg", None)
             if killpg is not None:
                 killpg(pid, signal.SIGTERM)
             else:
-                os.kill(pid, signal.SIGTERM)
+                os_mod.kill(pid, signal.SIGTERM)
     except (ProcessLookupError, PermissionError, OSError):
         pass
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline and (
-        _pid_alive(pid) or (child_pid is not None and _pid_alive(child_pid))
+        pid_alive_fn(pid) or (child_pid is not None and pid_alive_fn(child_pid))
     ):
         time.sleep(0.05)
-    if child_pid is not None and _pid_alive(child_pid) and os.name != "nt":
+    if child_pid is not None and pid_alive_fn(child_pid) and os_mod.name != "nt":
         try:
-            os.kill(child_pid, signal.SIGKILL)
+            os_mod.kill(child_pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
             pass
     for path in (pidfile, claims, child_path):
@@ -298,8 +316,13 @@ def stop_server(port=None) -> bool:
 
 
 def release_server(port=None) -> None:
-    pidfile, claims, _ = _files()
-    with _claims_lock():
+    mod = _pkg()
+    files_fn = getattr(mod, "_files", _files)
+    pidfile, claims, _ = files_fn()
+    claims_lock_ctx = getattr(mod, "_claims_lock", _claims_lock)
+    os_mod = getattr(mod, "os", os)
+    stop_server_fn = getattr(mod, "stop_server", stop_server)
+    with claims_lock_ctx():
         try:
             lines = claims.read_text().splitlines()
         except OSError:
@@ -311,7 +334,7 @@ def release_server(port=None) -> None:
             if (
                 not removed
                 and fields
-                and fields[0] == str(os.getpid())
+                and fields[0] == str(os_mod.getpid())
                 and len(fields) > 1
                 and fields[1] != "owner"
             ):
@@ -333,8 +356,7 @@ def release_server(port=None) -> None:
             except OSError:
                 pass
         if not has_active_clients and not has_owner:
-            stop_server(port)
-
+            stop_server_fn(port)
 
 
 from .launcher_shims import (

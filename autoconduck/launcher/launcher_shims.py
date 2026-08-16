@@ -2,15 +2,15 @@
 from __future__ import annotations
 import os, re, shutil, sys
 from pathlib import Path
-from . import config
+from autoconduck import config
 
 def _shims_dir() -> Path:
     # Resolve through the facade so existing monkeypatch targets keep working.
-    from . import launcher
+    from autoconduck import launcher
     return launcher.shims_dir()
 
 def _adapter(agent_id):
-    from .agents import all_adapters
+    from autoconduck.agents import all_adapters
 
     return next((a for a in all_adapters() if a.id == agent_id), None)
 

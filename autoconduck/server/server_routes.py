@@ -18,8 +18,8 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
     if normalize_messages_for_llm is None:
         from .messages_api import normalize_messages_for_llm
     from fastapi import FastAPI
-    from .config import get_config
-    from .stats import aggregate, load_records, record
+    from autoconduck.config import get_config
+    from autoconduck.stats import aggregate, load_records, record
 
     class CompletionRequest(BaseModel):
         model: str
@@ -74,7 +74,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
         target, path = body_model, "direct"
         if body_model in PSEUDO_MODELS:
             try:
-                from .routing.dispatcher import route
+                from autoconduck.routing.dispatcher import route
 
                 history = decisions[-5:] if decisions else []
                 decision = route(messages, history, pseudo_model=body_model, config=cfg)
@@ -100,7 +100,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
             logging.getLogger("autoconduck").info("route=%s model=%s ms=%.1f", path, model or body_model, (time.perf_counter() - started) * 1000)
             if path == "SLOW" and not (request is not None and await request.is_disconnected()):
                 try:
-                    from .orchestrator import run
+                    from autoconduck.orchestrator import run
                     result = await run(messages, [], pseudo_model=body_model,
                                        task_value=float(getattr(decision, "complexity", .5)), request=request,
                                        on_progress=on_progress, client_type=client_type)
@@ -115,8 +115,8 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                     logging.getLogger("autoconduck").warning("Orchestrator execution failed: %s", exc)
             if not model:
                 try:
-                    from .routing.pricing import pool_ids, select_closest
-                    from .config import resolve_orchestrator_model
+                    from autoconduck.routing.pricing import pool_ids, select_closest
+                    from autoconduck.config import resolve_orchestrator_model
                     selected = select_closest(pool_ids(cfg), .15, cfg, pseudo_model=body_model)
                     model = selected or resolve_orchestrator_model(cfg)
                     if not selected:
@@ -125,7 +125,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                             model,
                         )
                 except Exception:
-                    from .config import resolve_orchestrator_model
+                    from autoconduck.config import resolve_orchestrator_model
                     model = resolve_orchestrator_model(cfg)
             if not model:
                 logging.getLogger("autoconduck").warning("No model available for request")
@@ -212,7 +212,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                                 label = labels.get(node, node)
                                 delta_text = f"[{label}] {detail}\n"
                             else:
-                                from .progress import ProgressFormatter
+                                from autoconduck.progress import ProgressFormatter
                                 formatted = ProgressFormatter(cfg).format(event)
                                 node = getattr(event, "name", "progress")
                                 if not formatted:
@@ -313,7 +313,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                     "choices": [{"message": msg, "finish_reason": finish_reason}]}
         messages = normalize_messages_for_llm(body.messages)
         if extra.get("_path") == "FAST":
-            from .digest import maybe_digest_messages
+            from autoconduck.digest import maybe_digest_messages
             digest = await maybe_digest_messages(messages, get_config(), request=request)
             if digest:
                 messages = messages + digest
@@ -397,7 +397,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                 },
             })
         if extra.get("_path") == "FAST":
-            from .digest import maybe_digest_messages
+            from autoconduck.digest import maybe_digest_messages
             digest = await maybe_digest_messages(oai_messages, get_config(), request=request)
             if digest:
                 oai_messages = oai_messages + digest

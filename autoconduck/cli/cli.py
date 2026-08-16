@@ -5,12 +5,12 @@ from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Any
-from . import config
-from .config import get_config, load_config, save_config, home_dir
+from autoconduck import config
+from autoconduck.config import get_config, load_config, save_config, home_dir
 # ---------- Lightweight modules always imported -------------------------------------------
 # Heavy deps (fastapi, pydantic-core, litellm, textual, uvicorn) are deferred until a
 # server/CLI command actually needs them.
-from .server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
+from autoconduck.server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
 from .cli_launch import cmd_launch_agent, cmd_install, cmd_tune, _open_new_terminal
 
 def cmd_start(args):
@@ -23,12 +23,13 @@ def cmd_start(args):
         print("--claude, --opencode, and --pi cannot be used together", file=sys.stderr)
         raise SystemExit(2)
     new_terminal = getattr(args, "new_terminal", None)
+    launch_fn = getattr(sys.modules.get(__name__), "cmd_launch_agent", cmd_launch_agent)
     if getattr(args, "claude", False):
-        raise SystemExit(cmd_launch_agent("claude_code", new_terminal=new_terminal))
+        raise SystemExit(launch_fn("claude_code", new_terminal=new_terminal))
     if getattr(args, "opencode", False):
-        raise SystemExit(cmd_launch_agent("opencode", new_terminal=new_terminal))
+        raise SystemExit(launch_fn("opencode", new_terminal=new_terminal))
     if getattr(args, "pi", False):
-        raise SystemExit(cmd_launch_agent("pi", new_terminal=new_terminal))
+        raise SystemExit(launch_fn("pi", new_terminal=new_terminal))
     cfg = load_config()
     port = args.port or cfg.port or DEFAULT_PORT
     # Agent configuration and shim installation are intentionally opt-in.  They
@@ -39,7 +40,7 @@ def cmd_start(args):
             _check_port_available(port)
             log = home_dir() / "run" / "server.log"
             log.parent.mkdir(parents=True, exist_ok=True)
-            from .launcher import daemon_python
+            from autoconduck.launcher import daemon_python
             cmd = [
                 daemon_python(),
                 "-m",
@@ -70,7 +71,7 @@ def cmd_start(args):
                     creationflags=flags,
                     close_fds=True,
                 )
-            from . import launcher
+            from autoconduck import launcher
             # Cold starts can include the one-time LiteLLM registry import.
             # Keep the historical 30s floor while allowing slower machines a
             # useful budget instead of reporting a misleading timeout.
@@ -129,7 +130,7 @@ def cmd_start(args):
     else:
         _check_port_available(port)
         try:
-            from .tui.app import AutoConduckApp
+            from autoconduck.tui.app import AutoConduckApp
             is_configured = bool(
                 any(
                     isinstance(e, dict) and e.get("enabled", True)
@@ -148,7 +149,7 @@ def cmd_start(args):
                 port, cfg.log_level, args.host
             ) if args.host != "127.0.0.1" else _run_proxy(port, cfg.log_level)
 def cmd_edit(args):
-    from .tui.app import AutoConduckApp
+    from autoconduck.tui.app import AutoConduckApp
     cfg = load_config()
     is_configured = bool(
         any(
@@ -165,8 +166,8 @@ def cmd_reset(args):
     ).lower() not in ("y", "yes"):
         return
     cfg = load_config()
-    from .agents import all_adapters
-    from . import launcher, update
+    from autoconduck.agents import all_adapters
+    from autoconduck import launcher, update
     try:
         launcher.stop_server(getattr(cfg, "port", None) or DEFAULT_PORT)
     except Exception as exc:
@@ -212,7 +213,7 @@ def _run_detached_self_destruct(command_args, cwd=None):
         os.execvp(command_args[0], command_args)
 def cmd_uninstall(args):
     cmd_reset(args)
-    from . import update, launcher
+    from autoconduck import update, launcher
     cfg = load_config()
     port = getattr(cfg, "port", None) or DEFAULT_PORT
     try:
@@ -243,7 +244,7 @@ def purge_home_dir(home: Path) -> None:
     except OSError as exc:
         print(f"error: could not purge home directory: {exc}")
 def cmd_update(args):
-    from . import __version__, update, launcher
+    from autoconduck import __version__, update, launcher
     method = update.detect_install_method()
     command = update.upgrade_command(method)
     print(f"Current version: {__version__}")
@@ -282,18 +283,18 @@ def cmd_update(args):
     else:
         print(f"Upgrade finished with exit code {res.returncode}.")
 def cmd_ensure(args):
-    from . import launcher
+    from autoconduck import launcher
     launcher.ensure_server(args.port)
 def cmd_release(args):
-    from . import launcher
+    from autoconduck import launcher
     launcher.release_server(args.port)
 def cmd_stop(args):
-    from . import launcher
+    from autoconduck import launcher
     launcher.stop_server(args.port)
-    from .agents.claude_code import ClaudeCodeAdapter
+    from autoconduck.agents.claude_code import ClaudeCodeAdapter
     ClaudeCodeAdapter().revert()
 def cmd_stats(args):
-    from . import stats
+    from autoconduck import stats
     records = stats.load_records()
     if args.days is not None:
         cutoff = time.time() - args.days * 86400
@@ -373,7 +374,7 @@ def main(argv: list[str] | None = None):
     try:
         args = parser.parse_args(argv)
         if args.version:
-            from . import __version__
+            from autoconduck import __version__
             print(__version__)
         elif args.cmd == "start":
             cmd_start(args)
@@ -389,5 +390,5 @@ def main(argv: list[str] | None = None):
             cmd_start(argparse.Namespace(headless=False, port=None, host="127.0.0.1"))
     except (KeyboardInterrupt, asyncio.CancelledError):
         return 0
-from .server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
+from autoconduck.server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
 from .cli_launch import cmd_launch_agent, cmd_install, cmd_tune, _open_new_terminal

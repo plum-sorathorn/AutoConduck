@@ -110,7 +110,7 @@ async def run_executor_tool_loop(
     """
 
     async def _dispatch(msgs, *, with_tools: bool):
-        from autoconduck.messages_api import litellm_params_for
+        from autoconduck.server.messages_api import litellm_params_for
 
         params = litellm_params_for(model, cfg)
         params["_path"] = "orchestrator-executor"
