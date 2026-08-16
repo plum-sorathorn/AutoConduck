@@ -123,9 +123,9 @@ if _TEXTUAL:
             for i, (key, title, desc) in enumerate(self.MENU_ITEMS):
                 mark = ">> " if i == self.cursor else "   "
                 if i == self.cursor:
-                    row = f"{mark}[{key}] [bold cyan]{title}[/bold cyan]  [dim]{desc}[/dim]"
+                    row = f"{mark}\\[{key}] [bold cyan]{title}[/bold cyan]  [dim]{desc}[/dim]"
                 else:
-                    row = f"{mark}[{key}] [bold]{title}[/bold]  [dim]{desc}[/dim]"
+                    row = f"{mark}\\[{key}] [bold]{title}[/bold]  [dim]{desc}[/dim]"
                 lines.append(row)
             return "\n".join(lines)
 

@@ -16,6 +16,9 @@ log = logging.getLogger("autoconduck")
 
 
 def auth_path() -> Path:
+    structured = home_dir() / "auth" / "auth.yaml"
+    if structured.exists():
+        return structured
     return home_dir() / "auth.yaml"
 
 

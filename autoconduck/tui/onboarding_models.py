@@ -43,17 +43,36 @@ def overrides_for_toggle(key: str, models: list[dict[str, Any]], enabled: set[st
             continue
         fresh = dict(model)
         old = stored.get(model["id"], {})
-        for field in ("api_key", "api_key_env"):
+        for field in ("api_key", "api_key_env", "base_url", "anthropic_base_url"):
             if field in old:
                 fresh[field] = old[field]
+        fresh["enabled"] = True
         result.append(fresh)
     return result
 
 
-def default_enabled_ids(models: list[dict[str, Any]], existing_overrides: list[dict[str, Any]] | None = None) -> set[str]:
+def default_enabled_ids(
+    models: list[dict[str, Any]],
+    existing_overrides: list[dict[str, Any]] | None = None,
+    model_list: list[dict[str, Any]] | None = None,
+) -> set[str]:
     model_ids = {model["id"] for model in models}
     if existing_overrides:
-        return {row["id"] for row in existing_overrides if row.get("id") in model_ids}
+        selected = {
+            row["id"]
+            for row in existing_overrides
+            if row.get("id") in model_ids and row.get("enabled", True) is not False
+        }
+        if selected:
+            return selected
+    if model_list:
+        selected = {
+            row["id"]
+            for row in model_list
+            if row.get("id") in model_ids and row.get("enabled", True) is not False
+        }
+        if selected:
+            return selected
     return model_ids if len(models) <= 6 else set()
 
 def upsert_custom_models(existing: list[dict[str, Any]], provider: str, base_url: str, api_key_env: str, model_ids: list[str], anthropic_base_url: str = "") -> list[dict[str, Any]]:

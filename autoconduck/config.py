@@ -340,12 +340,24 @@ def home_dir() -> Path:
     return Path(os.environ.get("AUTOCONDUCK_HOME", Path.home() / ".autoconduck"))
 
 
+def config_path(path=None) -> Path:
+    if path:
+        return Path(path)
+    structured = home_dir() / "config" / "config.yaml"
+    if structured.exists():
+        return structured
+    return home_dir() / "config.yaml"
+
+
 def backups_dir(agent: str | None = None) -> Path:
     path = home_dir() / "backups"
     return path / agent if agent else path
 
 
 def logs_path() -> Path:
+    structured = home_dir() / "logs" / "autoconduck.log"
+    if structured.exists() or (home_dir() / "logs").exists():
+        return structured
     return home_dir() / "autoconduck.log"
 
 
@@ -354,7 +366,7 @@ def run_dir() -> Path:
 
 
 def load_config(path=None) -> Config:
-    p = Path(path) if path else home_dir() / "config.yaml"
+    p = config_path(path)
     data = {}
     if p.exists():
         data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
@@ -403,7 +415,7 @@ _config_path = None
 
 def get_config() -> Config:
     global _config, _config_digest, _config_path
-    path = (home_dir() / "config.yaml").resolve()
+    path = config_path().resolve()
     try:
         digest = path.read_bytes()
     except FileNotFoundError:
@@ -417,7 +429,7 @@ def get_config() -> Config:
 
 def save_config(cfg, path=None):
     global _config, _config_digest, _config_path
-    p = Path(path) if path else home_dir() / "config.yaml"
+    p = config_path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     data = cfg.model_dump()
     _normalize_model_entries(data)
@@ -439,7 +451,7 @@ def save_config(cfg, path=None):
 
 def backup_config(path=None) -> Path | None:
     """Make a plain, timestamped backup of config.yaml before managed edits."""
-    source = Path(path) if path else home_dir() / "config.yaml"
+    source = config_path(path)
     if not source.exists():
         return None
     import shutil

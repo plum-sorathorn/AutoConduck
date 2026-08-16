@@ -137,7 +137,9 @@ if _TEXTUAL:
             self._error = None
             cfg = get_config()
             self.enabled = default_enabled_ids(
-                self.models, cfg.preset_overrides.get(self.key)
+                self.models,
+                cfg.preset_overrides.get(self.key),
+                model_list=getattr(cfg, "model_list", None),
             )
 
         def compose(self):

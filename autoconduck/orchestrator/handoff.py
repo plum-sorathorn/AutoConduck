@@ -208,6 +208,11 @@ def format_execution_handoff(
     sections.append(f"## Implementation Plan & Verified Context\n\n{summary_header}")
 
     subtasks = plan.subtasks if plan and plan.subtasks else []
+    if is_pi and has_subagents and not subtasks:
+        from .planner import SubTask
+        goal = summary_header if summary_header and summary_header != "Multi-agent task analysis completed." else "Execute implementation plan"
+        subtasks = [SubTask(id="task_1", goal=goal, scope=[], constraints=[])]
+
     if subtasks:
         sections.append("### Subtask Breakdown")
         for i, st in enumerate(subtasks, 1):
@@ -237,7 +242,12 @@ def format_execution_handoff(
         sections.append(f"### Key Findings & Architecture\n\n{compacted}")
 
     tool_call = (
-        build_subagent_tool_call(plan, subagent_outputs, user_agent=user_agent, client_type=client_type)
+        build_subagent_tool_call(
+            type("PlanWrapper", (), {"subtasks": subtasks, "summary": summary_header})(),
+            subagent_outputs,
+            user_agent=user_agent,
+            client_type=client_type,
+        )
         if (is_pi and has_subagents and subtasks)
         else None
     )
