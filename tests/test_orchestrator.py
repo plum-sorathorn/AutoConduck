@@ -240,6 +240,14 @@ def test_format_execution_handoff_with_subagents():
         assert "#### 2. `t2`: Update API endpoint" in res
         assert "auth.py:25 has get_provider_key." in res
         assert "pi-subagents" in res
+        assert res.tool_calls is not None
+        assert len(res.tool_calls) == 1
+        assert res.tool_calls[0]["function"]["name"] == "subagent"
+        args = json.loads(res.tool_calls[0]["function"]["arguments"])
+        assert "workflowScript" in args
+        assert "runs.all" in args["workflowScript"] or "runs.run" in args["workflowScript"]
+        assert "worker" in args["workflowScript"]
+        assert "pytest" in args["workflowScript"]
 
 
 def test_format_execution_handoff_linear_fallback_warning():

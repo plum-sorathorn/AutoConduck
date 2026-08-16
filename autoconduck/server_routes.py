@@ -105,7 +105,12 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                                        task_value=float(getattr(decision, "complexity", .5)), request=request,
                                        on_progress=on_progress)
                     if result is not None:
-                        return None, {"__answer__": result, "_path": path, "_pseudo": body_model}
+                        tool_calls = getattr(result, "tool_calls", None) or (result.get("tool_calls") if isinstance(result, dict) else None)
+                        content = str(result) if not isinstance(result, dict) else result.get("content", str(result))
+                        ans: dict[str, Any] = {"content": content}
+                        if tool_calls:
+                            ans["tool_calls"] = tool_calls
+                        return None, {"__answer__": ans, "_path": path, "_pseudo": body_model}
                 except Exception as exc:
                     logging.getLogger("autoconduck").warning("Orchestrator execution failed: %s", exc)
             if not model:
@@ -222,12 +227,21 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                         target, extra = await task
                     answer = extra.get("__answer__") if extra else None
                     if answer is not None:
+                        content = answer.get("content", "") if isinstance(answer, dict) else str(answer)
+                        tool_calls = answer.get("tool_calls") if isinstance(answer, dict) else getattr(answer, "tool_calls", None)
+                        finish_reason = "tool_calls" if tool_calls else "stop"
+                        created = int(time.time())
+                        delta = {"role": "assistant"}
+                        if content:
+                            delta["content"] = content
+                        if tool_calls:
+                            delta["tool_calls"] = tool_calls
                         yield "data: " + json.dumps({"id": "autoconduck", "object": "chat.completion.chunk",
-                            "created": int(time.time()), "model": target or body.model,
-                            "choices": [{"index": 0, "delta": {"content": answer}, "finish_reason": None}]}) + "\n\n"
+                            "created": created, "model": target or body.model,
+                            "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}) + "\n\n"
                         yield "data: " + json.dumps({"id": "autoconduck", "object": "chat.completion.chunk",
-                            "created": int(time.time()), "model": target or body.model,
-                            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}) + "\n\n"
+                            "created": created, "model": target or body.model,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}]}) + "\n\n"
                         yield "data: [DONE]\n\n"
                     else:
                         # FAST (or an orchestrator fallback): relay the normal provider stream.
@@ -264,14 +278,20 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
         if answer is not None:
             record(extra.get("_path", "SLOW"), extra.get("_pseudo", body.model), target or "unknown", 0, 0)
             created = int(time.time())
+            content = answer.get("content", "") if isinstance(answer, dict) else str(answer)
+            tool_calls = answer.get("tool_calls") if isinstance(answer, dict) else getattr(answer, "tool_calls", None)
+            finish_reason = "tool_calls" if tool_calls else "stop"
+            msg: dict[str, Any] = {"role": "assistant", "content": content}
+            if tool_calls:
+                msg["tool_calls"] = tool_calls
             if body.stream:
                 async def answer_stream():
                     yield "data: " + json.dumps({"id": "autoconduck", "object": "chat.completion.chunk", "created": created,
-                        "model": target or body.model, "choices": [{"index": 0, "delta": {"role": "assistant", "content": answer}, "finish_reason": "stop"}]}) + "\n\n"
+                        "model": target or body.model, "choices": [{"index": 0, "delta": msg, "finish_reason": finish_reason}]}) + "\n\n"
                     yield "data: [DONE]\n\n"
                 return StreamingResponse(answer_stream(), media_type="text/event-stream")
             return {"id": "autoconduck", "object": "chat.completion", "created": created, "model": target or body.model,
-                    "choices": [{"message": {"role": "assistant", "content": answer}}]}
+                    "choices": [{"message": msg, "finish_reason": finish_reason}]}
         messages = normalize_messages_for_llm(body.messages)
         if extra.get("_path") == "FAST":
             from .digest import maybe_digest_messages
@@ -307,13 +327,45 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
         except Exception as exc: return JSONResponse({"type": "error", "error": {"type": "api_error", "message": str(exc)}}, status_code=500)
         answer = extra.get("__answer__")
         if answer is not None:
+            content = answer.get("content", "") if isinstance(answer, dict) else str(answer)
+            tool_calls = answer.get("tool_calls") if isinstance(answer, dict) else getattr(answer, "tool_calls", None)
             if body.stream:
                 async def answer_stream():
                     translator = AnthropicSSETranslator(target or body.model, input_text=json.dumps(oai_messages))
                     for ev in translator._ensure_message_start(): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
-                    for ev in translator.translate({"choices": [{"delta": {"role": "assistant", "content": answer}, "finish_reason": "stop"}]}): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
+                    delta: dict[str, Any] = {"role": "assistant", "content": content}
+                    if tool_calls: delta["tool_calls"] = tool_calls
+                    for ev in translator.translate({"choices": [{"delta": delta, "finish_reason": "tool_calls" if tool_calls else "stop"}]}): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                 return StreamingResponse(answer_stream(), media_type="text/event-stream")
-            return JSONResponse(anthropic_response_text(answer, target or body.model, input_text=json.dumps(oai_messages)))
+            if not tool_calls:
+                return JSONResponse(anthropic_response_text(content, target or body.model, input_text=json.dumps(oai_messages)))
+            import uuid
+            content_blocks: list[dict[str, Any]] = []
+            if content:
+                content_blocks.append({"type": "text", "text": content})
+            for tc in tool_calls:
+                fn = tc.get("function") or {}
+                raw_args = fn.get("arguments", "{}")
+                parsed_args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+                content_blocks.append({
+                    "type": "tool_use",
+                    "id": tc.get("id") or ("toolu_" + uuid.uuid4().hex[:12]),
+                    "name": fn.get("name"),
+                    "input": parsed_args,
+                })
+            return JSONResponse({
+                "id": "msg_" + uuid.uuid4().hex[:12],
+                "type": "message",
+                "role": "assistant",
+                "content": content_blocks,
+                "model": target or body.model,
+                "stop_reason": "tool_use",
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": count_tokens(json.dumps(oai_messages)),
+                    "output_tokens": count_tokens(content) + count_tokens(json.dumps(content_blocks)),
+                },
+            })
         if extra.get("_path") == "FAST":
             from .digest import maybe_digest_messages
             digest = await maybe_digest_messages(oai_messages, get_config(), request=request)
