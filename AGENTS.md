@@ -1,45 +1,82 @@
-# AutoConduck v2 working contract
+# AutoConduck working contract
 
-AutoConduck is a local zero-overhead model router and task orchestrator for OpenAI-compatible coding agents. `AutoConduck-Blueprint-v2.md` is authoritative.
+AutoConduck is a local zero-overhead model router and task orchestrator for OpenAI-compatible coding agents. Routing and selection specifications are documented in `docs/design/dynamic-model-selection.md` (plus `docs/design/tuning.md`).
 
-## Commands
+## Commands & Workflows
 
-- Requires Python >= 3.11. Dev setup: `pip install -r requirements.txt` then `pip install -e .`. End users install via npm (`npm install -g autoconduck`); see `npm-packaging/build.py`.
-- `requirements.txt` must mirror pyproject runtime deps; it is currently stale (missing `semantic-router`, `langgraph`, and the `[proxy]` extra on `litellm`). There is no dev-dependencies group.
-- Run: `autoconduck start --headless [--port N] [--host H]`; serves the LiteLLM-Proxy-backed OpenAI-compatible endpoint on 127.0.0.1:11434 by default.
-- Background service: `autoconduck start --headless --daemon`; stop with `autoconduck stop`.
-- Console script: `autoconduck = autoconduck.main:main` (`autoconduck/__main__.py` exists too).
-- CLI: `autoconduck install [agents...]`, `start [--headless] [--daemon] [--port N] [--host H]`, `stop [--port]`, `edit`, `uninstall [--force]`, and `--version`.
-- Internal launcher lifecycle commands (take `--port`): `autoconduck ensure` and `autoconduck release`.
-- No arguments opens TUI onboarding/dashboard, falling back to headless mode if the TUI import fails.
-- No CI, lint, or formatting config exists — `pytest` is the only verification gate. Tests are pure async unit tests with no network or services (`asyncio_mode = "auto"`, `testpaths = ["tests"]`); run a single file with `pytest tests/test_<name>.py`.
+- **Python requirements**: Python >= 3.11. Dev setup: `pip install -r requirements.txt` then `pip install -e .`. End users install via npm (`npm install -g autoconduck`); see `npm-packaging/build.py` (builds per-platform wheels; `--check` verifies without rebuilding).
+- **Dependency sync**: `requirements.txt` and `pyproject.toml` runtime dependencies are strictly mirrored.
+- **Server execution**:
+  - Headless proxy service: `autoconduck start --headless [--port N] [--host H]` (defaults to `127.0.0.1:11434`).
+  - Background daemon: `autoconduck start --headless --daemon`; stop with `autoconduck stop [--port N]`.
+  - TUI interactive dashboard: `autoconduck` (no arguments opens TUI onboarding/dashboard; falls back to headless if TUI import fails).
+  - Console entrypoints: `autoconduck = autoconduck.main:main` and `conduck = autoconduck.main:main`.
+- **Full CLI commands**:
+  - `install [agents...]` — wrap agents with refcounted shims.
+  - `start [--headless] [--daemon] [--supervisor (hidden)] [--port N] [--host H]` — launch the server.
+  - `stop [--port N]` — stop the running daemon.
+  - `ensure` / `release` — internal launcher lifecycle commands for process refcounting.
+  - `stats [--json] [--days N] [--reset] [--force]` — inspect routing audit logs and cost savings.
+  - `tune --mode` — optimize routing parameters.
+  - `update [--dry-run]` — update runtime model catalog.
+  - `edit` — open interactive model list editor.
+  - `reset [--force]` / `uninstall [--force]` — restore agent configs and remove shims.
+  - `--version`, `--claude`, `--opencode`, `--pi` shortcuts.
+- **Smoke test**: `python scripts/end_to_end_smoke.py` (bounded test against `/v1/messages`, `/v1/chat/completions`, `/v1/models`, `/stats`).
 
-## Non-negotiable architecture invariants
+## Non-Negotiable Architecture Invariants
 
-- Fast path stays under 5 ms: `semantic_router.py` and `evaluator.py` are sync-only (zero async); routing decisions perform no I/O or LLM calls.
-- Confidence below the tunable ambiguous threshold (default 0.55–0.70) goes to a cheap LLM tiebreaker.
-- Any LangGraph, orchestrator, or schema error degrades to the fast path, never a client-facing API error.
-- Honor `request.is_disconnected()` for instant cancellation.
-- Agent config changes are limited to `# BEGIN AUTOCONDUCK` … `# END AUTOCONDUCK`, with backups at `~/.autoconduck/backups/<agent>/<timestamp>.bak`.
-- The LiteLLM Proxy pillar serves `/v1/chat/completions` and `/v1/models`, the latter returning the three pseudo-models (`autoconduck`, `autoconduck-budget`, `autoconduck-expensive`). AutoConduck owns `/stats` and `/healthz` on top, plus an Anthropic `/v1/messages` compatibility shim.
+- **Sub-5ms Fast Path**: `routing/semantic_router.py` and `routing/evaluator.py` are strictly synchronous (zero async, zero I/O, zero LLM calls). Default fast path executes through the compiled zero-reflection micro-DAG in `routing/fast_graph.py` (input_sanitize → route_match → evaluate_score → tiebreaker_resolve → model_select), gated by `enable_fast_path_graph` (default on).
+- **Fast-Path File Digests**: Deterministic parallel local reads prepended bounded by `fast_path_digest_*` config — never an LLM call.
+- **Ambiguous Zone & Tiebreaker**: Tunable zone (default `0.60–0.75`). LLM tiebreaker is **disabled by default** (`tiebreaker_enabled: false`), so ambiguous turns use deterministic complexity decisions. If tiebreaker fails or is unavailable, routing falls back deterministically to SLOW when complexity >= `slow_threshold` (0.75) unless provider is degraded.
+- **Fail-Soft Degradation**: Any LangGraph, orchestrator, tool, or schema error degrades gracefully to the fast path—never surfacing a client-facing 500 error.
+- **Dynamic Closest-Cost Model Matching**: `ModelEntry.tier` is advisory/display-only. Model selection uses logarithmic cost scaling `ln(1 + cost)` with realized EMA cost blending. Orchestrator phases use `PHASE_BANDS` in `orchestrator/graph.py` (recon `[0.10, 0.45]`, planner `[0.55, 0.85]`, subagent `[0.10, 0.55]`, executor `[0.35, 0.70]`). `RoutingDecision.model` is populated on the fast path and is never None there.
+- **Stream Cancellation**: Honor `request.is_disconnected()` in streaming loops (`server/server_streaming.py`) for instantaneous client disconnection handling.
+- **Agent Config Isolation**: Agent configuration edits are bounded between `# BEGIN AUTOCONDUCK` and `# END AUTOCONDUCK`, with automated backups saved to `~/.autoconduck/backups/<agent>/<timestamp>.bak`.
 
-## Key modules
+## API Surface
 
-- `dispatcher.py`: thin sequence of semantic router → evaluator → optional tiebreaker; keep its own logic minimal.
-- `semantic_router.py`: Aurelio wrapper with fast/slow routes and confidence.
-- `evaluator.py`: `T_i ∈ [0,1]`, stack-trace boost `+0.25`, hysteresis clamp `≤0.50` after escalation `≥0.80`, and ambiguous-zone handling.
-- `pricing.py`: `litellm.model_cost`, EMA token correction `α=0.1`, `ln(1+cost)` scaling, and failover after a trailing error rate above 20%; falls back to `pricing_fallback.json`.
-- `providers.py`: LiteLLM `openai/<model>` plus `api_base`, `/v1/models` discovery.
-- `config.py`: active model configuration, `resolve_orchestrator_model`, and `normalize_api_base` (adds `/v1` for host-root gateway URLs at LiteLLM call sites). Runtime models use `qualify_model()` (`openai/<id>`); API keys use `resolve_api_key()` for literal keys, env names, or literal fallback values.
-- `launcher.py`: launcher shims, `ensure_server`/`release_server` refcounting, PATH integration, `real_binary_path`, and `stop_server`.
-- `orchestrator/`: LangGraph `graph.py` planner → Send-based `subagents.py` → `compactor.py` → executor; `planner.py` owns `TaskPlan`.
-- `messages_api.py`: Anthropic-messages compatibility shim on the API surface (covered by `tests/test_messages_api.py`).
-- `config.py`, `model_presets.py`, `agents/`, `main.py`, and Textual `tui/` provide configuration, adapters, CLI, onboarding, and monitoring; the TUI uses Ctrl+C as its single quit chord (Textual Ctrl+Q is disabled).
+- Served by FastAPI in `autoconduck/server/server_streaming.py` with routes in `server/server_routes.py`:
+  - `/v1/chat/completions`: OpenAI-compatible completions intercepting the 3 pseudo-models (`autoconduck`, `autoconduck-budget`, `autoconduck-expensive`).
+  - `/v1/models`: OpenAI-compatible catalog listing returning the pseudo-models.
+  - `/v1/messages`: Anthropic-compatible message translation shim (`server/messages_api.py`).
+  - `/stats`: AutoConduck audit log and cost savings metrics.
+  - `/healthz`: Liveness and readiness endpoint.
 
-## State, environment, and scope
+## Key Modules
 
-- State lives under `~/.autoconduck/` or `$AUTOCONDUCK_HOME`.
-- Environment overrides: `AUTOCONDUCK_HOME`, `AUTOCONDUCK_PORT`, and `AUTOCONDUCK_LOG_LEVEL`.
-- Gitignored: `.autoconduck/`, `backups/`, `graphify-out/`, `build/`, and `*.egg-info/`.
-- LiteLLM owns caching and native cost logging; `/stats` is the audit surface.
-- Do not add legacy routing, state, caching, or telemetry layers. The LiteLLM Proxy is the API surface; dispatcher placement relative to LangGraph follows the blueprint's open integration verification item.
+- `routing/`:
+  - `dispatcher.py`: fast-path delegator to `fast_graph.py`.
+  - `fast_graph.py`: compiled zero-reflection micro-DAG (~0.1 ms execution).
+  - `semantic_router.py`: wrapper over `semantic-router` (Aurelio pillar) with fast/slow route embeddings.
+  - `evaluator.py`: single-pass regex complexity scoring across 10 factors + boosts + hysteresis clamping.
+  - `complexity.py` & `complexity_helpers.py`: complexity extractors and factor weights.
+  - `pricing.py`: `select_closest()` closest-cost matching, EMA realized-cost blending, spend guard, and degraded model exclusions.
+- `auth/`:
+  - `auth.py`: provider credentials in `~/.autoconduck/auth.yaml` with automatic config migration.
+  - `providers.py`: LiteLLM model qualification and API discovery.
+- `launcher/`:
+  - `launcher.py`, `launcher_procs.py`, `launcher_shims.py`: process discovery, launcher shims, refcounting, and binary PATH injection.
+- `cli/`:
+  - `cli.py` & `cli_launch.py`: CLI dispatch and agent setup.
+- `presets/`:
+  - `model_presets.py`, `presets_data.py`, `presets_ingest.py`, `presets_fallback.py`: runtime catalog data and LiteLLM ingestion.
+- `server/`:
+  - `server.py`, `server_routes.py`, `server_streaming.py`: FastAPI server and streaming lifecycle.
+  - `messages_api.py`, `messages_models.py`, `messages_sse.py`: Anthropic shim translation.
+- `orchestrator/`:
+  - `graph.py`: LangGraph workflow (`recon → recon_subagent_pool → planner → subagents → compactor → executor`).
+  - `recon.py`: deterministic target file discovery pre-planner.
+  - `planner.py`: `TaskPlan` generation and `verified_context` bullet distillation.
+  - `roles.py`: `RoleConfig` and role cards.
+  - `subagents.py`: parallel LLM text analysis.
+  - `compactor.py`: zero-LLM deterministic line deduplication and token truncation.
+  - `executor_loop.py` & `tools.py`: tool execution loop (read, grep, glob, list, edit, write, bash) with `FileClaimRegistry`.
+- `agents/`: adapters for supported coding agents (Claude Code, OpenCode, Pi, Aider, Cursor, Continue, Kilocode, Generic OpenAI).
+- `tui/`: Textual terminal UI dashboard and interactive onboarding (`tui/onboarding/`).
+
+## Development Guidelines & Gotchas
+
+- **Test Suite**: Pure async unit tests using `pytest` (`python -m pytest` or `PYTHONPATH=. pytest`).
+- **Graph Updates**: After modifying code, run `graphify update .` to update the AST knowledge graph.
+- **TUI Keymap**: `Ctrl+C` is the single quit chord (Textual's default `Ctrl+Q` is disabled).

@@ -1,0 +1,43 @@
+name: Refresh model catalog
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: python scripts/refresh_catalog.py
+      - name: Detect catalog drift
+        id: drift
+        run: |
+          if git status --porcelain -- docs/model_catalog.md | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Open refresh PR when changed
+        if: steps.drift.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/refresh-catalog
+          base: main
+          commit-message: "chore: refresh model catalog snapshot"
+          title: "chore: refresh model catalog snapshot"
+          body: "Automated weekly refresh of the LiteLLM model catalog snapshot."
+      - name: Log catalog status
+        if: steps.drift.outputs.changed == 'false'
+        run: |
+          echo "catalog up to date"

@@ -1,7 +1,7 @@
 [project]
 name = "autoconduck"
-version = "0.1.0"
-description = "Local zero-overhead model router + task orchestrator for OpenAI-compatible agents"
+version = "0.2.3"
+description = "Local zero-overhead model router + task orchestrator for coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -15,9 +15,11 @@ dependencies = [
   "litellm[proxy]>=1.40",
   "semantic-router",
   "langgraph",
+  "json-repair",
 ]
 [project.scripts]
 autoconduck = "autoconduck.main:main"
+conduck = "autoconduck.main:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
