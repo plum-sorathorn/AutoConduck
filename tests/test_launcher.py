@@ -257,6 +257,28 @@ def test_release_removes_only_own_shim_and_preserves_owner(tmp_path, monkeypatch
     stop.assert_not_called()
 
 
+def test_release_preserves_server_when_attached_client_or_starter_still_active(tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher, "_run_dir", lambda: tmp_path)
+    pidfile = tmp_path / "server.pid"
+    claims = tmp_path / "server.claims"
+    monkeypatch.setattr(launcher, "_files", lambda: (pidfile, claims, tmp_path / "server.log"))
+    # Starter (1001 1) releases while attached subagent (1002 0) is still active
+    claims.write_text("1001 1\n1002 0\n")
+    pidfile.write_text("456")
+    monkeypatch.setattr(launcher.os, "getpid", lambda: 1001)
+    with patch.object(launcher, "stop_server") as stop:
+        launcher.release_server()
+    assert claims.read_text() == "1002 0\n"
+    stop.assert_not_called()
+
+    # When the last subagent (1002 0) releases, the server is stopped
+    monkeypatch.setattr(launcher.os, "getpid", lambda: 1002)
+    with patch.object(launcher, "stop_server") as stop:
+        launcher.release_server()
+    assert not claims.exists()
+    stop.assert_called_once()
+
+
 def test_stop_server_clears_pid_claims_and_owner(tmp_path, monkeypatch):
     pidfile = tmp_path / "server.pid"
     claims = tmp_path / "server.claims"

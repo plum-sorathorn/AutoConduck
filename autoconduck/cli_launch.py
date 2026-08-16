@@ -127,7 +127,8 @@ def cmd_launch_agent(agent_id: str, port: int | None = None, new_terminal: bool 
     )
 
     # Reuse a healthy manual daemon; otherwise preserve the existing fresh-start behavior.
-    if launcher.server_alive(port):
+    reused = launcher.server_alive(port)
+    if reused:
         launcher._write_claim(False)
     else:
         launcher.kill_existing_on_port(port)
@@ -227,6 +228,9 @@ def cmd_launch_agent(agent_id: str, port: int | None = None, new_terminal: bool 
             file=sys.stderr,
         )
         return 1
+
+    if not reused:
+        launcher._write_claim(True)
 
     # Patch the adapter
     try:

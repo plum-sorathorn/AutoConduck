@@ -322,7 +322,7 @@ def release_server(port=None) -> None:
             len(line.split()) > 1 and line.split()[1] == "owner" for line in kept
         )
         has_active_clients = any(
-            len(line.split()) > 1 and line.split()[1] not in ("owner", "0")
+            len(line.split()) > 1 and line.split()[1] != "owner"
             for line in kept
         )
         if kept:
