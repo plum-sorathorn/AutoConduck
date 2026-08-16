@@ -1,319 +1,337 @@
-# AutoConduck
+<div align="center">
 
-AutoConduck is a local, zero-overhead model router and task orchestrator for
-coding agents. It routes each turn to the model whose cost is
-**CLOSEST** to a task-value score computed on the fly, keeping ordinary decisions
-on a sub-5 ms fast path and escalating complex, multi-file work to parallel
-subagents.
+# 🦆 AutoConduck
 
-Coding agents select one of three pseudo-models:
+**Local, zero-overhead model router & multi-agent task orchestrator for coding assistants.**
 
-- `autoconduck` — balanced defaults
-- `autoconduck-budget` — cost-optimized routing
-- `autoconduck-expensive` — quality-optimized routing
+[![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg?style=flat&logo=python&logoColor=white)](https://python.org)
+[![Fast Path Latency](https://img.shields.io/badge/fast--path-%3C5ms-brightgreen.svg?style=flat)](https://github.com)
+[![LangGraph](https://img.shields.io/badge/orchestrator-LangGraph-blue.svg?style=flat)](https://github.com/langchain-ai/langgraph)
+[![LiteLLM](https://img.shields.io/badge/proxy-LiteLLM-orange.svg?style=flat)](https://github.com/BerriAI/litellm)
+[![FastAPI](https://img.shields.io/badge/server-FastAPI-009688.svg?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat)](LICENSE)
 
-## Three pillars
+[Quick Start](#-quick-start) • [Architecture](#-architecture) • [Agent Setup](#-agent-integrations) • [Configuration](#-configuration-reference) • [TUI Dashboard](#-interactive-tui-dashboard)
 
-```text
-Agent → LiteLLM Proxy (streaming/provider abstraction)
-          │
-          ▼
-   Aurelio Semantic Router ── confidence ──┐
-          │                                │
-      direct model                    cheap tiebreaker (opt-in)
-          │                                │
-          └──────────────┬─────────────────┘
-                         ▼
-                 LangGraph async DAG
-              recon → planner → Send subagents →
-                 compactor → executor
+</div>
+
+---
+
+## 💡 Why AutoConduck?
+
+Coding agents (**Claude Code**, **OpenCode**, **Pi**, **Aider**, **Cursor**, **Continue**, **Kilocode**) often send every request—from a 3-word typo fix to a massive 20-file architecture migration—to a single expensive frontier model. This wastes significant token budget on trivial turns while bottlenecking large multi-step changes.
+
+**AutoConduck** acts as a lightweight, zero-overhead local proxy between your coding agent and LLM providers:
+
+- ⚡ **Sub-5ms Fast Path:** Simple turns (lookups, docstrings, single-line edits, tool loops) execute through a compiled zero-reflection micro-DAG without I/O or LLM latency.
+- 🎯 **Dynamic Closest-Cost Model Selection:** Instead of static tiers, AutoConduck evaluates prompt complexity on the fly and picks the closest model on a logarithmic cost continuum with real-time Exponential Moving Average (EMA) tracking.
+- 🧠 **LangGraph Multi-Agent Orchestrator:** Complex multi-file prompts automatically escalate to an asynchronous pipeline featuring deterministic recon, file-context distillation, parallel subagent analysts, zero-LLM compaction, and a grounded executor tool loop.
+- 🔌 **Drop-in Compatibility:** Exposes standard OpenAI `/v1/chat/completions` and `/v1/models` endpoints alongside an Anthropic `/v1/messages` translation shim.
+
+---
+
+## 🏗️ Architecture
+
+```
+Agent Request (Claude Code / OpenCode / Pi / Aider / Cursor)
+                          │
+                          ▼
+            FastAPI Server (LiteLLM Proxy)
+                          │
+             Interceptor for Pseudo-Models:
+       [autoconduck | autoconduck-budget | autoconduck-expensive]
+                          │
+                          ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │              Fast Path Micro-DAG (<0.1 ms)                  │
+    │  input_sanitize ──► route_match ──► evaluate_score          │
+    │         (Aurelio Semantic Router + 10-Factor Complexity)    │
+    └─────────────────────────────┬───────────────────────────────┘
+                                  │
+                   Is Task Complex (≥ 0.75)?
+                                  │
+                 ┌────────────────┴────────────────┐
+                 ▼ (No / Simple)                   ▼ (Yes / Multi-File)
+      ┌──────────────────────┐        ┌─────────────────────────────┐
+      │  pricing.select_     │        │    LangGraph Orchestrator   │
+      │       closest()      │        │  ┌───────────────────────┐  │
+      │ (Closest-Cost Model) │        │  │ Recon (Files pre-read)│  │
+      └──────────┬───────────┘        │  └───────────┬───────────┘  │
+                 │                    │              ▼              │
+                 │                    │  ┌───────────────────────┐  │
+                 │                    │  │ Planner (Context Dist)│  │
+                 │                    │  └───────────┬───────────┘  │
+                 │                    │              ▼              │
+                 │                    │  ┌───────────────────────┐  │
+                 │                    │  │ Parallel Subagents    │  │
+                 │                    │  └───────────┬───────────┘  │
+                 │                    │              ▼              │
+                 │                    │  ┌───────────────────────┐  │
+                 │                    │  │ Zero-Cost Compactor   │  │
+                 │                    │  └───────────┬───────────┘  │
+                 │                    │              ▼              │
+                 │                    │  ┌───────────────────────┐  │
+                 │                    │  │ Tool-Loop Executor    │  │
+                 │                    │  └───────────────────────┘  │
+                 │                    └──────────────┬──────────────┘
+                 │                                   │
+                 └─────────────────┬─────────────────┘
+                                   ▼
+                      Model Response / Stream
 ```
 
-1. **LiteLLM Proxy** provides provider abstraction, streaming, model usage,
-   and the OpenAI-compatible `/v1/chat/completions` and `/v1/models` surface.
-2. **Aurelio Semantic Router** classifies fast/slow routes with embedding-based
-   confidence. `routing/dispatcher.py` (via the compiled micro-DAG in
-   `routing/fast_graph.py`), `routing/semantic_router.py`, and `routing/evaluator.py` add
-   the routing judgment without I/O or LLM calls on the fast path.
-3. **LangGraph** runs the asynchronous subagent DAG through `orchestrator/`.
-   The dashboard and Textual `tui/` make routing decisions inspectable.
+### Three Core Pillars
 
-The orchestrator planner and subagents resolve their model from the active
-configuration via `resolve_orchestrator_model` in `config.py`; they do not use
-a fixed runtime model. Gateway `api_base` values may be entered with or
-without `/v1`: `normalize_api_base()` retains the raw value in
-`config.yaml` and appends `/v1` at each LiteLLM call site when the host root has
-no path.
+1. **LiteLLM Proxy & Server:** Provides unified provider abstraction, streaming translation, token usage tracking, and drop-in endpoints (`/v1/chat/completions`, `/v1/models`, `/v1/messages`).
+2. **Deterministic Fast Path (`routing/`):** Evaluates prompt complexity across 10 single-pass regex factors with stack-trace boosts (+0.25), escalation boosts (+0.30), hysteresis clamping (≤0.50), and Aurelio Semantic Router embedding classification.
+3. **LangGraph Task DAG (`orchestrator/`):** Manages multi-stage task breakdown with zero inter-phase LLM summarization cost and strict file-claim concurrency protection.
 
-## Quick start
+---
+
+## 🚀 Quick Start
+
+### Installation
+
+Install globally via **npm** or directly with **pip**:
 
 ```bash
+# Global installation (recommended for agent shims)
 npm install -g autoconduck
-autoconduck                         # TUI onboarding and dashboard
-autoconduck start --headless        # proxy-only service
+
+# Or Python package installation
+pip install autoconduck
 ```
 
-The default endpoint is `http://127.0.0.1:11434/v1`. Configure agents through
-the onboarding flow, then select any AutoConduck pseudo-model.
+### Launching
 
-The LiteLLM-Proxy-backed surface serves `/v1/chat/completions` (intercepting
-the three pseudo-models) and `/v1/models` (returning them), while AutoConduck
-owns `/stats` for routing-decision audit and cost-saved data, plus `/healthz`.
+```bash
+# 1. Interactive onboarding & TUI dashboard
+autoconduck
 
-### Custom provider registration
+# 2. Start as a background daemon
+autoconduck start --headless --daemon
 
-Custom providers are stored in `~/.autoconduck/config.yaml`, or in
-`$AUTOCONDUCK_HOME/config.yaml`. For example:
+# 3. Stop the background service
+autoconduck stop
+```
+
+The server listens on `http://127.0.0.1:11434/v1` by default.
+
+---
+
+## 🎯 The Three Pseudo-Models
+
+AutoConduck presents three virtual models to your coding agents:
+
+| Pseudo-Model | Bias | Escalation Sensitivity | Best For |
+| :--- | :--- | :--- | :--- |
+| **`autoconduck`** | Neutral (`0.00`) | Balanced default (`0.60–0.75`) | Everyday software engineering & mixed workflows |
+| **`autoconduck-budget`** | Cost-saving (`-0.20`) | Higher threshold (`× 1.15`) | Repetitive tasks, small scripts, cost minimization |
+| **`autoconduck-expensive`**| Quality-first (`+0.20`) | Lower threshold (`× 0.85`) | Mission-critical refactors, deep reasoning, greenfield code |
+
+---
+
+## 🔌 Agent Integrations
+
+AutoConduck provides automated configuration and launcher shims for all major coding tools:
+
+```bash
+# Automatically configure and wrap your agents:
+autoconduck install claude-code opencode pi aider
+```
+
+### Manual Configuration
+
+<details>
+<summary><b>Claude Code</b></summary>
+
+```bash
+# Configure Claude Code to use AutoConduck's Anthropic /v1/messages shim
+export ANTHROPIC_BASE_URL="http://127.0.0.1:11434"
+export ANTHROPIC_MODEL="autoconduck"
+claude
+```
+</details>
+
+<details>
+<summary><b>OpenCode</b></summary>
+
+```json
+// In opencode.json
+{
+  "provider": "openai",
+  "base_url": "http://127.0.0.1:11434/v1",
+  "model": "autoconduck"
+}
+```
+</details>
+
+<details>
+<summary><b>Pi Coding Agent</b></summary>
+
+```bash
+pi --api-base http://127.0.0.1:11434/v1 --model autoconduck
+```
+</details>
+
+<details>
+<summary><b>Aider</b></summary>
+
+```bash
+aider --openai-api-base http://127.0.0.1:11434/v1 --model openai/autoconduck
+```
+</details>
+
+<details>
+<summary><b>Cursor & Continue.dev</b></summary>
+
+In Cursor or Continue settings:
+- **Model Name:** `autoconduck`
+- **Base URL:** `http://127.0.0.1:11434/v1`
+- **API Key:** `dummy` (or any string)
+</details>
+
+---
+
+## 🔬 How It Works Internally
+
+### 1. 10-Factor Complexity Scoring (`routing/complexity.py`)
+
+Prompts are scored deterministically in microseconds using normalized factors:
+
+$$\text{Complexity} = \min\left(1.0, \sum_{i=1}^{10} w_i \cdot \text{factor}_i\right)$$
+
+- **Length ($0.08$):** Soft log-scale token estimate.
+- **Structural ($0.12$):** Bullet lists, numbered steps, code fences, Markdown headers.
+- **Scope Breadth ($0.12$):** Mentioned files, paths, and CamelCase identifier count.
+- **Code Density ($0.05$):** Inline backticks, CLI flags, and environment variables.
+- **Abstraction Level ($0.12$):** Ratio of architectural concepts vs concrete syntax.
+- **Uncertainty & Diagnostics ($0.08$):** Debugging and root-cause keywords.
+- **Cross-Domain ($0.12$):** Multi-disciplinary language balance.
+- **Task Novelty ($0.08$):** Greenfield creation vs in-place modification.
+- **Imperative Strength ($0.15$):** Graded action verb intensity.
+- **Multi-Step Markers ($0.08$):** Sequential transition tokens (*then*, *next*, *finally*).
+
+### 2. Closest-Cost Model Matching (`routing/pricing.py`)
+
+Models are mapped to a continuous logarithmic cost space:
+
+$$\text{scaled\_cost}(m) = \frac{\ln(1 + \text{price}(m))}{\ln(1 + \max(\text{prices}))}$$
+
+AutoConduck matches the task value directly against candidate models:
+- **EMA Realized-Cost Blending:** After 3 turns, observed per-token costs blend with advertised pricing ($\alpha = 0.1$).
+- **Degraded Provider Exclusion:** Automatically routes around providers with $>20\%$ error rates over a 300s sliding window.
+- **Spend Guard:** Bounded hourly/minute spend protection prevents runaway loops.
+
+### 3. LangGraph Multi-Phase Pipeline (`orchestrator/`)
+
+For complex requests ($\text{Complexity} \ge 0.75$), AutoConduck executes an asynchronous DAG:
+
+1. **Recon (`recon.py`):** Pre-reads up to 5 target files deterministically without LLM cost.
+2. **Planner (`planner.py`):** Creates a structured `TaskPlan` and extracts up to 8 concise (≤15 words) `verified_context` bullet points per file.
+3. **Parallel Subagents (`subagents.py`):** Evaluates independent dependency waves concurrently via `asyncio.gather`. Subagents only receive verified context and verbatim sibling outputs—no redundant file reads.
+4. **Zero-Cost Compactor (`compactor.py`):** Deterministically deduplicates lines, preserves `file:line` citations, and truncates analyst reports to ~1k tokens at zero token cost.
+5. **Tool-Loop Executor (`executor_loop.py`):** Executes bounded function-calling tools (`read`, `grep`, `glob`, `list`, `edit`, `write`, and optional `bash`) guarded by a `FileClaimRegistry` to prevent overlapping edits.
+
+---
+
+## 📊 Interactive TUI Dashboard
+
+AutoConduck features an interactive Textual terminal UI:
+
+```bash
+autoconduck
+```
+
+| Key | Action |
+| :---: | :--- |
+| `j` / `k` | Navigate routing history and model lists |
+| `d` | Open detailed routing & latency drill-down |
+| `p` | Pause / resume proxy routing |
+| `e` | Open interactive model list editor |
+| `?` | Toggle keymap help |
+| `Ctrl+C` | Quit AutoConduck |
+
+---
+
+## ⚙️ Configuration Reference
+
+AutoConduck stores its configuration at `~/.autoconduck/config.yaml` (or `$AUTOCONDUCK_HOME/config.yaml`) and provider keys at `~/.autoconduck/auth.yaml`.
+
+```yaml
+selection:
+  value_to_cost_gamma: 1.0
+  pseudo_bias_budget: -0.20
+  pseudo_bias_expensive: 0.20
+  pseudo_bias_enabled: true
+  ema_min_samples: 3
+  ema_alpha: 0.1
+  degraded_error_rate: 0.20
+  degraded_window_s: 300
+  ambiguous_low: 0.60
+  ambiguous_high: 0.75
+  escalation_threshold: 0.80
+  hysteresis_floor: 0.50
+  deescalation_threshold: 0.40
+  min_orchestrator_complexity: 0.62
+  tiebreaker_enabled: false
+  enable_fast_path_graph: true
+  executor_enable_tools: true
+  executor_max_tool_rounds: 10
+  executor_enable_bash: false
+  expose_value_in_stats: true
+```
+
+### Custom Provider Registration
 
 ```yaml
 custom_models:
-  - provider: llmgateway
-    base_url: https://api.llmgateway.io
-    api_key_env: LLMGATEWAY_API_KEY
+  - provider: openrouter
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
     enabled: true
+
 model_list:
-  - model_name: deepseek-v4-flash
-    provider: llmgateway
-    tier: balanced  # advisory/display-only
+  - model_name: openrouter/anthropic/claude-3.5-sonnet
+    provider: openrouter
+  - model_name: openrouter/deepseek/deepseek-chat
+    provider: openrouter
 ```
 
-Use the TUI Model Source screen to register this shape; keep the API key in
-the environment variable named by `api_key_env`.
+---
 
-## Seamless agent integration
+## 📈 Audit & Observability
 
-1. **Install AutoConduck:** `npm install -g autoconduck` or `pip install -e .`.
-2. **Choose agents:** run `autoconduck install [agents...]`. Configs are backed
-   up to `~/.autoconduck/backups/<agent>/<timestamp>.bak`; `autoconduck uninstall`
-   restores them.
-3. **Choose models:** use the TUI onboarding **Model Source** screen or
-   `autoconduck edit` for custom endpoints/model lists or presets such as DevPass.
-4. **Launch the coding agent:** it sees the three pseudo-models, while the local
-   server starts with the agent and stops when the last session closes.
+AutoConduck exposes dedicated operational endpoints:
 
-`autoconduck install` adds refcounted launcher shims in `~/.autoconduck/bin`
-and prepends it to `PATH`. A manually started server is never killed by shim
-exit. Use `autoconduck start --headless --daemon` or `autoconduck stop`; shims
-use the internal `autoconduck ensure` and `autoconduck release` commands.
-GUI-only agents such as Cursor and Continue cannot be wrapped; start manually
-with `autoconduck start --headless` for them.
-
-## How AutoConduck works internally
-
-### Request lifecycle
-
-1. Claude Code, OpenCode, or another client calls the OpenAI-compatible
-   LiteLLM Proxy at `127.0.0.1:11434`, or the Anthropic `/v1/messages` shim in
-   `server/messages_api.py`.
-2. Requests for `autoconduck`, `autoconduck-budget`, or `autoconduck-expensive`
-   are intercepted and handed to `routing/dispatcher.py` through `_route_target`.
-3. `dispatcher.route()` runs the synchronous, zero-I/O fast path through
-   `routing/fast_graph.py`: `semantic_router.route()` → `evaluator.score()` → an
-   optional (off-by-default) tiebreaker → `pricing.select_closest()`. This path
-   is designed to stay under 5 ms.
-4. A `FAST` decision lets `pricing.select_closest()` match a model to the
-   task's computed complexity value; `RoutingDecision.model` is set by the
-   dispatcher. A `SLOW` decision hands the whole request to the LangGraph
-   workflow in `orchestrator/graph.py`.
-5. Errors anywhere degrade to the fast path, never to a client-facing API
-   error.
-
-### Semantic router (`routing/semantic_router.py`)
-
-The router has `fast_path` and `slow_path` routes. Fast examples include
-typos, renames, “where is X defined”, docstrings, and comments. Slow examples
-include “refactor the application”, “build a feature”, “implement multi-file
-change”, “migrate the database”, “redesign the API”, “write integration tests
-for the whole system”, and “optimize the performance of the codebase”.
-
-The optional real embedding layer uses `semantic_router` and
-`FastEmbedEncoder`, guarded by `try/except`. Without that package, keyword and
-token-overlap matching over the examples is used; no match returns
-`RouteMatch("fast_path", 0.0)`.
-
-### Evaluator (`routing/evaluator.py`)
-
-The evaluator is pure math on the fast path:
-
-```text
-complexity = 0.08·length + 0.12·structural + 0.12·scope_breadth + 0.05·code_density
-           + 0.12·abstraction_level + 0.08·uncertainty_hedge + 0.12·cross_domain
-           + 0.08·task_novelty + 0.15·imperative_strength + 0.08·multi_step
-```
-
-Each term is clamped so the final score is at most 1. Confidence is
-`max(router_confidence, complexity × 0.75)` plus a `+0.25` stack-trace boost
-and `+0.30` escalation boost. After an escalation (previous decision ≥ `0.80`)
-and without a new stack trace, hysteresis clamps complexity to `≤ 0.50`; a
-simple turn below `deescalation_threshold` (0.40) actively drops back to the
-fast path, and in-flight tool loops stay on the fast path unless an
-escalation or stack-trace signal fires.
-
-The ambiguous zone is `[0.60, 0.75]` (scaled by the pseudo-model multiplier).
-The LLM tiebreaker is disabled by default (`tiebreaker_enabled: false`); when
-enabled it fires only for complexity ≥ `0.45` (≥ `0.65` for budget) and
-otherwise resolves deterministically. The slow rule is
-`complexity >= 0.75 OR (route == slow_path AND confidence >= boundary_high)`,
-so complex prompts escalate even when the semantic router says fast. The
-budget pseudo-model multiplies the zone bounds by `1.15`; expensive multiplies
-by `0.85`. Both instead shift the selection target: budget applies a `−0.20`
-bias and expensive a `+0.20` bias.
-
-### Pricing (`routing/pricing.py`)
-
-Prices resolve config → `litellm.model_cost` → `pricing_fallback.json`.
-`scaled_cost` is `ln(1 + price)` relative to the pool maximum. An EMA realized-
-cost blend (α=`0.1`, requiring at least 3 samples) replaces flat price for
-matching. `select_closest()` picks the nearest `|scaled_cost − target|`, ties
-going to the cheaper model; degraded models (over 20% errors in 300s) are
-excluded, and errors or an all-degraded pool fall back to `cheapest_enabled()`.
-`target_scaled_cost` maps task value using `value_to_cost_gamma` and pseudo-model
-bias (budget `−0.20`, expensive `+0.20`). `select()` and
-`select_model_by_tier()` are deprecated wrappers.
-
-### LangGraph orchestrator (`orchestrator/`)
-
-The graph is `recon → recon_subagent_pool → planner → subagent_pool →
-(compactor | end) → executor → END`. Requests below
-`min_orchestrator_complexity` (0.62) short-circuit to a direct executor call.
-`recon` (`orchestrator/recon.py`) discovers up to five target files
-(zero-LLM-cost when the request names explicit paths) and feeds them to the
-planner as ground truth. Its `after_plan` edge retries or falls back; if the
-plan is `None` twice, the graph returns `None` and the request uses the fast
-path. With `enable_executor_subagents` (default off), the executor fans out
-per-file write-draft subagents (`FileClaimRegistry` guards overlapping scopes)
-before synthesis.
-
-`build_task_plan()` uses a few-shot, strict JSON prompt to produce a `TaskPlan`
-of `SubTask{id, goal, scope, output_contract, constraints, depends_on,
-verified_context, read_budget}`. The planner reads the in-scope files itself and
-distills their contents into up to eight short `verified_context` bullets (each
-under 15 words). Those bullets are injected into every subagent prompt, so
-subagents do not re-read the files.
-
-Independent dependency waves run concurrently with `asyncio.gather`; the Send
-envelope is retained for map/reduce API compatibility. A subagent whose task
-depends on sibling tasks receives those siblings' outputs concatenated verbatim
-as `CONTEXT FROM SIBLING TASKS`; there is no summarization or rewriting at this
-boundary. Subagent outputs are then ordered by dependency count and merged.
-
-The compactor is deterministic and LLM-free, not a synthesis model call. It
-drops lines whose `file:line` references appeared in an earlier report, drops
-exact duplicate lines, and truncates the result at about 950 words (about 1k
-tokens) while preserving complete lines. The result is stored in
-`state.compacted`. Phase bands are recon `[0.10,0.45]`, planner `[0.55,0.85]`, subagents
-`[0.10,0.55]`, and executor `[0.35,0.70]`, each with on-the-fly targets from
-task value, subtask prompt/role/plan breadth and planner `budget_hint`, or
-compactor-summary complexity and integration count. The compactor costs
-nothing.
-
-The executor prompt is assembled exactly as:
-
-```text
-Original request:
-<original user messages, passed through untouched>
-
-Analyst summary:
-<state.compacted>
-```
-
-The original request is never rewritten by compaction. The expensive executor
-performs the final synthesis from the raw request and the deduplicated,
-truncated analyst lines; this is the only LLM-driven synthesis step in the
-pipeline.
-
-In short, between phases the pipeline only (a) distills file contents into
-`verified_context` at the planner, (b) joins sibling outputs verbatim, and (c)
-deterministically deduplicates and truncates in the compactor. There is no
-inter-phase LLM summarization layer; final synthesis is the executor's job.
-
-Every planner and subagent call is a plain `litellm` completion to the resolved
-gateway model, not a subprocess spawn of Claude Code. The `agents/` adapters
-only configure external CLIs through `launcher/launcher.py` shims.
-
-The subagent prompt template is:
-
-```text
-ROLE: You are a read-only file analyst. You do not propose fixes or write code.
-TASK: {goal}
-FILES IN SCOPE (only these): {scope}
-REQUIRED OUTPUT FORMAT: {output_contract}
-DO NOT: {constraints}
-CONTEXT FROM SIBLING TASKS: {upstream_summaries}
-VERIFIED CONTEXT (do not re-investigate): {verified_context bullets}
-TOOL BUDGET: You may make at most {read_budget} additional file reads/tool calls beyond what's given above. Work with what you have first.
-VERIFY BEFORE RETURNING: {verify hooks}
-```
-
-### Configuration and observability
-
-Configuration is `config.yaml` under `~/.autoconduck` or `$AUTOCONDUCK_HOME`:
-
-| Tunable | Default |
-| --- | ---: |
-| `ambiguous_low` | 0.60 |
-| `ambiguous_high` | 0.75 |
-| `escalation_threshold` | 0.80 |
-| `hysteresis_floor` | 0.50 |
-| `stack_trace_boost` | 0.25 |
-| `ema_alpha` | 0.1 |
-| `degraded_error_rate` | 0.20 |
-| `degraded_window_s` | 300 |
-| `pseudo_model` | `autoconduck` |
-| `phase_bands` | recon, planner, subagent, executor ranges |
-| `complexity_weights` | ten evaluator factor weights |
-| `value_to_cost_gamma` | 1.0 |
-| `pseudo_bias_budget` / `pseudo_bias_expensive` / `pseudo_bias_enabled` | -0.20 / 0.20 / true |
-| `ema_min_samples` | 3 |
-| `min_orchestrator_complexity` | 0.62 |
-| `max_file_read_scaled_cost` | 0.55 |
-| `deescalation_threshold` | 0.40 |
-| `tiebreaker_enabled` | false |
-| `enable_fast_path_graph` | true |
-| `enable_executor_subagents` | false |
-| `expose_value_in_stats` | true |
-| `model_list` | id, prices, enabled; `tier` is advisory/display-only |
-
-`/stats` is the routing audit log (path, model, latency); `/healthz` is the
-liveness endpoint. To see generated prompts, run:
+- `GET /stats`: Returns live audit telemetry, routing breakdown (fast vs slow vs ambiguous), latency histograms, and estimated USD cost savings.
+- `GET /healthz`: Standard Kubernetes/liveness readiness probe.
 
 ```bash
-AUTOCONDUCK_LOG_LEVEL=DEBUG autoconduck start --headless
+# Query routing stats via CLI
+autoconduck stats --json
 ```
 
-This prints `SUBAGENT PROMPT [...]` and `PLANNER PROMPT` blocks, plus an INFO
-`route=… model=… ms=…` line for each request. Other environment overrides are
-`AUTOCONDUCK_HOME` and `AUTOCONDUCK_PORT`.
+---
 
-To trigger the slow path, make the request structurally complex: mention at
-least three files, multiple symbols, or use phrasing such as “refactor X
-across these files”, “implement multi-file change”, or “write integration
-tests for the whole system”.
-
-### Module map
-
-`routing/dispatcher.py` (sequence) · `routing/fast_graph.py` (compiled micro-DAG) ·
-`routing/semantic_router.py` · `routing/evaluator.py` · `routing/complexity.py` ·
-`routing/pricing.py` · `config.py` (`resolve_orchestrator_model`, `qualify_model`,
-`resolve_api_key`, `normalize_api_base`) · `auth/auth.py` (auth.yaml) · `resolver.py` ·
-`auth/providers.py` · `launcher/launcher.py`
-(shims and ensure/release refcounting) · `server/messages_api.py` (Anthropic shim) ·
-`orchestrator/{graph,recon,planner,subagents,compactor}.py` · `stats.py` ·
-`agents/` (external CLI adapters) · `tui/` (Textual dashboard).
-
-## Development
+## 🛠️ Development
 
 ```bash
+# Clone and install development environment
+git clone https://github.com/plum-sorathorn/AutoConduck.git
+cd AutoConduck
 pip install -r requirements.txt
 pip install -e .
-pytest
+
+# Run test suite
+python -m pytest
+
+# Refresh dynamic model catalog
+python scripts/refresh_catalog.py
 ```
 
-The project is Python 3.11+; `auth/providers.py` supports generic OpenAI-compatible
-gateways and model discovery, while `routing/pricing.py` chooses capable models.
+---
 
-## TUI keymap highlights
+## 📄 License
 
-`j`/`k` navigate, `d` opens routing drill-down, `p` pauses or
-resumes routing, `e` edits models, `[ctrl+c]` quits, and `?` shows all keys.
-Textual's default Ctrl+Q is disabled; Ctrl+C is the single quit chord.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

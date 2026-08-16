@@ -135,6 +135,64 @@ def test_extract_text_tool_calls_generic_json():
     assert cleaned == ""
 
 
+def test_read_only_tools_are_routed_to_fast_model():
+    from autoconduck.orchestrator.tools import is_read_only_tool, tool_model
+
+    cfg = Config(
+        model_list=[
+            {"id": "cheap", "price_in": 0.1, "price_out": 0.1, "enabled": True},
+            {"id": "pricey", "price_in": 2.0, "price_out": 5.0, "enabled": True},
+        ]
+    )
+    assert is_read_only_tool("read")
+    assert is_read_only_tool("grep")
+    assert tool_model("read", "pricey", cfg) == "cheap"
+    assert tool_model("edit", "pricey", cfg) == "pricey"
+
+
+@pytest.mark.asyncio
+async def test_executor_stagnation_injects_mitigation_note(tmp_path):
+    from autoconduck.orchestrator.executor_loop import (
+        LoopState,
+        calculate_stagnation,
+        run_executor_tool_loop,
+    )
+
+    class FakeClient:
+        def __init__(self):
+            self.messages = []
+
+        def completion(self, *, messages, **kwargs):
+            self.messages.append((messages, kwargs))
+            return {"choices": [{"message": {"content": "", "tool_calls": [{
+                "id": str(len(self.messages)), "function": {
+                    "name": "read", "arguments": '{"path":"missing.py"}'
+                }
+            }]}}]}
+
+    client = FakeClient()
+    cfg = Config(model_list=[
+        {"id": "cheap", "price_in": 0.1, "price_out": 0.1, "enabled": True},
+        {"id": "pricey", "price_in": 2.0, "price_out": 5.0, "enabled": True},
+    ])
+    result = await run_executor_tool_loop(client, "pricey", "system", "user",
+        allowed_scope=["missing.py"], workspace_root=tmp_path, cfg=cfg,
+        max_rounds=4, tool_retry_cap=10)
+    assert isinstance(result, str)
+    assert any("<loop-stagnation:true>" in str(message.get("content", ""))
+               for messages, _ in client.messages for message in messages)
+    assert any(kwargs.get("model") == "openai/cheap"
+               for _, kwargs in client.messages[3:])
+
+    state = LoopState(
+        call_signatures=["same", "same", "same"],
+        error_streak=3,
+        distinct_files_touched={"missing.py"},
+        total_calls=3,
+    )
+    assert calculate_stagnation(state) > 0.70
+
+
 def test_skeletons_python_ast():
     from autoconduck.orchestrator.skeletons import extract_python_skeleton
 
@@ -308,8 +366,3 @@ def test_check_subagent_support_agent_filtering():
     assert check_subagent_support(user_agent="OpenCode/1.0") == (False, False)
     assert check_subagent_support(user_agent="Claude-Code/0.2.9") == (False, False)
     assert check_subagent_support(user_agent="anthropic-sdk-typescript/0.27.0") == (False, False)
-
-
-
-
-

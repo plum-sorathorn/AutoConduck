@@ -31,6 +31,30 @@ TOOL_SCHEMAS = [
     _schema("bash", {"command": _string}, ["command"]),
 ]
 
+READ_ONLY_TOOLS = frozenset({"read", "grep", "glob", "list"})
+
+
+def is_read_only_tool(name: str) -> bool:
+    """Return whether a tool only inspects the workspace."""
+    return name in READ_ONLY_TOOLS
+
+
+def tool_model(name: str, current_model: str, cfg) -> str:
+    """Choose the model for a tool continuation.
+
+    Workspace inspection does not need the executor's potentially expensive
+    model.  Reuse the normal FAST selector so provider and catalog rules stay
+    in one place; mutations remain on the executor model.
+    """
+    if not is_read_only_tool(name):
+        return current_model
+    try:
+        from autoconduck.resolver import _pick_fast_model
+
+        return _pick_fast_model("autoconduck", cfg)
+    except Exception:
+        return current_model
+
 
 def _resolve_safe(workspace_root: Path, rel_path: str) -> Path:
     root = workspace_root.resolve()

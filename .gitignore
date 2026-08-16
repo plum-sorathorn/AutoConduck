@@ -24,7 +24,10 @@ venv/
 env/
 ENV/
 .env
+.env.*
 .ENV
+env.bak/
+venv.bak/
 
 # ============================================================
 # Test / coverage / lint caches
@@ -40,35 +43,42 @@ htmlcov/
 .hypothesis/
 coverage.xml
 *.cover
+.mutmut-cache/
 
 # ============================================================
-# Jupyter
+# Jupyter & Notebooks
 # ============================================================
 .ipynb_checkpoints/
 *.ipynb
 
 # ============================================================
-# Logs
+# Logs & temporary files
 # ============================================================
 *.log
 logs/
 *.jsonl
+*.tmp
+*.temp
 
 # ============================================================
-# AutoConduck runtime state
-# Primary state lives in ~/.autoconduck/ (outside repo, see
-# autoconduck/config.py:home_dir() -> $AUTOCONDUCK_HOME or
-# ~/.autoconduck).  The entries below are safety-nets in case
-# a local directory/file is created inside the checkout
-# during development or when AUTOCONDUCK_HOME is pointed at
-# the repo root.
+# AutoConduck runtime state & credentials
+# Primary state lives in ~/.autoconduck/ ($AUTOCONDUCK_HOME).
+# Entries below are local safety-nets for repo checkout.
 # ============================================================
 .autoconduck/
 backups/
+auth.yaml
+*.pem
+*.key
 
 # ============================================================
-# npm-packaging build artifacts
+# npm & packaging build artifacts
 # ============================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 npm-packaging/*/dist/
 npm-packaging/*/node_modules/
 npm-packaging/autoconduck/dist/
@@ -84,6 +94,7 @@ npm-packaging/*/bin/*.exe
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+._*
 
 # ============================================================
 # Editor / IDE
@@ -96,14 +107,11 @@ Desktop.ini
 .history/
 *.sublime-project
 *.sublime-workspace
+.claude/
+.cursor/
 
 # ============================================================
-# Keep source, tests, docs, packaging metadata
-# (do NOT add rules that would match these)
-# autoconduck/**/*.py, tests/, *.md, requirements.txt,
-# pyproject.toml, pricing_fallback.json are intentionally
-# NOT ignored.
+# Agent / knowledge graph outputs
 # ============================================================
-
 /graphify-out
 /.pi-subagents
