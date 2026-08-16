@@ -11,7 +11,7 @@
 [![FastAPI](https://img.shields.io/badge/server-FastAPI-009688.svg?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat)](LICENSE)
 
-[Quick Start](#quick-start) • [Architecture](#architecture) • [Agent Setup](#agent-integrations) • [Configuration](#configuration-reference) • [TUI Dashboard](#interactive-tui-dashboard)
+[Why AutoConduck?](#why-autoconduck) • [Architecture](#architecture) • [Quick Start](#quick-start) • [Supported Agents](#supported-agents) • [How It Works](#how-it-works-internally) • [Budget Tuning](#budget-driven-tuning) • [TUI Dashboard](#interactive-tui-dashboard) • [Configuration](#configuration-reference) • [Development](#development)
 
 </div>
 
@@ -19,21 +19,22 @@
 
 ## Why AutoConduck?
 
-Coding agents (**Claude Code**, **OpenCode**, **Pi**, **Aider**, **Cursor**, **Continue**, **Kilocode**) often send every request—from a 3-word typo fix to a massive 20-file architecture migration—to a single expensive frontier model. This wastes significant token budget on trivial turns while bottlenecking large multi-step changes.
+Coding agents (**Claude Code**, **OpenCode**, and **Pi**) frequently send every prompt—from a single-line typo fix or docstring lookup to a 20-file architecture migration—to a single expensive frontier model. This incurs unnecessary token spend on trivial turns while bottlenecking large multi-step changes.
 
-**AutoConduck** acts as a lightweight, zero-overhead local proxy between your coding agent and LLM providers:
+**AutoConduck** operates locally as a drop-in proxy and intelligent router:
 
-- **Sub-5ms Fast Path:** Simple turns (lookups, docstrings, single-line edits, tool loops) execute through a compiled zero-reflection micro-DAG without I/O or LLM latency.
-- **Dynamic Closest-Cost Model Selection:** Instead of static tiers, AutoConduck evaluates prompt complexity on the fly and picks the closest model on a logarithmic cost continuum with real-time Exponential Moving Average (EMA) tracking.
+- **Sub-5ms Fast Path:** Routine turns (lookups, docstrings, single-line edits, tool loops) execute through a compiled zero-reflection micro-DAG without I/O or LLM latency.
+- **Dynamic Closest-Cost Model Selection:** Instead of static tiers, AutoConduck evaluates prompt complexity on the fly and matches the task to the closest model on a logarithmic cost continuum with real-time Exponential Moving Average (EMA) tracking.
 - **LangGraph Multi-Agent Orchestrator:** Complex multi-file prompts automatically escalate to an asynchronous pipeline featuring deterministic recon, file-context distillation, parallel subagent analysts, zero-LLM compaction, and a grounded executor tool loop.
-- **Drop-in Compatibility:** Exposes standard OpenAI `/v1/chat/completions` and `/v1/models` endpoints alongside an Anthropic `/v1/messages` translation shim.
+- **Budget-Driven Tuning:** An open-loop calibration engine translates monthly USD or token budgets into concrete routing parameters, dynamically adjusting model selection pressure and spend guards.
+- **Drop-in Compatibility:** Exposes standard OpenAI `/v1/chat/completions` and `/v1/models` endpoints alongside a native Anthropic `/v1/messages` translation shim.
 
 ---
 
 ## Architecture
 
-```
-Agent Request (Claude Code / OpenCode / Pi / Aider / Cursor)
+```text
+Agent Request (Claude Code / OpenCode / Pi)
                           │
                           ▼
             FastAPI Server (LiteLLM Proxy)
@@ -95,11 +96,12 @@ Agent Request (Claude Code / OpenCode / Pi / Aider / Cursor)
 Install globally via **npm** or directly with **pip**:
 
 ```bash
-# Global installation (recommended for agent shims)
+# Global installation (recommended for launcher shims)
 npm install -g autoconduck
 
-# Or Python package installation
-pip install autoconduck
+# Or local Python installation
+pip install -r requirements.txt
+pip install -e .
 ```
 
 ### Launching
@@ -113,48 +115,46 @@ autoconduck start --headless --daemon
 
 # 3. Stop the background service
 autoconduck stop
+
+# 4. Direct agent shortcuts
+autoconduck start --claude
+autoconduck start --opencode
+autoconduck start --pi
 ```
 
 The server listens on `http://127.0.0.1:11434/v1` by default.
 
 ---
 
-## The Three Pseudo-Models
+## Supported Agents
 
-AutoConduck presents three virtual models to your coding agents:
-
-| Pseudo-Model | Bias | Escalation Sensitivity | Best For |
-| :--- | :--- | :--- | :--- |
-| **`autoconduck`** | Neutral (`0.00`) | Balanced default (`0.60–0.75`) | Everyday software engineering & mixed workflows |
-| **`autoconduck-budget`** | Cost-saving (`-0.20`) | Higher threshold (`× 1.15`) | Repetitive tasks, small scripts, cost minimization |
-| **`autoconduck-expensive`**| Quality-first (`+0.20`) | Lower threshold (`× 0.85`) | Mission-critical refactors, deep reasoning, greenfield code |
-
----
-
-## Agent Integrations
-
-AutoConduck provides automated configuration and launcher shims for all major coding tools:
+AutoConduck provides automated configuration and launcher shims for **Claude Code**, **OpenCode**, and **Pi**:
 
 ```bash
-# Automatically configure and wrap your agents:
-autoconduck install claude-code opencode pi aider
+# Automatically configure and install shims for supported agents:
+autoconduck install claude_code opencode pi
 ```
 
-### Manual Configuration
+Agent configuration edits are bounded between `# BEGIN AUTOCONDUCK` and `# END AUTOCONDUCK`, with automated backups saved to `~/.autoconduck/backups/<agent>/<timestamp>.bak`. Running `autoconduck reset` or `autoconduck uninstall` cleanly restores original configs.
 
-<details>
-<summary><b>Claude Code</b></summary>
+### Claude Code
+
+AutoConduck provides an Anthropic-compatible `/v1/messages` translation shim:
 
 ```bash
-# Configure Claude Code to use AutoConduck's Anthropic /v1/messages shim
+# Launch directly through AutoConduck
+autoconduck start --claude
+
+# Or manually point Claude Code to the proxy:
 export ANTHROPIC_BASE_URL="http://127.0.0.1:11434"
+export ANTHROPIC_AUTH_TOKEN="autoconduck-local"
 export ANTHROPIC_MODEL="autoconduck"
 claude
 ```
-</details>
 
-<details>
-<summary><b>OpenCode</b></summary>
+### OpenCode
+
+AutoConduck connects directly to OpenCode via standard OpenAI-compatible endpoints:
 
 ```json
 // In opencode.json
@@ -164,32 +164,35 @@ claude
   "model": "autoconduck"
 }
 ```
-</details>
-
-<details>
-<summary><b>Pi Coding Agent</b></summary>
 
 ```bash
+# Launch directly through AutoConduck
+autoconduck start --opencode
+```
+
+### Pi Coding Agent
+
+Pi connects via settings or CLI arguments:
+
+```bash
+# Launch directly through AutoConduck
+autoconduck start --pi
+
+# Or pass the local API base:
 pi --api-base http://127.0.0.1:11434/v1 --model autoconduck
 ```
-</details>
 
-<details>
-<summary><b>Aider</b></summary>
+---
 
-```bash
-aider --openai-api-base http://127.0.0.1:11434/v1 --model openai/autoconduck
-```
-</details>
+## The Three Pseudo-Models
 
-<details>
-<summary><b>Cursor & Continue.dev</b></summary>
+AutoConduck presents three virtual models to coding agents:
 
-In Cursor or Continue settings:
-- **Model Name:** `autoconduck`
-- **Base URL:** `http://127.0.0.1:11434/v1`
-- **API Key:** `dummy` (or any string)
-</details>
+| Pseudo-Model | Target Bias | Escalation Threshold | Best For |
+| :--- | :---: | :---: | :--- |
+| **`autoconduck`** | Neutral (`0.00`) | Standard (`0.60–0.75`) | Everyday software engineering & mixed workflows |
+| **`autoconduck-budget`** | Cost-saving (`-0.20`) | Higher (`× 1.15`) | Repetitive tasks, small edits, cost minimization |
+| **`autoconduck-expensive`** | Quality-first (`+0.20`) | Lower (`× 0.85`) | Architecture refactors, deep reasoning, greenfield code |
 
 ---
 
@@ -199,64 +202,111 @@ In Cursor or Continue settings:
 
 Prompts are scored deterministically in microseconds using normalized factors:
 
-$$\text{Complexity} = \min\left(1.0, \sum_{i=1}^{10} w_i \cdot \text{factor}_i\right)$$
+```text
+complexity = min(1.0, sum(w_i * factor_i))
+```
 
-- **Length ($0.08$):** Soft log-scale token estimate.
-- **Structural ($0.12$):** Bullet lists, numbered steps, code fences, Markdown headers.
-- **Scope Breadth ($0.12$):** Mentioned files, paths, and CamelCase identifier count.
-- **Code Density ($0.05$):** Inline backticks, CLI flags, and environment variables.
-- **Abstraction Level ($0.12$):** Ratio of architectural concepts vs concrete syntax.
-- **Uncertainty & Diagnostics ($0.08$):** Debugging and root-cause keywords.
-- **Cross-Domain ($0.12$):** Multi-disciplinary language balance.
-- **Task Novelty ($0.08$):** Greenfield creation vs in-place modification.
-- **Imperative Strength ($0.15$):** Graded action verb intensity.
-- **Multi-Step Markers ($0.08$):** Sequential transition tokens (*then*, *next*, *finally*).
+- **Length (0.08):** Soft log-scale token estimate.
+- **Structural (0.12):** Bullet lists, numbered steps, code fences, Markdown headers.
+- **Scope Breadth (0.12):** Mentioned files, paths, and CamelCase identifier count.
+- **Code Density (0.05):** Inline backticks, CLI flags, and environment variables.
+- **Abstraction Level (0.12):** Ratio of architectural concepts vs concrete syntax.
+- **Uncertainty & Diagnostics (0.08):** Debugging and root-cause keywords.
+- **Cross-Domain (0.12):** Multi-disciplinary language balance.
+- **Task Novelty (0.08):** Greenfield creation vs in-place modification.
+- **Imperative Strength (0.15):** Graded action verb intensity.
+- **Multi-Step Markers (0.08):** Sequential transition tokens (*then*, *next*, *finally*).
 
 ### 2. Closest-Cost Model Matching (`routing/pricing.py`)
 
 Models are mapped to a continuous logarithmic cost space:
 
-$$\text{scaled\_cost}(m) = \frac{\ln(1 + \text{price}(m))}{\ln(1 + \max(\text{prices}))}$$
+```text
+scaled_cost(m) = ln(1 + price(m)) / ln(1 + max_price_in_pool)
+```
 
 AutoConduck matches the task value directly against candidate models:
-- **EMA Realized-Cost Blending:** After 3 turns, observed per-token costs blend with advertised pricing ($\alpha = 0.1$).
-- **Degraded Provider Exclusion:** Automatically routes around providers with $>20\%$ error rates over a 300s sliding window.
+- **EMA Realized-Cost Blending:** After 3 turns, observed per-token costs blend with advertised pricing (`alpha = 0.1`).
+- **Degraded Provider Exclusion:** Automatically routes around providers with >20% error rates over a 300s sliding window.
 - **Spend Guard:** Bounded hourly/minute spend protection prevents runaway loops.
 
 ### 3. LangGraph Multi-Phase Pipeline (`orchestrator/`)
 
-For complex requests ($\text{Complexity} \ge 0.75$), AutoConduck executes an asynchronous DAG:
+For complex requests (Complexity >= 0.75), AutoConduck executes an asynchronous DAG:
 
 1. **Recon (`recon.py`):** Pre-reads up to 5 target files deterministically without LLM cost.
-2. **Planner (`planner.py`):** Creates a structured `TaskPlan` and extracts up to 8 concise (≤15 words) `verified_context` bullet points per file.
+2. **Planner (`planner.py`):** Creates a structured `TaskPlan` and extracts up to 8 concise (<=15 words) `verified_context` bullet points per file.
 3. **Parallel Subagents (`subagents.py`):** Evaluates independent dependency waves concurrently via `asyncio.gather`. Subagents only receive verified context and verbatim sibling outputs—no redundant file reads.
 4. **Zero-Cost Compactor (`compactor.py`):** Deterministically deduplicates lines, preserves `file:line` citations, and truncates analyst reports to ~1k tokens at zero token cost.
 5. **Tool-Loop Executor (`executor_loop.py`):** Executes bounded function-calling tools (`read`, `grep`, `glob`, `list`, `edit`, `write`, and optional `bash`) guarded by a `FileClaimRegistry` to prevent overlapping edits.
 
 ---
 
+## Budget-Driven Tuning
+
+`autoconduck tune` is an open-loop calibration engine. It converts a monthly USD or token budget into routing controls for the active model pool:
+
+```bash
+# Launch interactive budget tuning UI
+autoconduck tune
+
+# Select specific tuning mode
+autoconduck tune --mode simple
+autoconduck tune --mode advanced
+```
+
+### Tuning Mechanics
+
+- **Target Rate:** Computes per-minute target spend from your monthly limit and active working hours.
+- **Budget Pressure (p in [0, 1]):** Computed using logarithmic cost bounds.
+- **Dynamic Adjustments Under Pressure:**
+  - Gamma scaling: Exponent scales as `1 + 2.0p`, curving cost targets steeply toward cheaper models.
+  - Pseudo-model biases: Budget bias adjusts to `-0.20 - 0.20p`; expensive bias adjusts to `0.20 - 0.35p`.
+  - Phase bands: Orchestrator phase bands shift down proportionally (planner `-0.20p`, subagents `-0.20p`, executor `-0.25p`).
+  - Ambiguity zone: Bounds shift to `(0.60 + 0.05p, 0.75 + 0.05p)`.
+  - EMA alpha: Adjusts to `0.10 + 0.10p`.
+- **Profiles:** Saved to `~/.autoconduck/tune_profile.json` with automatic backup of existing configuration.
+
+---
+
 ## Interactive TUI Dashboard
 
-AutoConduck features an interactive Textual terminal UI:
+AutoConduck includes an interactive terminal UI built with Textual:
 
 ```bash
 autoconduck
 ```
 
+### Main Navigation Hub
+
+From the main menu, navigate directly to all major screens:
+
+- **Live Routing Stats (`d`):** Real-time routing decisions, latency histograms, and cost tracker.
+- **Configure Models (`m` / `e`):** Add custom providers, select models, and manage credentials.
+- **Tune Budget (`t`):** Configure monthly budget limits, headroom, and ambiguity bands.
+- **Settings (`s`):** Configure launch behavior, thresholds, and logging.
+- **Launch Agent (`a`):** Pick and launch a configured coding agent (Claude Code, OpenCode, Pi).
+
+### Keymap Reference
+
 | Key | Action |
 | :---: | :--- |
-| `j` / `k` | Navigate routing history and model lists |
+| `Up` / `Down` | Move selection cursor |
+| `Enter` | Open / toggle selection |
 | `d` | Open detailed routing & latency drill-down |
+| `m` / `e` | Edit model sources & catalog |
+| `t` | Open budget tuning screen |
+| `s` | Open settings screen |
+| `a` | Open launch agent picker |
 | `p` | Pause / resume proxy routing |
-| `e` | Open interactive model list editor |
 | `?` | Toggle keymap help |
-| `Ctrl+C` | Quit AutoConduck |
+| `Ctrl+C` | Quit current screen / exit AutoConduck |
 
 ---
 
 ## Configuration Reference
 
-AutoConduck stores its configuration at `~/.autoconduck/config.yaml` (or `$AUTOCONDUCK_HOME/config.yaml`) and provider keys at `~/.autoconduck/auth.yaml`.
+Configuration is stored in `~/.autoconduck/config.yaml` (or `$AUTOCONDUCK_HOME/config.yaml`), and credentials are kept securely in `~/.autoconduck/auth.yaml`.
 
 ```yaml
 selection:
@@ -305,10 +355,13 @@ model_list:
 AutoConduck exposes dedicated operational endpoints:
 
 - `GET /stats`: Returns live audit telemetry, routing breakdown (fast vs slow vs ambiguous), latency histograms, and estimated USD cost savings.
-- `GET /healthz`: Standard Kubernetes/liveness readiness probe.
+- `GET /healthz`: Liveness and readiness health check endpoint.
 
 ```bash
-# Query routing stats via CLI
+# Inspect routing audit logs and cost savings via CLI
+autoconduck stats
+
+# Export JSON metrics
 autoconduck stats --json
 ```
 
@@ -317,7 +370,7 @@ autoconduck stats --json
 ## Development
 
 ```bash
-# Clone and install development environment
+# Clone repository and set up environment
 git clone https://github.com/plum-sorathorn/AutoConduck.git
 cd AutoConduck
 pip install -r requirements.txt
