@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🦆 AutoConduck
+# AutoConduck
 
 **Local, zero-overhead model router & multi-agent task orchestrator for coding assistants.**
 
@@ -11,26 +11,26 @@
 [![FastAPI](https://img.shields.io/badge/server-FastAPI-009688.svg?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat)](LICENSE)
 
-[Quick Start](#-quick-start) • [Architecture](#-architecture) • [Agent Setup](#-agent-integrations) • [Configuration](#-configuration-reference) • [TUI Dashboard](#-interactive-tui-dashboard)
+[Quick Start](#quick-start) • [Architecture](#architecture) • [Agent Setup](#agent-integrations) • [Configuration](#configuration-reference) • [TUI Dashboard](#interactive-tui-dashboard)
 
 </div>
 
 ---
 
-## 💡 Why AutoConduck?
+## Why AutoConduck?
 
 Coding agents (**Claude Code**, **OpenCode**, **Pi**, **Aider**, **Cursor**, **Continue**, **Kilocode**) often send every request—from a 3-word typo fix to a massive 20-file architecture migration—to a single expensive frontier model. This wastes significant token budget on trivial turns while bottlenecking large multi-step changes.
 
 **AutoConduck** acts as a lightweight, zero-overhead local proxy between your coding agent and LLM providers:
 
-- ⚡ **Sub-5ms Fast Path:** Simple turns (lookups, docstrings, single-line edits, tool loops) execute through a compiled zero-reflection micro-DAG without I/O or LLM latency.
-- 🎯 **Dynamic Closest-Cost Model Selection:** Instead of static tiers, AutoConduck evaluates prompt complexity on the fly and picks the closest model on a logarithmic cost continuum with real-time Exponential Moving Average (EMA) tracking.
-- 🧠 **LangGraph Multi-Agent Orchestrator:** Complex multi-file prompts automatically escalate to an asynchronous pipeline featuring deterministic recon, file-context distillation, parallel subagent analysts, zero-LLM compaction, and a grounded executor tool loop.
-- 🔌 **Drop-in Compatibility:** Exposes standard OpenAI `/v1/chat/completions` and `/v1/models` endpoints alongside an Anthropic `/v1/messages` translation shim.
+- **Sub-5ms Fast Path:** Simple turns (lookups, docstrings, single-line edits, tool loops) execute through a compiled zero-reflection micro-DAG without I/O or LLM latency.
+- **Dynamic Closest-Cost Model Selection:** Instead of static tiers, AutoConduck evaluates prompt complexity on the fly and picks the closest model on a logarithmic cost continuum with real-time Exponential Moving Average (EMA) tracking.
+- **LangGraph Multi-Agent Orchestrator:** Complex multi-file prompts automatically escalate to an asynchronous pipeline featuring deterministic recon, file-context distillation, parallel subagent analysts, zero-LLM compaction, and a grounded executor tool loop.
+- **Drop-in Compatibility:** Exposes standard OpenAI `/v1/chat/completions` and `/v1/models` endpoints alongside an Anthropic `/v1/messages` translation shim.
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 Agent Request (Claude Code / OpenCode / Pi / Aider / Cursor)
@@ -88,7 +88,7 @@ Agent Request (Claude Code / OpenCode / Pi / Aider / Cursor)
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
@@ -119,7 +119,7 @@ The server listens on `http://127.0.0.1:11434/v1` by default.
 
 ---
 
-## 🎯 The Three Pseudo-Models
+## The Three Pseudo-Models
 
 AutoConduck presents three virtual models to your coding agents:
 
@@ -131,7 +131,7 @@ AutoConduck presents three virtual models to your coding agents:
 
 ---
 
-## 🔌 Agent Integrations
+## Agent Integrations
 
 AutoConduck provides automated configuration and launcher shims for all major coding tools:
 
@@ -193,7 +193,7 @@ In Cursor or Continue settings:
 
 ---
 
-## 🔬 How It Works Internally
+## How It Works Internally
 
 ### 1. 10-Factor Complexity Scoring (`routing/complexity.py`)
 
@@ -235,7 +235,7 @@ For complex requests ($\text{Complexity} \ge 0.75$), AutoConduck executes an asy
 
 ---
 
-## 📊 Interactive TUI Dashboard
+## Interactive TUI Dashboard
 
 AutoConduck features an interactive Textual terminal UI:
 
@@ -254,7 +254,7 @@ autoconduck
 
 ---
 
-## ⚙️ Configuration Reference
+## Configuration Reference
 
 AutoConduck stores its configuration at `~/.autoconduck/config.yaml` (or `$AUTOCONDUCK_HOME/config.yaml`) and provider keys at `~/.autoconduck/auth.yaml`.
 
@@ -300,7 +300,7 @@ model_list:
 
 ---
 
-## 📈 Audit & Observability
+## Audit & Observability
 
 AutoConduck exposes dedicated operational endpoints:
 
@@ -314,7 +314,7 @@ autoconduck stats --json
 
 ---
 
-## 🛠️ Development
+## Development
 
 ```bash
 # Clone and install development environment
@@ -332,6 +332,6 @@ python scripts/refresh_catalog.py
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
