@@ -135,9 +135,15 @@ def _run_proxy(port: int, log_level: str = "info", host: str = "127.0.0.1"):
     async def _patched_startup(sockets=None):
         await _orig_startup(sockets=sockets)
         _write_ready()
+        logging.getLogger("autoconduck").info(
+            "AutoConduck proxy ready at http://%s:%d (Press CTRL+C to quit)", host, port
+        )
 
     server.startup = _patched_startup
-    server.run()
+    try:
+        server.run()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
 
 
 SUPERVISOR_MAX_RAPID_FAILURES = 5

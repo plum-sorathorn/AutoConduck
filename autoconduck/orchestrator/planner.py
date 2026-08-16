@@ -129,17 +129,29 @@ Worked example — request: review payment retry behavior
 
 _PATH_RE = re.compile(
     r"""(?x)
-    (?P<q>["'`])(?P<pquoted>[^"'`\s]+?\.(?:py|md|json|toml|txt))(?P=q)
+    (?P<q>["'`])(?P<pquoted>[^"'`\s]+?\.(?:py|js|ts|tsx|jsx|md|json|toml|yaml|yml|txt|tmp))(?P=q)
     |
-    (?P<pplain>(?:[\w.-]+/)+[\w.-]+\.(?:py|md|json|toml|txt))
+    (?P<pplain>[\w./\\-]+\.(?:py|js|ts|tsx|jsx|md|json|toml|yaml|yml|txt|tmp))\b
     """
 )
 
 
-def _extract_file_paths(messages: list[dict]) -> list[str]:
-    """Regex-scan message texts for plausible relative paths that exist on disk."""
+from .skeletons import is_ignored_path, load_gitignore_patterns, format_structural_context
+
+
+def _extract_file_paths(
+    messages: list[dict], root: Path | None = None, max_paths: int = 6
+) -> list[str]:
+    """Regex-scan recent message texts for plausible relative paths that exist on disk, filtering gitignore."""
+    if not messages:
+        return []
+    root = root or Path.cwd()
+    patterns = load_gitignore_patterns(root)
+
+    # Focus on the most recent user turn (and at most last 4 messages) to avoid ancient transcript tool leaks
+    recent_msgs = messages[-4:] if len(messages) > 4 else messages
     texts: list[str] = []
-    for msg in messages or []:
+    for msg in recent_msgs:
         if not isinstance(msg, dict):
             continue
         content = msg.get("content")
@@ -151,9 +163,9 @@ def _extract_file_paths(messages: list[dict]) -> list[str]:
                     texts.append(part["text"])
                 elif isinstance(part, str):
                     texts.append(part)
+
     found: list[str] = []
     seen: set[str] = set()
-    root = Path.cwd()
     for text in texts:
         for m in _PATH_RE.finditer(text):
             path = m.group("pquoted") or m.group("pplain")
@@ -162,37 +174,42 @@ def _extract_file_paths(messages: list[dict]) -> list[str]:
             candidate = Path(path)
             if candidate.is_absolute():
                 continue
+            norm = path.replace("\\", "/")
+            if is_ignored_path(norm, root, patterns):
+                continue
             full = root / candidate
             try:
                 if full.is_file():
-                    found.append(path.replace("\\", "/"))
-                    seen.add(path)
+                    found.append(norm)
+                    seen.add(norm)
+                    if len(found) >= max_paths:
+                        return found
             except OSError:
                 continue
     return found
 
 
-def _read_files(paths: list[str]) -> dict[str, str]:
-    """Plain file I/O; skip unreadable paths. Keys are the original path strings."""
+def _read_files(
+    paths: list[str], root: Path | None = None, max_file_bytes: int = 150_000
+) -> dict[str, str]:
+    """Plain file I/O; skip unreadable or excessively large files."""
     out: dict[str, str] = {}
-    root = Path.cwd()
+    root = root or Path.cwd()
     for path in paths:
         try:
             full = root / path
             if full.is_file():
+                if full.stat().st_size > max_file_bytes:
+                    continue
                 out[path] = full.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
     return out
 
 
-def _format_file_contents(files: dict[str, str]) -> str:
-    if not files:
-        return ""
-    parts = ["\n\nFILE CONTENTS (ground truth for planning):"]
-    for path, content in files.items():
-        parts.append(f"{path}:\n{content}")
-    return "\n".join(parts)
+def _format_file_contents(files: dict[str, str], ground_truth: str = "") -> str:
+    """Format AST skeletons, cross-file dependency maps, and recon scout ground truth."""
+    return format_structural_context(files, ground_truth=ground_truth)
 
 
 def _select_planner_model(retry: bool = False, cfg=None, task_value=0.5, config=None) -> str:
@@ -288,9 +305,7 @@ def build_task_plan(
         messages = normalize_messages_for_llm(messages if isinstance(messages, list) else [])
         schema = TaskPlan.model_json_schema()
         paths = _extract_file_paths(messages if isinstance(messages, list) else [])
-        file_block = _format_file_contents(_read_files(paths))
-        if ground_truth:
-            file_block += f"\n\nRECON GROUND TRUTH EVIDENCE:\n{ground_truth}"
+        file_block = _format_file_contents(_read_files(paths), ground_truth=ground_truth)
         from .roles import role_card
         system_content = (role_card("planner") + "\n" if getattr(getattr(cfg, "selection", None), "phase_role_cards", True) else "") + PLANNER_SYSTEM_PROMPT + file_block
         user_messages = [

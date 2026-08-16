@@ -48,11 +48,13 @@ def find_process_on_port(port: int) -> int | None:
         pass
     if os.name == "nt":
         try:
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
             result = subprocess.run(
                 ["netstat", "-ano", "-p", "tcp"],
                 capture_output=True,
                 text=True,
                 check=False,
+                creationflags=flags,
             )
             return _parse_netstat_output(result.stdout, port)
         except OSError:

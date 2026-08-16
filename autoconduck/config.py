@@ -421,7 +421,17 @@ def save_config(cfg, path=None):
     p.parent.mkdir(parents=True, exist_ok=True)
     data = cfg.model_dump()
     _normalize_model_entries(data)
-    p.write_text(yaml.safe_dump(data), encoding="utf-8")
+    temp_path = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+    try:
+        temp_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+        temp_path.replace(p)
+    except Exception:
+        p.write_text(yaml.safe_dump(data), encoding="utf-8")
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
     _config = None
     _config_digest = None
     _config_path = None

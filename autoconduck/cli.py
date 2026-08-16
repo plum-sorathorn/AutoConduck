@@ -34,11 +34,6 @@ def cmd_start(args):
     # Agent configuration and shim installation are intentionally opt-in.  They
     # happen only from ``install`` or the explicit onboarding integration step,
     # never as a side effect of starting the API or opening the TUI.
-    if not getattr(args, "headless", False) and not home_dir().exists():
-        port = _find_free_port(port)
-        _check_port_available(port)
-        _run_proxy(port, cfg.log_level)
-        return
     if getattr(args, "headless", False):
         if getattr(args, "daemon", False):
             _check_port_available(port)
@@ -135,7 +130,15 @@ def cmd_start(args):
         _check_port_available(port)
         try:
             from .tui.app import AutoConduckApp
-            res = AutoConduckApp(configured=bool(getattr(cfg, "model_list", []))).run()
+            is_configured = bool(
+                any(
+                    isinstance(e, dict) and e.get("enabled", True)
+                    for e in config._configured_model_sources(cfg)
+                )
+                or getattr(cfg, "model_list", [])
+                or getattr(cfg, "custom_models", [])
+            )
+            res = AutoConduckApp(configured=is_configured).run()
             if isinstance(res, str) and res.startswith("launch:"):
                 agent_id = res.split("launch:", 1)[1]
                 cmd_launch_agent(agent_id)
@@ -146,7 +149,16 @@ def cmd_start(args):
             ) if args.host != "127.0.0.1" else _run_proxy(port, cfg.log_level)
 def cmd_edit(args):
     from .tui.app import AutoConduckApp
-    getattr(AutoConduckApp(configured=False), "run")()
+    cfg = load_config()
+    is_configured = bool(
+        any(
+            isinstance(e, dict) and e.get("enabled", True)
+            for e in config._configured_model_sources(cfg)
+        )
+        or getattr(cfg, "model_list", [])
+        or getattr(cfg, "custom_models", [])
+    )
+    getattr(AutoConduckApp(configured=is_configured), "run")()
 def cmd_reset(args):
     if not getattr(args, "force", False) and input(
         "Reset AutoConduck, stop the daemon, revert coding agent configurations, and delete state under autoconduck home? [y/N] "
@@ -358,21 +370,24 @@ def main(argv: list[str] | None = None):
     uninstall = sub.add_parser("uninstall")
     uninstall.add_argument("--force", action="store_true")
     uninstall.set_defaults(handler=cmd_uninstall)
-    args = parser.parse_args(argv)
-    if args.version:
-        from . import __version__
-        print(__version__)
-    elif args.cmd == "start":
-        cmd_start(args)
-    elif args.cmd == "edit":
-        cmd_edit(args)
-    elif args.cmd == "reset":
-        cmd_reset(args)
-    elif args.cmd == "uninstall":
-        cmd_uninstall(args)
-    elif hasattr(args, "handler"):
-        args.handler(args)
-    else:
-        cmd_start(argparse.Namespace(headless=False, port=None, host="127.0.0.1"))
+    try:
+        args = parser.parse_args(argv)
+        if args.version:
+            from . import __version__
+            print(__version__)
+        elif args.cmd == "start":
+            cmd_start(args)
+        elif args.cmd == "edit":
+            cmd_edit(args)
+        elif args.cmd == "reset":
+            cmd_reset(args)
+        elif args.cmd == "uninstall":
+            cmd_uninstall(args)
+        elif hasattr(args, "handler"):
+            args.handler(args)
+        else:
+            cmd_start(argparse.Namespace(headless=False, port=None, host="127.0.0.1"))
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        return 0
 from .server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
 from .cli_launch import cmd_launch_agent, cmd_install, cmd_tune, _open_new_terminal

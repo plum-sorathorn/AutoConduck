@@ -27,3 +27,46 @@ def assign_subagent_role(goal:str)->str:
         if any(w in t for w in words): return role
     return "worker"
 def role_card(name:str)->str: return ROLES.get(name,ROLES["delegate"]).system_prompt
+
+
+def resolve_analysts_for_task(
+    user_text: str,
+    candidate_files: list[str],
+    task_value: float = 0.5,
+) -> list[tuple[str, str, list[str]]]:
+    """Dynamically determine 1 to 3 analyst roles, directives, and file scopes.
+    Returns list of (role_name, goal_directive, target_files).
+    """
+    text = user_text.lower()
+    files = list(candidate_files)
+
+    if task_value < 0.45 and len(files) <= 1:
+        target = files if files else []
+        return [
+            ("reviewer", f"Inspect core implementation and symbol definitions in {', '.join(target) or 'the target components'}.", target)
+        ]
+
+    wants_verification = (
+        task_value >= 0.70
+        or any(w in text for w in ("test", "pytest", "bug", "error", "fail", "broken", "regression", "fix"))
+    )
+
+    specs: list[tuple[str, str, list[str]]] = []
+    scope_logic = files[:2] if files else []
+    specs.append(
+        ("reviewer", f"Inspect core logic, state handling, and failure modes in {', '.join(scope_logic) or 'the primary components'}.", scope_logic)
+    )
+
+    scope_arch = files[1:4] if len(files) > 1 else files
+    specs.append(
+        ("scout", f"Analyze cross-module dependencies, interfaces, and integration contracts in {', '.join(scope_arch) or 'the system architecture'}.", scope_arch)
+    )
+
+    if wants_verification:
+        test_files = [f for f in files if "test" in f.lower()]
+        scope_verif = test_files if test_files else files
+        specs.append(
+            ("oracle", f"Identify test fixtures, regression risks, edge cases, and verification assertions for {', '.join(scope_verif) or 'the proposed changes'}.", scope_verif)
+        )
+
+    return specs

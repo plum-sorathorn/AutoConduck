@@ -71,7 +71,7 @@ def is_tool_loop(messages: list, config=None) -> bool:
             for block in content
         )
         if (
-            msg.get("role") in ("tool", "function")
+            msg.get("role") in ("tool", "function", "toolResult")
             or "tool_calls" in msg
             or "function_call" in msg
             or block_signal
@@ -84,7 +84,7 @@ def is_tool_loop(messages: list, config=None) -> bool:
     active: list[tuple[int, dict]] = []
     for index, msg in signals:
         if msg.get("role") == "assistant" and "tool_calls" in msg:
-            if index + 1 < len(recent) and recent[index + 1].get("role") == "user":
+            if index + 1 < len(recent) and recent[index + 1].get("role") in ("user", "toolResult"):
                 active.append((index, msg))
             elif index == len(recent) - 1:
                 active.append((index, msg))
@@ -116,12 +116,22 @@ def is_tool_loop(messages: list, config=None) -> bool:
     if has_escalation_signal(adjacent_text) or has_stack_trace(adjacent_text):
         return False
 
-    # Long tool chain soft-escalation: if >12 tool turns have fired, allow re-scoring
+    # Long tool chain soft-escalation: if >12 tool turns have fired in the *active* chain, allow re-scoring.
+    # Find the latest user turn so cumulative history from past turns doesn't poison future tool loops.
+    last_user_idx = -1
+    for i, m in enumerate(messages):
+        if isinstance(m, dict) and m.get("role") == "user" and "<system-reminder>" not in str(m.get("content", "")):
+            c = m.get("content")
+            if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
+                continue
+            last_user_idx = i
+
+    active_messages = messages[last_user_idx + 1:] if last_user_idx >= 0 else messages
     tool_turn_count = sum(
         1
-        for m in messages
+        for m in active_messages
         if isinstance(m, dict)
-        and (m.get("role") in ("tool", "function") or "tool_calls" in m)
+        and (m.get("role") in ("tool", "function", "toolResult") or "tool_calls" in m)
     )
     if tool_turn_count > 12:
         return False

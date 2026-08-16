@@ -249,3 +249,67 @@ async def test_digest_extraction_resolves_existing_files(tmp_path):
     )
     assert result is not None
     assert "### " in result[0]["content"]
+
+
+# ---------------------------------------------------------------------------
+# Tool Loop Invariants in Long Sessions
+# ---------------------------------------------------------------------------
+
+
+def test_tool_loop_in_long_multi_turn_session():
+    """Verify tool loops in long sessions (>12 cumulative tool calls) are not hijacked by SLOW path."""
+    messages = []
+    # Build 5 past turns, each with 3 tool calls (15 cumulative tool calls)
+    for i in range(5):
+        messages.append({"role": "user", "content": f"User question {i}"})
+        for c in range(3):
+            messages.append({
+                "role": "assistant",
+                "content": f"Running step {c}",
+                "tool_calls": [{"id": f"call_{i}_{c}", "type": "function", "function": {"name": "read", "arguments": "{}"}}],
+            })
+            messages.append({"role": "tool", "tool_call_id": f"call_{i}_{c}", "content": "file output"})
+
+    # Now turn 6: new user prompt, assistant tool call, and tool output
+    messages.append({"role": "user", "content": "Now run graphify query and update changes"})
+    messages.append({
+        "role": "assistant",
+        "content": "Executing queries",
+        "tool_calls": [{"id": "call_6_0", "type": "function", "function": {"name": "bash", "arguments": "{}"}}],
+    })
+    messages.append({"role": "tool", "tool_call_id": "call_6_0", "content": "BFS graph traversal output with lots of code symbols"})
+
+    assert evaluator.is_tool_loop(messages) is True
+    match = RouteMatch("slow_path", 0.9)
+    result = score(messages, [], match)
+    assert result.path == "fast"
+    assert "interactive agent tool loop" in result.reason
+
+
+def test_tool_loop_with_toolResult_role():
+    """Verify is_tool_loop supports pi/custom toolResult roles."""
+    messages = [
+        {"role": "user", "content": "Update dependencies"},
+        {
+            "role": "assistant",
+            "content": "Updating",
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "bash", "arguments": "{}"}}],
+        },
+        {"role": "toolResult", "toolCallId": "c1", "content": [{"type": "text", "text": "Done!"}]},
+    ]
+    assert evaluator.is_tool_loop(messages) is True
+
+
+def test_tool_loop_soft_escalation_on_active_chain():
+    """Verify tool loop allows re-scoring if the ACTIVE chain alone exceeds 12 calls."""
+    messages = [{"role": "user", "content": "Complex loop"}]
+    for c in range(14):
+        messages.append({
+            "role": "assistant",
+            "content": f"Step {c}",
+            "tool_calls": [{"id": f"c_{c}", "type": "function", "function": {"name": "read", "arguments": "{}"}}],
+        })
+        messages.append({"role": "tool", "tool_call_id": f"c_{c}", "content": "read ok"})
+
+    assert evaluator.is_tool_loop(messages) is False
+
