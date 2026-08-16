@@ -297,5 +297,19 @@ def test_resolve_analysts_for_task():
     assert "oracle" in roles
 
 
+def test_check_subagent_support_agent_filtering():
+    from autoconduck.orchestrator.handoff import check_subagent_support
+
+    # Non-pi client types must always return False, False
+    assert check_subagent_support(client_type="claude") == (False, False)
+    assert check_subagent_support(client_type="opencode") == (False, False)
+
+    # Non-pi user agents must return False, False
+    assert check_subagent_support(user_agent="OpenCode/1.0") == (False, False)
+    assert check_subagent_support(user_agent="Claude-Code/0.2.9") == (False, False)
+    assert check_subagent_support(user_agent="anthropic-sdk-typescript/0.27.0") == (False, False)
+
+
+
 
 

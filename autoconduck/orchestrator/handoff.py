@@ -7,11 +7,19 @@ from pathlib import Path
 from typing import Any
 
 
-def check_subagent_support() -> tuple[bool, bool]:
+def check_subagent_support(user_agent: str = "", client_type: str | None = None) -> tuple[bool, bool]:
     """Check if Pi is configured and whether the pi-subagents package/extension is installed.
 
     Returns (is_pi_configured, has_subagents).
     """
+    if client_type is not None:
+        if str(client_type).lower() != "pi":
+            return False, False
+    elif user_agent:
+        ua_lower = user_agent.lower()
+        if any(agent in ua_lower for agent in ("opencode", "claude", "anthropic")):
+            return False, False
+
     try:
         agent_dir = (
             Path(os.environ.get("PI_CODING_AGENT_DIR", "")).expanduser()
@@ -149,9 +157,14 @@ def build_subagent_workflow_script(plan: Any, subagent_outputs: dict[str, str]) 
     return "\n\n".join(lines)
 
 
-def build_subagent_tool_call(plan: Any, subagent_outputs: dict[str, str]) -> dict[str, Any] | None:
+def build_subagent_tool_call(
+    plan: Any,
+    subagent_outputs: dict[str, str],
+    user_agent: str = "",
+    client_type: str | None = None,
+) -> dict[str, Any] | None:
     """Build a tool_call dict invoking pi-subagents if supported."""
-    is_pi, has_subagents = check_subagent_support()
+    is_pi, has_subagents = check_subagent_support(user_agent=user_agent, client_type=client_type)
     if not (is_pi and has_subagents):
         return None
     script = build_subagent_workflow_script(plan, subagent_outputs)
@@ -161,6 +174,7 @@ def build_subagent_tool_call(plan: Any, subagent_outputs: dict[str, str]) -> dic
 
     call_id = f"call_subagent_{int(time.time())}"
     return {
+        "index": 0,
         "id": call_id,
         "type": "function",
         "function": {
@@ -174,9 +188,11 @@ def format_execution_handoff(
     plan: Any,
     subagent_outputs: dict[str, str],
     compacted: str,
+    user_agent: str = "",
+    client_type: str | None = None,
 ) -> ExecutionHandoff:
     """Format a clean, structured implementation plan with verified context for the client agent."""
-    is_pi, has_subagents = check_subagent_support()
+    is_pi, has_subagents = check_subagent_support(user_agent=user_agent, client_type=client_type)
     sections: list[str] = []
 
     # Warning / Notice if Pi is configured but pi-subagents extension is missing
@@ -220,7 +236,11 @@ def format_execution_handoff(
     if compacted and not subtasks:
         sections.append(f"### Key Findings & Architecture\n\n{compacted}")
 
-    tool_call = build_subagent_tool_call(plan, subagent_outputs) if (is_pi and has_subagents and subtasks) else None
+    tool_call = (
+        build_subagent_tool_call(plan, subagent_outputs, user_agent=user_agent, client_type=client_type)
+        if (is_pi and has_subagents and subtasks)
+        else None
+    )
 
     if is_pi and has_subagents and len(subtasks) >= 1:
         sections.append(

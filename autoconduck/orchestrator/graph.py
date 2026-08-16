@@ -1,11 +1,12 @@
 """Fault-tolerant LangGraph orchestration for the slow path."""
+"""Fault-tolerant LangGraph orchestration for the slow path."""
 
 from typing import Any
 import logging
 import asyncio
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 try:  # LangGraph is an optional pillar for minimal installs.
     from langgraph.graph import END, START, StateGraph
@@ -41,6 +42,7 @@ def _is_subagent_error(value: str) -> bool:
 
 
 class State(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     messages: list = Field(default_factory=list)
     history: Any = None
     pseudo_model: str = "autoconduck"
@@ -49,10 +51,12 @@ class State(BaseModel):
     subagent_outputs: dict[str, str] = Field(default_factory=dict)
     subagent_error_count: int = 0
     compacted: str = ""
-    result: str | None = None
+    result: Any = None
     fallback: bool = False
     attempt: int = 0
     task_value: float = 0.5
+    user_agent: str = ""
+    client_type: str | None = None
 
 
 async def _call(client: Any, model: str, messages: list[dict[str, str]]) -> str:
@@ -97,6 +101,8 @@ async def run(
     task_value: float = 0.5,
     request=None,
     on_progress: Any = None,
+    user_agent: str = "",
+    client_type: str | None = None,
 ) -> str | None:
     if not _LANGGRAPH_AVAILABLE:
         return None
@@ -109,6 +115,14 @@ async def run(
         from autoconduck.messages_api import normalize_messages_for_llm
         from autoconduck import stats
         log = logging.getLogger("autoconduck.orchestrator")
+
+        req_ua = user_agent
+        req_client_type = client_type
+        if request is not None and hasattr(request, "headers"):
+            if not req_ua:
+                req_ua = request.headers.get("user-agent", "")
+            if not req_client_type:
+                req_client_type = request.headers.get("x-agent-id", None)
 
         def _emit(**kw: Any) -> None:
             is_subagent_row = kw.get("kind") == "subagent"
@@ -282,11 +296,13 @@ async def run(
         from .handoff import format_execution_handoff
 
         def compactor_node(state: State) -> dict:
-            _emit(node="compactor", step_detail="Formatting execution handoff for Pi...")
+            _emit(node="compactor", step_detail="Formatting execution handoff...")
             handoff_result = format_execution_handoff(
                 plan=state.plan,
                 subagent_outputs=state.subagent_outputs,
                 compacted=state.compacted,
+                user_agent=getattr(state, "user_agent", "") or "",
+                client_type=getattr(state, "client_type", None),
             )
             return {"result": handoff_result}
 
@@ -306,6 +322,8 @@ async def run(
                     history=history,
                     pseudo_model=pseudo_model,
                     task_value=task_value,
+                    user_agent=req_ua,
+                    client_type=req_client_type,
                 )
             )
             state = State.model_validate(final)

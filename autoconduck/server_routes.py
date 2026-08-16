@@ -67,7 +67,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
         result = await llm.acompletion(**kwargs)
         return result.model_dump() if hasattr(result, "model_dump") else result
 
-    async def _route_target(body_model, messages, request=None, on_progress=None):
+    async def _route_target(body_model, messages, request=None, on_progress=None, client_type=None):
         started = time.perf_counter()
         cfg = get_config()
         messages = normalize_messages_for_llm(messages)
@@ -103,7 +103,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                     from .orchestrator import run
                     result = await run(messages, [], pseudo_model=body_model,
                                        task_value=float(getattr(decision, "complexity", .5)), request=request,
-                                       on_progress=on_progress)
+                                       on_progress=on_progress, client_type=client_type)
                     if result is not None:
                         tool_calls = getattr(result, "tool_calls", None) or (result.get("tool_calls") if isinstance(result, dict) else None)
                         content = str(result) if not isinstance(result, dict) else result.get("content", str(result))
@@ -193,7 +193,14 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                         created = int(time.time())
                         sent_role = False
                         while True:
-                            event = await progress_q.get()
+                            if task.done() and progress_q.empty():
+                                break
+                            try:
+                                event = await asyncio.wait_for(progress_q.get(), timeout=0.1)
+                            except asyncio.TimeoutError:
+                                if task.done() and progress_q.empty():
+                                    break
+                                continue
                             delta_text = None
                             if isinstance(event, str):
                                 delta_text, node = event, "progress"
@@ -286,8 +293,20 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                 msg["tool_calls"] = tool_calls
             if body.stream:
                 async def answer_stream():
-                    yield "data: " + json.dumps({"id": "autoconduck", "object": "chat.completion.chunk", "created": created,
-                        "model": target or body.model, "choices": [{"index": 0, "delta": msg, "finish_reason": finish_reason}]}) + "\n\n"
+                    yield "data: " + json.dumps({
+                        "id": "autoconduck",
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": target or body.model,
+                        "choices": [{"index": 0, "delta": msg, "finish_reason": None}],
+                    }) + "\n\n"
+                    yield "data: " + json.dumps({
+                        "id": "autoconduck",
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": target or body.model,
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+                    }) + "\n\n"
                     yield "data: [DONE]\n\n"
                 return StreamingResponse(answer_stream(), media_type="text/event-stream")
             return {"id": "autoconduck", "object": "chat.completion", "created": created, "model": target or body.model,
@@ -323,12 +342,23 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
     async def messages_endpoint(body: MessagesRequest, request: Request):
         try: oai_messages = normalize_messages_for_llm(openai_messages_from_anthropic(body.model_dump(exclude_none=True)))
         except Exception as exc: return JSONResponse({"type": "error", "error": {"type": "invalid_request_error", "message": str(exc)}}, status_code=400)
-        try: target, extra = await _route_target(body.model, oai_messages, request)
+        try: target, extra = await _route_target(body.model, oai_messages, request, client_type="claude")
         except Exception as exc: return JSONResponse({"type": "error", "error": {"type": "api_error", "message": str(exc)}}, status_code=500)
         answer = extra.get("__answer__")
         if answer is not None:
             content = answer.get("content", "") if isinstance(answer, dict) else str(answer)
             tool_calls = answer.get("tool_calls") if isinstance(answer, dict) else getattr(answer, "tool_calls", None)
+            if tool_calls:
+                requested_tool_names = {
+                    (t.get("name") if isinstance(t, dict) else getattr(t, "name", None))
+                    for t in (body.tools or [])
+                }
+                valid_tool_calls = [
+                    tc for tc in tool_calls
+                    if ((tc.get("function") or {}).get("name") in requested_tool_names)
+                ]
+                tool_calls = valid_tool_calls or None
+
             if body.stream:
                 async def answer_stream():
                     translator = AnthropicSSETranslator(target or body.model, input_text=json.dumps(oai_messages))

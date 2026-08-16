@@ -90,3 +90,78 @@ def test_stats_endpoint(test_client):
     assert response.status_code == 200
     data = response.json()
     assert "decisions" in data or "total_requests" in data or "summary" in data or isinstance(data, dict)
+
+
+def test_completions_with_orchestrator_tool_calls(monkeypatch):
+    from autoconduck.orchestrator.handoff import ExecutionHandoff
+    handoff = ExecutionHandoff(
+        "Plan markdown content",
+        tool_calls=[{"index": 0, "id": "call_123", "type": "function", "function": {"name": "subagent", "arguments": '{"workflowScript":"..."}'}}]
+    )
+    async def mock_run(*args, **kwargs):
+        return handoff
+
+    monkeypatch.setattr("autoconduck.orchestrator.run", mock_run)
+    monkeypatch.setattr("autoconduck.routing.dispatcher.route", lambda *a, **kw: type("D", (), {"path": "SLOW", "model": None, "complexity": 0.85})())
+    main._build()
+    client = TestClient(main.app)
+
+    # Non-streaming test
+    resp = client.post("/v1/chat/completions", json={"model": "autoconduck", "messages": [{"role": "user", "content": "Refactor"}]})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["choices"][0]["finish_reason"] == "tool_calls"
+    assert len(body["choices"][0]["message"]["tool_calls"]) == 1
+    assert body["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "subagent"
+
+    # Streaming test
+    resp_stream = client.post("/v1/chat/completions", json={"model": "autoconduck", "messages": [{"role": "user", "content": "Refactor"}], "stream": True})
+    assert resp_stream.status_code == 200
+    lines = [l for l in resp_stream.text.split("\n") if l.startswith("data: ") and not l.endswith("[DONE]")]
+    chunks = [json.loads(l[6:]) for l in lines]
+    has_tool_calls = any(c["choices"][0].get("delta", {}).get("tool_calls") for c in chunks)
+    assert has_tool_calls
+    # Verify OpenAI streaming specification: chunk 1 has finish_reason: None, chunk 2 has finish_reason: "tool_calls"
+    assert chunks[-2]["choices"][0]["finish_reason"] is None
+    assert chunks[-1]["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_messages_endpoint_guards_undeclared_tools(monkeypatch):
+    from autoconduck.orchestrator.handoff import ExecutionHandoff
+    handoff = ExecutionHandoff(
+        "Refactoring plan content",
+        tool_calls=[{"index": 0, "id": "call_sub", "type": "function", "function": {"name": "subagent", "arguments": '{"workflowScript":"..."}'}}]
+    )
+    async def mock_run(*args, **kwargs):
+        return handoff
+
+    monkeypatch.setattr("autoconduck.orchestrator.run", mock_run)
+    monkeypatch.setattr("autoconduck.routing.dispatcher.route", lambda *a, **kw: type("D", (), {"path": "SLOW", "model": None, "complexity": 0.85})())
+    main._build()
+    client = TestClient(main.app)
+
+    # 1. Claude Code sends request without "subagent" in tools -> tool_use should be stripped to avoid SDK crash
+    resp_no_sub = client.post("/v1/messages", json={
+        "model": "autoconduck",
+        "messages": [{"role": "user", "content": "Refactor"}],
+        "tools": [{"name": "read_file", "description": "read", "input_schema": {"type": "object"}}],
+        "stream": False,
+    })
+    assert resp_no_sub.status_code == 200
+    data = resp_no_sub.json()
+    assert data["stop_reason"] == "end_turn"
+    assert all(b.get("type") != "tool_use" for b in data["content"])
+
+    # 2. Client sends request with "subagent" in tools -> tool_use is emitted cleanly
+    resp_with_sub = client.post("/v1/messages", json={
+        "model": "autoconduck",
+        "messages": [{"role": "user", "content": "Refactor"}],
+        "tools": [{"name": "subagent", "description": "run subagent", "input_schema": {"type": "object"}}],
+        "stream": False,
+    })
+    assert resp_with_sub.status_code == 200
+    data_sub = resp_with_sub.json()
+    assert data_sub["stop_reason"] == "tool_use"
+    assert any(b.get("type") == "tool_use" and b.get("name") == "subagent" for b in data_sub["content"])
+
+
