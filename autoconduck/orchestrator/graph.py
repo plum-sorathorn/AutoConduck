@@ -526,7 +526,15 @@ async def run(
                     pass
 
             analyst_summary = state.compacted
-            prompt = f"Original request:\n{user_text}\n\nAnalyst summary:\n{analyst_summary}"
+            plan_summary = state.plan.summary if state.plan and state.plan.summary else ""
+            prompt = (
+                f"Original request:\n{user_text}\n\n"
+                f"Analyst Findings & Decomposition:\n{analyst_summary}\n\n"
+                + (f"Task Plan:\n{plan_summary}\n\n" if plan_summary else "")
+                + "Provide a complete, directive Implementation Blueprint. "
+                "Specify the exact files to create or modify, complete code changes/diffs, "
+                "and an actionable step-by-step checklist for the coding agent (and its subagents) to execute immediately."
+            )
             result = None
             if getattr(getattr(cfg, "selection", None), "executor_enable_tools", True):
                 allowed_scope = sorted({s for st in (state.plan.subtasks if state.plan else []) for s in st.scope}) or ["."]
@@ -560,16 +568,29 @@ async def run(
                             analyst_summary,
                             len(valid_outputs),
                         ),
-                        [{"role": "user", "content": prompt}],
+                        [
+                            {"role": "system", "content": role_card("executor")},
+                            {"role": "user", "content": prompt},
+                        ],
                     )
                 except Exception as exc:
                     log.warning("executor fallback synthesis failed: %s", exc)
 
             if not result or not str(result).strip():
                 # Provide a structured plan + findings summary rather than empty output
-                plan_summary = state.plan.summary if state.plan and state.plan.summary else "Multi-agent task analysis completed."
-                subtask_details = "\n".join(f"- **{st.id}** ({st.goal}): {valid_outputs.get(st.id, 'Completed')}" for st in (state.plan.subtasks if state.plan else []))
-                result = f"### Orchestrator Task Plan\n{plan_summary}\n\n### Subtask Findings\n{subtask_details or analyst_summary}\n\n### Summary\n{analyst_summary or 'Analysis completed successfully.'}"
+                summary_header = plan_summary or "Multi-agent task analysis completed."
+                subtask_details = "\n".join(
+                    f"#### {st.id}: {st.goal}\n- **Scope**: {', '.join(st.scope) or 'general'}\n- **Findings & Actions**:\n{valid_outputs.get(st.id, 'Completed analysis.')}"
+                    for st in (state.plan.subtasks if state.plan else [])
+                )
+                result = (
+                    f"### Implementation Blueprint & Task Plan\n\n"
+                    f"{summary_header}\n\n"
+                    f"### Subtask Execution Directives\n\n"
+                    f"{subtask_details or analyst_summary}\n\n"
+                    f"### Summary\n\n"
+                    f"{analyst_summary or 'Analysis completed successfully. Proceed with implementation.'}"
+                )
 
             return {"result": result}
 

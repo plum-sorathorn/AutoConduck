@@ -257,12 +257,20 @@ def route(
             ),
             model=model,
         )
+    selection = getattr(config, "selection", config)
+    max_fast_cost = getattr(selection, "fast_path_max_scaled_cost", 0.50)
+    try:
+        max_fast_cost = float(max_fast_cost)
+    except (TypeError, ValueError):
+        max_fast_cost = 0.50
+
     model = (
         pricing.select_closest(
             pricing.pool_ids(config),
             result.complexity,
             config,
             pseudo_model=pseudo_model,
+            max_scaled_cost=max_fast_cost,
         )
         if result.path == "fast"
         else None

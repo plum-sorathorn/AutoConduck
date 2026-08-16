@@ -63,6 +63,12 @@ if _TEXTUAL:
                 "Only invoke the tiebreaker when complexity >= this value (default 0.45)",
                 "float",
             ),
+            (
+                "selection.fast_path_max_scaled_cost",
+                "Fast path cost cap",
+                "Max scaled cost ceiling for models on FAST path (default 0.50)",
+                "float",
+            ),
         ]
 
         LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"]

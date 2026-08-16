@@ -96,6 +96,7 @@ def _defaults() -> dict[str, Any]:
         "spend_guard_max_usd_per_min": 0.20,
         "ambiguous_low": 0.60,
         "ambiguous_high": 0.75,
+        "fast_path_max_scaled_cost": 0.50,
     }
 
 
@@ -138,7 +139,8 @@ def compute_tuning(
         warnings.append("No enabled models with prices; using epsilon assumptions.")
     old = _defaults()
     current = current or old
-    # High pressure (tight budget) -> steep gamma (favors cheap models), negative bias, lower phase bands
+    fast_max_scaled = round(max(0.15, min(0.75, 0.65 - pressure * 0.40)), 3)
+    # High pressure (tight budget) -> steep gamma (favors cheap models), negative bias, lower phase bands, lower fast path cap
     new = {
         "spend_guard_max_usd_per_min": max(0.001, rate * inputs.burst_factor),
         "value_to_cost_gamma": 1.0 + pressure * 2.0,
@@ -148,6 +150,7 @@ def compute_tuning(
         "quality_min_success_rate": 0.5,
         "ambiguous_low": 0.60 + pressure * 0.05,
         "ambiguous_high": 0.75 + pressure * 0.05,
+        "fast_path_max_scaled_cost": fast_max_scaled,
     }
     bands = {}
     shifts = {"planner": 0.20, "subagent": 0.20, "executor": 0.25}
@@ -168,6 +171,7 @@ def compute_tuning(
                 "pseudo_bias_budget": old["pseudo_bias_budget"],
                 "pseudo_bias_expensive": old["pseudo_bias_expensive"],
                 "phase_bands": old["phase_bands"],
+                "fast_path_max_scaled_cost": old["fast_path_max_scaled_cost"],
             }
         )
     else:

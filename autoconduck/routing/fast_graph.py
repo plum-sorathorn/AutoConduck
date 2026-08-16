@@ -166,11 +166,19 @@ class FastGraph:
         if state.path == "fast":
             from ..config import resolve_orchestrator_model
 
+            selection = getattr(state.config, "selection", state.config)
+            max_fast_cost = getattr(selection, "fast_path_max_scaled_cost", 0.50)
+            try:
+                max_fast_cost = float(max_fast_cost)
+            except (TypeError, ValueError):
+                max_fast_cost = 0.50
+
             model = pricing.select_closest(
                 pricing.pool_ids(state.config),
                 state.complexity,
                 state.config,
                 pseudo_model=state.pseudo_model,
+                max_scaled_cost=max_fast_cost,
             ) or resolve_orchestrator_model(state.config)
             state.model = model
             if model:

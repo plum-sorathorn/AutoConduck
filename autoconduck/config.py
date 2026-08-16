@@ -82,6 +82,8 @@ class SelectionConfig(BaseModel):
     # Maximum scaled cost permitted for file reading / recon / read analyst subagents.
     # Expensive models (scaled_cost > 0.55) will be excluded from file read tasks.
     max_file_read_scaled_cost: float = 0.55
+    # Maximum scaled cost permitted for models on the FAST path (budget hard cap for fast route).
+    fast_path_max_scaled_cost: float = 0.50
     # Threshold below which an escalated session de-escalates back to fast path.
     deescalation_threshold: float = 0.40
     # Enable compiled fast-path mini graph execution.
