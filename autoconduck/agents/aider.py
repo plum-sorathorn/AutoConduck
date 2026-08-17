@@ -25,6 +25,13 @@ class AiderAdapter(BaseAdapter):
         ]
 
     def patch(self, config: Config, port: int | None = None) -> None:
-        endpoint = f"http://127.0.0.1:{port if port is not None else config.port}/v1"
+        effective_port = int(port if port is not None else getattr(config, "port", 11434))
+        endpoint = f"http://127.0.0.1:{effective_port}/v1"
         target = next((path for path in self.config_paths() if path.exists()), self.config_paths()[0])
-        self._upsert_block(target, f"openai_api_base: {endpoint}\nopenai_api_type: openai")
+        content = (
+            f"openai_api_base: {endpoint}\n"
+            f"openai_api_type: openai\n"
+            f"openai_api_key: autoconduck-local\n"
+            f"model: openai/{getattr(config, 'pseudo_model', 'autoconduck') or 'autoconduck'}"
+        )
+        self._upsert_block(target, content)

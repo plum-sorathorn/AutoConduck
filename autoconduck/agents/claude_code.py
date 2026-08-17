@@ -27,7 +27,8 @@ class ClaudeCodeAdapter(BaseAdapter):
             home / ".claude" / "settings.json",
         ]
 
-    def patch(self, config: Config, port: int = 11434) -> None:
+    def patch(self, config: Config, port: int | None = None) -> None:
+        effective_port = int(port if port is not None else getattr(config, "port", 11434))
         path = Path.home() / ".claude" / "settings.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -43,7 +44,7 @@ class ClaudeCodeAdapter(BaseAdapter):
             stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
             (backup / f"{stamp}.bak").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
         env = data.get("env") if isinstance(data.get("env"), dict) else {}
-        values = _claude_env(port, getattr(config, "pseudo_model", "autoconduck"))
+        values = _claude_env(effective_port, getattr(config, "pseudo_model", "autoconduck"))
         marker = data.get("autoconduck") if isinstance(data.get("autoconduck"), dict) else {}
         previous = marker.get("previous_env", {})
         if not isinstance(previous, dict):

@@ -1,11 +1,11 @@
 # Model Catalog
 
-Total models: 1390
+Total models: 1402
 
 ## Models per provider
 - ai21: 9
 - amazon_nova: 4
-- anthropic: 26
+- anthropic: 27
 - anyscale: 12
 - azure: 22
 - azure_ai: 66
@@ -29,8 +29,9 @@ Total models: 1390
 - gigachat: 3
 - github_copilot: 2
 - gmi: 9
+- google: 2
 - gradient_ai: 10
-- groq: 9
+- groq: 10
 - hyperbolic: 1
 - inception: 1
 - lambda_ai: 17
@@ -49,8 +50,8 @@ Total models: 1390
 - nscale: 8
 - oci: 29
 - ollama: 20
-- openai: 90
-- openrouter: 54
+- openai: 89
+- openrouter: 59
 - ovhcloud: 5
 - palm: 2
 - perplexity: 17
@@ -63,6 +64,7 @@ Total models: 1390
 - scaleway: 5
 - snowflake: 10
 - tensormesh: 5
+- together: 4
 - together_ai: 14
 - v0: 3
 - vercel_ai_gateway: 40
@@ -99,6 +101,7 @@ Total models: 1390
 - nova-premier-v1 ($2.50 / 12.50 per 1M)
 - nova-pro-v1 ($0.800 / 3.20 per 1M)
 ### anthropic
+- claude-3-5-haiku-20241022 ($0.800 / 4.00 per 1M)
 - claude-3-7-sonnet-20250219 ($3.00 / 15.00 per 1M)
 - claude-3-haiku-20240307 ($0.250 / 1.25 per 1M)
 - claude-3-opus-20240229 ($15.00 / 75.00 per 1M)
@@ -800,6 +803,9 @@ Total models: 1390
 - claude-opus-4.5 ($5.00 / 25.00 per 1M)
 - claude-sonnet-4 ($3.00 / 15.00 per 1M)
 - claude-sonnet-4.5 ($3.00 / 15.00 per 1M)
+### google
+- gemini-1.5-flash ($0.075 / 0.300 per 1M)
+- gemini-1.5-pro ($1.25 / 5.00 per 1M)
 ### gradient_ai
 - anthropic-claude-3-opus ($15.00 / 75.00 per 1M)
 - anthropic-claude-3.5-haiku ($0.800 / 4.00 per 1M)
@@ -819,6 +825,7 @@ Total models: 1390
 - llama-guard-4-12b ($0.200 / 0.200 per 1M)
 - llama-prompt-guard-2-22m ($0.030 / 0.030 per 1M)
 - llama-prompt-guard-2-86m ($0.040 / 0.040 per 1M)
+- mixtral-8x7b-32768 ($0.240 / 0.240 per 1M)
 - qwen3-32b ($0.290 / 0.590 per 1M)
 - qwen3.6-27b ($0.600 / 3.00 per 1M)
 ### hyperbolic
@@ -1139,7 +1146,6 @@ Total models: 1390
 - gpt-5-mini-2025-08-07 ($0.250 / 2.00 per 1M)
 - gpt-5-nano ($0.050 / 0.400 per 1M)
 - gpt-5-nano-2025-08-07 ($0.050 / 0.400 per 1M)
-- gpt-5-pro ($15.00 / 120.00 per 1M)
 - gpt-5-search-api ($1.25 / 10.00 per 1M)
 - gpt-5-search-api-2025-10-14 ($1.25 / 10.00 per 1M)
 - gpt-5.1 ($1.25 / 10.00 per 1M)
@@ -1176,6 +1182,7 @@ Total models: 1390
 - o4-mini ($1.10 / 4.40 per 1M)
 - o4-mini-2025-04-16 ($1.10 / 4.40 per 1M)
 ### openrouter
+- anthropic/claude-3.5-sonnet ($3.00 / 15.00 per 1M)
 - auto ($0.00 / 0.00 per 1M)
 - bodybuilder ($0.00 / 0.00 per 1M)
 - claude-3-haiku ($0.250 / 1.25 per 1M)
@@ -1189,11 +1196,13 @@ Total models: 1390
 - deepseek-chat-v3-0324 ($0.140 / 0.280 per 1M)
 - deepseek-chat-v3.1 ($0.200 / 0.800 per 1M)
 - deepseek-v3.2-exp ($0.200 / 0.400 per 1M)
+- deepseek/deepseek-r1 ($0.550 / 2.19 per 1M)
 - free ($0.00 / 0.00 per 1M)
 - glm-4.6 ($0.400 / 1.75 per 1M)
 - glm-4.6:exacto ($0.450 / 1.90 per 1M)
 - glm-4.7 ($0.400 / 1.50 per 1M)
 - glm-5 ($0.800 / 2.56 per 1M)
+- google/gemini-2.5-flash ($0.300 / 2.50 per 1M)
 - gpt-5-codex ($1.25 / 10.00 per 1M)
 - gpt-5.1-codex-max ($1.25 / 10.00 per 1M)
 - gpt-5.2-codex ($1.75 / 14.00 per 1M)
@@ -1213,6 +1222,8 @@ Total models: 1390
 - mythomax-l2-13b ($1.88 / 1.88 per 1M)
 - nemotron-3.5-lightning ($0.050 / 0.200 per 1M)
 - o3-mini-high ($1.10 / 4.40 per 1M)
+- openai/gpt-4o ($2.50 / 10.00 per 1M)
+- openrouter/auto ($1.00 / 2.00 per 1M)
 - qwen-2.5-coder-32b-instruct ($0.180 / 0.180 per 1M)
 - qwen-vl-plus ($0.210 / 0.630 per 1M)
 - qwen3-235b-a22b-2507 ($0.071 / 0.100 per 1M)
@@ -1326,6 +1337,11 @@ Total models: 1390
 - Kimi-K2.6 ($0.960 / 4.00 per 1M)
 - Qwen3.5-397B-A17B-FP8 ($0.600 / 3.60 per 1M)
 - Qwen3.6-27B-FP8 ($0.320 / 3.20 per 1M)
+### together
+- deepseek-ai/DeepSeek-R1 ($0.550 / 2.19 per 1M)
+- deepseek-ai/DeepSeek-V3 ($0.140 / 0.280 per 1M)
+- meta-llama/Llama-3.3-70B-Instruct-Turbo ($0.880 / 0.880 per 1M)
+- togethercomputer/llama-3.3-70b-instruct ($0.880 / 0.880 per 1M)
 ### together_ai
 - DeepSeek-R1-0528-tput ($0.550 / 2.19 per 1M)
 - GLM-4.5-Air-FP8 ($0.200 / 1.10 per 1M)

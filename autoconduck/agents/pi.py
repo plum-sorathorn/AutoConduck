@@ -117,14 +117,41 @@ class PiAdapter(BaseAdapter):
             "}\n"
         )
 
-    def patch(self, config: Config, port: int = 11434) -> None:
+    def install_features(self) -> list[str]:
+        """Check and install any agent-specific plugins/extensions/features for Pi."""
+        installed = []
+        path = self.config_paths()[0]
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        except Exception:
+            data = {}
+        packages = data.get("packages", []) if isinstance(data, dict) else []
+        if not isinstance(packages, list):
+            packages = []
+        if not any("pi-subagents" in str(p) for p in packages):
+            def add_subagent_pkg(d: dict) -> None:
+                pkgs = d.setdefault("packages", [])
+                if not isinstance(pkgs, list):
+                    pkgs = []
+                    d["packages"] = pkgs
+                if "npm:pi-subagents" not in pkgs:
+                    pkgs.append("npm:pi-subagents")
+                marker = d.setdefault("autoconduck", {})
+                marker["installed_subagents"] = True
+
+            self._patch_json(path, add_subagent_pkg)
+            installed.append("pi-subagents")
+        return installed
+
+    def patch(self, config: Config, port: int | None = None) -> None:
+        effective_port = int(port if port is not None else getattr(config, "port", 11434))
         path = self.config_paths()[0]
         pi_settings = getattr(config, "pi", None)
         pseudo_model = str(
             getattr(pi_settings, "model", None) or getattr(config, "pseudo_model", None) or "autoconduck"
         )
 
-        base_url = self._resolve_base_url(pi_settings, port)
+        base_url = self._resolve_base_url(pi_settings, effective_port)
         api_key = self._resolve_api_key(pi_settings)
         context_window = int(getattr(pi_settings, "context_window", 1000000)) if pi_settings else 1000000
 
@@ -135,6 +162,15 @@ class PiAdapter(BaseAdapter):
         def update(data: dict) -> None:
             data["defaultProvider"] = self.provider_name
             data["defaultModel"] = pseudo_model
+            # Ensure pi-subagents package is registered in settings
+            packages = data.setdefault("packages", [])
+            if not isinstance(packages, list):
+                packages = []
+                data["packages"] = packages
+            if not any("pi-subagents" in str(p) for p in packages):
+                packages.append("npm:pi-subagents")
+                marker = data.setdefault("autoconduck", {})
+                marker["installed_subagents"] = True
 
         self._patch_json(path, update)
 
@@ -155,6 +191,14 @@ class PiAdapter(BaseAdapter):
 
             data.pop("defaultProvider", None)
             data.pop("defaultModel", None)
+
+            marker = data.pop("autoconduck", None)
+            if isinstance(marker, dict) and marker.get("installed_subagents"):
+                packages = data.get("packages")
+                if isinstance(packages, list):
+                    data["packages"] = [p for p in packages if "pi-subagents" not in str(p)]
+                    if not data["packages"]:
+                        data.pop("packages", None)
 
             # Defensive cleanup for settings files written by older,
             # dead-provider-block versions of this adapter.

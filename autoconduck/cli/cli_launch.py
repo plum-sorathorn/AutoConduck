@@ -5,22 +5,68 @@ from pathlib import Path
 from autoconduck import config
 from autoconduck.config import get_config, load_config, save_config, home_dir
 from autoconduck.server import DEFAULT_PORT
+AGENT_ALIASES: dict[str, str] = {
+    "claude": "claude_code",
+    "claude-code": "claude_code",
+    "claude_code": "claude_code",
+    "opencode": "opencode",
+    "open-code": "opencode",
+    "pi": "pi",
+    "aider": "aider",
+    "cursor": "cursor",
+    "continue": "continue_dev",
+    "continue_dev": "continue_dev",
+    "continue-dev": "continue_dev",
+    "kilocode": "kilocode",
+    "kilo-code": "kilocode",
+    "openai": "generic_openai",
+    "generic_openai": "generic_openai",
+}
+
+
+def resolve_agent_ids(requested: list[str] | None) -> list[str]:
+    from autoconduck import launcher
+    from autoconduck.agents import all_adapters
+
+    adapters = all_adapters()
+    if not requested:
+        return [a.id for a in adapters if launcher.real_binary_path(a.id) or a.id in ("claude_code", "opencode", "pi")]
+
+    resolved: list[str] = []
+    for raw in requested:
+        key = raw.strip().lower()
+        if key in ("all", "*"):
+            return [a.id for a in adapters]
+        aid = AGENT_ALIASES.get(key, key)
+        if any(a.id == aid for a in adapters):
+            if aid not in resolved:
+                resolved.append(aid)
+        else:
+            print(f"warning: unknown coding agent '{raw}'", file=sys.stderr)
+    return resolved
+
+
 def cmd_install(args):
     from autoconduck import launcher
     from autoconduck.agents import all_adapters
 
     adapters = all_adapters()
-    selected = args.agents or [
-        a.id for a in adapters if launcher.real_binary_path(a.id)
-    ]
+    selected = resolve_agent_ids(getattr(args, "agents", None))
+    cfg = load_config()
+    port = getattr(cfg, "port", DEFAULT_PORT)
+
     for aid in selected:
         adapter = next((a for a in adapters if a.id == aid), None)
         if adapter is None:
             continue
         try:
-            adapter.patch(load_config(), getattr(load_config(), "port", DEFAULT_PORT))
+            adapter.patch(cfg, port=port)
+            installed_feats = adapter.install_features()
+            if installed_feats:
+                print(f"{aid}: installed features: {', '.join(installed_feats)}")
         except Exception as exc:
-            print(f"failed {aid}: {exc}")
+            print(f"failed {aid}: {exc}", file=sys.stderr)
+
     paths = launcher.install_shims(selected)
     modified = launcher.ensure_path_entry()
     for aid, path in paths.items():
@@ -254,13 +300,26 @@ def cmd_launch_agent(agent_id: str, port: int | None = None, new_terminal: bool 
         return 1
 
     env = os.environ.copy()
+    pseudo = getattr(cfg, "pseudo_model", "autoconduck") or "autoconduck"
     if agent_id == "claude_code":
         env.update(
-            launcher._claude_env(port, getattr(cfg, "pseudo_model", "autoconduck"))
+            launcher._claude_env(port, pseudo)
         )
+    elif agent_id == "opencode":
+        env["OPENAI_BASE_URL"] = f"http://127.0.0.1:{port}/v1"
+        env["OPENAI_API_KEY"] = "autoconduck-local"
+        env["OPENCODE_MODEL"] = f"autoconduck/{pseudo}"
+    elif agent_id == "aider":
+        env["OPENAI_API_BASE"] = f"http://127.0.0.1:{port}/v1"
+        env["OPENAI_API_KEY"] = "autoconduck-local"
+        env["AIDER_MODEL"] = f"openai/{pseudo}"
     elif agent_id == "pi":
-        # Pi doesn't need special environment variables - settings.json handles configuration
-        pass
+        env["AI_AGENT"] = "pi"
+        env["PI_CODING_AGENT"] = "true"
+    else:
+        env["OPENAI_BASE_URL"] = f"http://127.0.0.1:{port}/v1"
+        env["OPENAI_API_BASE"] = f"http://127.0.0.1:{port}/v1"
+        env["OPENAI_API_KEY"] = "autoconduck-local"
 
     import subprocess as _sp
 

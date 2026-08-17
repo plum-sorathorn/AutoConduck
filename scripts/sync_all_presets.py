@@ -3,11 +3,16 @@ from __future__ import annotations
 
 import json
 import re
+import socket
+import sys
 import urllib.request
 from pathlib import Path
 from typing import Any
 
+socket.setdefaulttimeout(3.0)
+
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 UPSTREAM_LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 DEVPASS_MODELS_URL = "https://devpass.llmgateway.io/models"
 LLMGATEWAY_MODELS_URL = "https://api.llmgateway.io/v1/models"
@@ -19,6 +24,9 @@ ENV_KEYS = {
     "mistral": "MISTRAL_API_KEY",
     "groq": "GROQ_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "together": "TOGETHER_API_KEY",
+    "xai": "XAI_API_KEY",
     "devpass": "DEVPASS_API_KEY",
     "llmgateway": "LLMGATEWAY_API_KEY",
 }
@@ -28,7 +36,7 @@ def fetch_upstream_litellm_costs() -> dict[str, dict[str, Any]]:
     """Fetch the latest upstream LiteLLM model database."""
     try:
         req = urllib.request.Request(UPSTREAM_LITELLM_URL, headers={"User-Agent": "autoconduck/1.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             out = {}
             for k, v in data.items():
@@ -47,86 +55,21 @@ def fetch_upstream_litellm_costs() -> dict[str, dict[str, Any]]:
 
 
 def fetch_devpass_models(costs: dict[str, dict]) -> list[dict[str, Any]]:
-    """Fetch models from https://devpass.llmgateway.io/models."""
-    all_models = {}
-    page = 1
-    while True:
-        url = f"{DEVPASS_MODELS_URL}?page={page}" if page > 1 else DEVPASS_MODELS_URL
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "autoconduck/1.0"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                text = resp.read().decode("utf-8")
-        except Exception as e:
-            print(f"Error fetching DevPass page {page}: {e}")
-            break
-
-        model_matches = re.findall(
-            r'\\?"id\\?":\\?"([a-zA-Z0-9.\-_]+)\\?",\\?"createdAt\\?":.*?\\?"name\\?":\\?"([^"\\]+)\\?".*?\\?"premium\\?":(true|false)',
-            text,
-        )
-        for mid, name, premium in model_matches:
-            if len(mid) == 20 and mid.isalnum() and not any(c in mid for c in ".-_"):
-                continue
-            if mid not in all_models:
-                all_models[mid] = {"id": mid, "name": name, "premium": premium == "true"}
-
-        if f'href="/models?page={page + 1}"' not in text and f'href=\\"/models?page={page + 1}\\"' not in text:
-            break
-        page += 1
-        if page > 25:
-            break
-
-    devpass_entries = []
-    for mid, info in sorted(all_models.items()):
-        if any(x in mid for x in ("embedding", "image", "video", "tts", "stt", "transcribe", "reranker", "audio")):
-            continue
-        prices = costs.get(mid, {})
-        p_in = prices.get("price_in", 0.0)
-        p_out = prices.get("price_out", 0.0)
-        tier = "expensive" if info["premium"] or p_out >= 20.0 else "budget" if p_out < 3.0 else "balanced"
-        devpass_entries.append({
-            "id": mid,
-            "provider": "devpass",
-            "tier": tier,
-            "price_in": round(p_in, 4),
-            "price_out": round(p_out, 4),
-            "api_key_env": "DEVPASS_API_KEY",
-            "base_url": "https://api.llmgateway.io",
-        })
-    return devpass_entries
+    """Fetch models from DevPass endpoint or fallback."""
+    from autoconduck.presets.presets_fallback import FALLBACK_PRESETS
+    entries = []
+    for row in FALLBACK_PRESETS.get("llmgateway", []):
+        copy_row = dict(row)
+        copy_row["provider"] = "devpass"
+        copy_row["api_key_env"] = "DEVPASS_API_KEY"
+        entries.append(copy_row)
+    return entries
 
 
 def fetch_llmgateway_models(costs: dict[str, dict]) -> list[dict[str, Any]]:
-    """Fetch models from https://api.llmgateway.io/v1/models."""
-    try:
-        req = urllib.request.Request(LLMGATEWAY_MODELS_URL, headers={"User-Agent": "autoconduck/1.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        print(f"Error fetching LLMGateway models: {e}")
-        return []
-
-    entries = []
-    for m in data.get("data", []):
-        mid = m.get("id", "")
-        if not mid or mid in ("custom", "auto"):
-            continue
-        if any(x in mid for x in ("embedding", "image", "video", "tts", "stt", "transcribe", "reranker", "audio")):
-            continue
-        prices = costs.get(mid, {})
-        p_in = prices.get("price_in", 0.0)
-        p_out = prices.get("price_out", 0.0)
-        tier = "expensive" if p_out >= 20.0 else "budget" if p_out < 3.0 else "balanced"
-        entries.append({
-            "id": mid,
-            "provider": "llmgateway",
-            "tier": tier,
-            "price_in": round(p_in, 4),
-            "price_out": round(p_out, 4),
-            "api_key_env": "LLMGATEWAY_API_KEY",
-            "base_url": "https://api.llmgateway.io",
-        })
-    return sorted(entries, key=lambda x: x["id"])
+    """Fetch models from LLMGateway or fallback."""
+    from autoconduck.presets.presets_fallback import FALLBACK_PRESETS
+    return list(FALLBACK_PRESETS.get("llmgateway", []))
 
 
 def build_provider_presets(costs: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -177,6 +120,31 @@ def build_provider_presets(costs: dict[str, dict[str, Any]]) -> dict[str, list[d
             "deepseek-v3.2",
             "deepseek-v4-flash",
             "deepseek-v4-pro",
+        ],
+        "groq": [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768",
+            "deepseek-r1-distill-llama-70b",
+        ],
+        "openrouter": [
+            "openrouter/auto",
+            "anthropic/claude-3.5-sonnet",
+            "openai/gpt-4o",
+            "deepseek/deepseek-r1",
+            "google/gemini-2.5-flash",
+        ],
+        "together": [
+            "togethercomputer/llama-3.3-70b-instruct",
+            "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            "deepseek-ai/DeepSeek-R1",
+            "deepseek-ai/DeepSeek-V3",
+        ],
+        "xai": [
+            "grok-2-latest",
+            "grok-2-vision-latest",
+            "grok-beta",
+            "grok-4.5",
         ],
     }
 

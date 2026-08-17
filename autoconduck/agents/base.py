@@ -52,13 +52,18 @@ class BaseAdapter(ABC):
         except Exception:
             return None
 
+    def install_features(self) -> list[str]:
+        """Check and install any agent-specific plugins/extensions/features (e.g. pi-subagents)."""
+        return []
+
     @abstractmethod
-    def patch(self, config: Config) -> None:
+    def patch(self, config: Config, port: int | None = None) -> None:
         ...
 
     def revert(self) -> None:
-        # restore most recent backup per path, else remove AUTOCONDUCK block
+        # restore most recent backup per path, else remove AUTOCONDUCK block / JSON keys
         dest_dir = backups_dir(self.id)
+        restored = False
         if dest_dir.exists():
             for bak in sorted(dest_dir.glob("*.bak"), reverse=True):
                 meta = bak.with_suffix(".meta")
@@ -68,20 +73,41 @@ class BaseAdapter(ABC):
                         src = Path(src_str)
                         src.parent.mkdir(parents=True, exist_ok=True)
                         src.write_bytes(bak.read_bytes())
-                        return
+                        restored = True
+                        break
                     # fallback: restore to first config path
                     paths = self.config_paths()
                     if paths:
                         paths[0].parent.mkdir(parents=True, exist_ok=True)
                         paths[0].write_bytes(bak.read_bytes())
-                        return
+                        restored = True
+                        break
                 except Exception:
                     continue
-        # no backup: strip blocks
+        if restored:
+            return
+
+        # no backup: strip blocks from text files, or clean autoconduck key from JSON files
+        import json
         for p in self.config_paths():
             try:
-                if p.exists():
-                    self._strip_block(p)
+                if not p.exists():
+                    continue
+                raw = p.read_text(encoding="utf-8")
+                if p.suffix in (".json",):
+                    try:
+                        data = json.loads(raw)
+                        if isinstance(data, dict):
+                            data.pop("autoconduck", None)
+                            if "providers" in data and isinstance(data["providers"], dict):
+                                data["providers"].pop("autoconduck", None)
+                            if "provider" in data and isinstance(data["provider"], dict):
+                                data["provider"].pop("autoconduck", None)
+                            p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+                            continue
+                    except Exception:
+                        pass
+                self._strip_block(p)
             except Exception:
                 continue
 
