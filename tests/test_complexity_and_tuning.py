@@ -102,3 +102,51 @@ def test_save_and_load_profile(tmp_path, monkeypatch):
     save_profile(inputs, result)
     loaded = load_profile()
     assert "tunables" in loaded or "inputs" in loaded or isinstance(loaded, dict)
+
+
+def test_scope_breadth_snake_and_kebab_case():
+    from autoconduck.routing.complexity import complexity_of
+    snake_case_prompt = "Refactor user_account_manager, payment_gateway_service, and audit_log_emitter across all modules"
+    camel_case_prompt = "Refactor UserAccountManager, PaymentGatewayService, and AuditLogEmitter across all modules"
+    assert complexity_of(snake_case_prompt) > 0.35
+    assert complexity_of(camel_case_prompt) > 0.35
+
+
+def test_cross_domain_frontend_sql_and_ml_keywords():
+    from autoconduck.routing.complexity import complexity_of
+    ui_task = "Fix webgl shader animation layout shift and reconcile virtual dom state"
+    sql_task = "Analyze query plan, fix n+1 queries with composite index and table scan optimization"
+    ml_task = "Diagnose loss divergence and cuda oom with gradient backpropagation and ddp"
+    assert complexity_of(ui_task) > 0.35
+    assert complexity_of(sql_task) > 0.35
+    assert complexity_of(ml_task) > 0.35
+
+
+def test_short_prompt_abstraction_dampened():
+    from autoconduck.routing.complexity import complexity_of
+    short = "design"
+    long_arch = "design and architect the multi-tenant distributed streaming pipeline framework"
+    assert complexity_of(short) < complexity_of(long_arch)
+
+
+def test_non_english_fallback_complexity():
+    from autoconduck.routing.complexity import complexity_of, is_non_english
+    cjk_prompt = "请重构整个数据库架构并优化查询性能"
+    assert is_non_english(cjk_prompt) is True
+    # Non-English prompt gets a balanced fallback floor (~0.45+) instead of collapsing to 0
+    assert complexity_of(cjk_prompt) >= 0.40
+
+
+def test_recalibrate_weights_from_records():
+    from autoconduck.tuning import recalibrate_weights_from_records
+    records = [
+        {"escalated": True, "path": "slow", "complexity": 0.85},
+        {"escalated": True, "path": "slow", "complexity": 0.80},
+        {"escalated": True, "path": "slow", "complexity": 0.90},
+        {"escalated": False, "path": "fast", "complexity": 0.30},
+        {"escalated": False, "path": "fast", "complexity": 0.20},
+    ]
+    recalibrated = recalibrate_weights_from_records(records)
+    assert sum(recalibrated.values()) == pytest.approx(1.0, rel=1e-3)
+    assert recalibrated["scope_breadth"] > 0.12
+

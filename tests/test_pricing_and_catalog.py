@@ -158,3 +158,45 @@ def test_discover_models_preserves_literal_api_key():
     entries = discover_models(preset_keys=["custom"], custom_models=custom, use_litellm=False)
     assert entries[0].api_key == "sk-lit"
     assert entries[0].model_dump()["api_key"] == "sk-lit"
+
+
+def test_continuous_pseudo_bias_parsing():
+    cfg = Config(
+        model_list=[
+            {"id": "cheap", "price_in": 0.1, "price_out": 0.2, "enabled": True},
+            {"id": "expensive", "price_in": 10.0, "price_out": 30.0, "enabled": True},
+        ]
+    )
+    bias_negative = pricing.target_scaled_cost(0.5, "autoconduck:bias=-0.20", cfg)
+    bias_positive = pricing.target_scaled_cost(0.5, "autoconduck:bias=+0.20", cfg)
+    assert bias_negative == pytest.approx(0.30)
+    assert bias_positive == pytest.approx(0.70)
+
+
+def test_latency_sensitivity_preference():
+    cfg = Config(
+        model_list=[
+            {"id": "cheap-fast", "price_in": 0.1, "price_out": 0.2, "enabled": True},
+            {"id": "mid-capable", "price_in": 1.0, "price_out": 3.0, "enabled": True},
+            {"id": "expensive-slow", "price_in": 10.0, "price_out": 30.0, "enabled": True},
+        ],
+        selection=SelectionConfig(latency_sensitivity=1.0),
+    )
+    pool = pricing.pool_ids(cfg)
+    selected = pricing.select_closest(pool, 0.45, cfg)
+    assert selected == "cheap-fast"
+
+
+def test_validate_phase_bands_detects_empty_bands():
+    from autoconduck.config import validate_phase_bands
+    # Only ultra-budget models in pool
+    cfg = Config(
+        model_list=[
+            {"id": "micro-1", "price_in": 0.001, "price_out": 0.001, "enabled": True},
+        ],
+        selection=SelectionConfig(phase_bands={"planner": [0.70, 0.95]}),
+    )
+    warnings = validate_phase_bands(cfg)
+    assert len(warnings) > 0
+    assert "Phase band 'planner'" in warnings[0]
+

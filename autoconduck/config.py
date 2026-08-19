@@ -97,6 +97,13 @@ class SelectionConfig(BaseModel):
     executor_max_read_bytes: int = 200_000
     executor_enable_bash: bool = False
     slow_stream_progress: bool = True
+    default_target_bias: float = 0.0
+    latency_sensitivity: float = 0.0
+    intent_drift_enabled: bool = True
+    intent_drift_threshold: float = 0.70
+    hysteresis_window_size: int = 5
+    hysteresis_decay: float = 0.85
+    non_english_fallback_complexity: float = 0.45
 
     @field_validator("progress_verbosity", mode="before")
     @classmethod
@@ -397,7 +404,44 @@ def load_config(path=None) -> Config:
             "No models are configured in %s - add a preset or model_list or every request will fall back to a hardcoded default and may fail auth.",
             p,
         )
+    validate_phase_bands(config)
     return config
+
+
+def validate_phase_bands(config: Config) -> list[str]:
+    """Validate configured phase bands against available models in the pool.
+
+    Produces clear warnings if a band is empty or unreachable for the available pool.
+    """
+    warnings: list[str] = []
+    try:
+        from autoconduck.routing.pricing import pool_ids, scaled_cost
+        models = pool_ids(config)
+        if not models:
+            return warnings
+        costs = {m: scaled_cost(m, config) for m in models}
+        phase_bands = getattr(getattr(config, "selection", None), "phase_bands", None) or {
+            "planner": [0.55, 0.85],
+            "subagent": [0.10, 0.55],
+            "executor": [0.35, 0.70],
+        }
+        for name, band in phase_bands.items():
+            if not isinstance(band, (list, tuple)) or len(band) < 2:
+                continue
+            lo, hi = float(band[0]), float(band[1])
+            in_band = [m for m, c in costs.items() if lo <= c <= hi]
+            if not in_band:
+                cost_summary = ", ".join(f"{m}: {c:.2f}" for m, c in sorted(costs.items(), key=lambda x: x[1]))
+                msg = (
+                    f"Phase band '{name}' [{lo:.2f}, {hi:.2f}] contains 0 configured models "
+                    f"(available pool scaled costs: {cost_summary}). "
+                    f"Orchestration will fall back to closest available model."
+                )
+                warnings.append(msg)
+                logging.getLogger("autoconduck").warning(msg)
+    except Exception:
+        pass
+    return warnings
 
 
 _config = None

@@ -56,7 +56,6 @@ def _last(messages: list) -> str:
                 else getattr(item, "content", item)
             )
             if "<system-reminder>" not in str(content):
-                return str(content or "")
                 from .complexity import clean_routing_text
                 return clean_routing_text(content)
     return ""
@@ -72,7 +71,7 @@ def _routing_text(messages: list) -> str:
     return f"{user_text}\n{tool_text}".strip()
 
 
-def _context_boost(messages: list) -> float:
+def _context_boost(messages: list, config=None) -> float:
     """Compute an additive context-aware complexity boost ∈ [0, 0.20].
 
     Three sub-signals, all O(m) over messages (typically <20):
@@ -104,7 +103,13 @@ def _context_boost(messages: list) -> float:
     # 0.0 at 0 calls, 1.0 at 8+ calls
     tool_chain_length = min(1.0, tool_call_count / 8)
 
-    drift = _intent_drift(messages)
+    sel = getattr(config, "selection", config) if config else None
+    drift_enabled = bool(getattr(sel, "intent_drift_enabled", True) if sel else True)
+    drift_threshold = float(getattr(sel, "intent_drift_threshold", 0.70) if sel else 0.70)
+
+    raw_drift = _intent_drift(messages) if drift_enabled else 0.0
+    # Scale drift smoothly; if raw_drift is below threshold/2, minimal effect
+    drift = raw_drift if raw_drift >= (drift_threshold * 0.5) else 0.0
 
     boost = 0.08 * conversation_depth + 0.08 * tool_chain_length + 0.04 * drift
     return min(0.20, boost)

@@ -178,13 +178,13 @@ def score(
     # Active tool loops stay on the fast path UNLESS an escalation or stack trace
     # trigger fired (handled inside is_tool_loop) or the tool chain is very long.
     if is_tool_loop(messages, config=cfg):
-        ctx = _context_boost(messages)
+        ctx = _context_boost(messages, config=cfg)
         first_comp = _first_user_complexity(messages, cfg)
         eff_complexity = min(1.0, max(complexity, first_comp) + ctx)
         return Score("fast", "fast", 0.0, eff_complexity, "interactive agent tool loop")
 
     # Apply context-aware boost (conversation depth, tool chain, intent drift)
-    ctx = _context_boost(messages)
+    ctx = _context_boost(messages, config=cfg)
     complexity = min(1.0, complexity + ctx)
 
     confidence = min(
@@ -209,17 +209,37 @@ def score(
         else 0.40
     )
 
-    previous = history[-1] if isinstance(history, list) and history else history
-    escalated = bool(
-        getattr(previous, "complexity", 0) >= ESCALATION_THRESHOLD
-        or (
-            isinstance(previous, dict)
-            and (
-                previous.get("complexity", 0) >= ESCALATION_THRESHOLD
-                or previous.get("confidence", 0) >= ESCALATION_THRESHOLD
-            )
-        )
+    sel = getattr(cfg, "selection", cfg) if cfg else None
+    window_size = int(getattr(sel, "hysteresis_window_size", 5) if sel else 5)
+    decay = float(getattr(sel, "hysteresis_decay", 0.85) if sel else 0.85)
+
+    recent_history = (
+        history[-window_size:]
+        if isinstance(history, list)
+        else ([history] if history else [])
     )
+    decayed_max_complexity = 0.0
+    for idx, item in enumerate(reversed(recent_history)):
+        c = (
+            item.get("complexity", 0.0)
+            if isinstance(item, dict)
+            else getattr(item, "complexity", 0.0)
+        )
+        conf = (
+            item.get("confidence", 0.0)
+            if isinstance(item, dict)
+            else getattr(item, "confidence", 0.0)
+        )
+        effective_item_comp = max(
+            float(c or 0.0),
+            float(conf or 0.0) if float(conf or 0.0) >= ESCALATION_THRESHOLD else 0.0,
+        )
+        decayed_val = effective_item_comp * (decay ** idx)
+        if decayed_val > decayed_max_complexity:
+            decayed_max_complexity = decayed_val
+
+    escalated = decayed_max_complexity >= ESCALATION_THRESHOLD
+
     # DE-ESCALATION: If session was escalated but current turn is simple (< deescalation_threshold)
     # and carries no stack trace or escalation signals, active de-escalate back to fast path.
     if (
@@ -235,7 +255,6 @@ def score(
     if escalated:
         complexity = min(complexity, hysteresis_floor)
 
-    sel = getattr(cfg, "selection", cfg)
     slow_threshold = float(getattr(sel, "slow_threshold", 0.75) if sel else 0.75)
     if complexity >= slow_threshold:
         return Score("slow", "slow", confidence, complexity, "complexity threshold")

@@ -96,6 +96,28 @@ def test_hysteresis_clamp_after_escalation():
     assert decision.complexity <= 0.50 or decision.path == "fast"
 
 
+def test_windowed_decaying_hysteresis_allows_natural_recovery():
+    cfg = Config(
+        selection=SelectionConfig(
+            hysteresis_window_size=4,
+            hysteresis_decay=0.80,
+            deescalation_threshold=0.40,
+        ),
+        model_list=[{"id": "fast-model", "enabled": True}],
+    )
+    # Old escalation followed by multiple simple turns
+    history = [
+        {"complexity": 0.90, "confidence": 0.95}, # 4 turns ago: 0.90 * 0.8^3 = 0.46
+        {"complexity": 0.20, "confidence": 0.20},
+        {"complexity": 0.20, "confidence": 0.20},
+        {"complexity": 0.20, "confidence": 0.20},
+    ]
+    match = RouteMatch("fast_path", 0.20)
+    decision = score(["what line was that again?"], history, match, config=cfg)
+    assert decision.path == "fast"
+
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher & FastGraph Micro-DAG
 # ---------------------------------------------------------------------------

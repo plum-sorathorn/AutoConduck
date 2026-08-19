@@ -252,6 +252,65 @@ def save_profile(inputs: SimpleInputs, result: TuneResult, *, path=None) -> None
     )
 
 
+def recalibrate_weights_from_records(
+    stats_records: list[dict[str, Any]],
+    current_weights: dict[str, float] | None = None,
+) -> dict[str, float]:
+    """Refit complexity weights from historical escalation and de-escalation decisions.
+
+    Analyzes past routing events to boost weights for signals prevalent in escalated tasks
+    and dampen weights that did not correlate with high task value.
+    """
+    defaults = {
+        "length": 0.08,
+        "structural": 0.12,
+        "scope_breadth": 0.12,
+        "code_density": 0.05,
+        "abstraction_level": 0.12,
+        "uncertainty_hedge": 0.08,
+        "cross_domain": 0.12,
+        "task_novelty": 0.08,
+        "imperative_strength": 0.15,
+        "multi_step": 0.08,
+    }
+    weights = dict(current_weights or defaults)
+    if not stats_records:
+        return weights
+
+    escalated_count = 0
+    total_valid = 0
+    for record in stats_records:
+        if not isinstance(record, dict):
+            continue
+        total_valid += 1
+        is_esc = bool(
+            record.get("escalated")
+            or record.get("path") == "slow"
+            or float(record.get("complexity", 0.0)) >= 0.75
+        )
+        if is_esc:
+            escalated_count += 1
+
+    if total_valid < 5:
+        return weights
+
+    # If the user's workload escalates frequently (>40%), emphasize abstraction, scope, and cross-domain
+    esc_rate = escalated_count / max(1, total_valid)
+    if esc_rate > 0.40:
+        weights["scope_breadth"] = weights.get("scope_breadth", 0.12) * 1.25
+        weights["cross_domain"] = weights.get("cross_domain", 0.12) * 1.20
+        weights["abstraction_level"] = weights.get("abstraction_level", 0.12) * 1.15
+        weights["imperative_strength"] = weights.get("imperative_strength", 0.15) * 1.10
+    elif esc_rate < 0.15:
+        # Mostly light editing
+        weights["length"] = weights.get("length", 0.08) * 1.20
+        weights["code_density"] = weights.get("code_density", 0.05) * 1.20
+
+    # Normalize weights so they sum to 1.00
+    total_w = sum(weights.values())
+    return {k: round(v / total_w, 4) for k, v in weights.items()}
+
+
 def load_profile(*, path=None) -> dict[str, Any] | None:
     import json
     from pathlib import Path
@@ -264,3 +323,5 @@ def load_profile(*, path=None) -> dict[str, Any] | None:
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+

@@ -82,10 +82,15 @@ def is_subscription(model):
 def _entry_effective_value(model, config):
     """Return a comparable effective price in USD per million tokens.
 
-    Usage ``cost`` is recorded in USD per request, while configured prices are
-    USD per million tokens.  Mixing those units makes a busy model appear
-    artificially cheap after EMA warm-up.  Convert observed cost back to a
-    per-token rate before applying the success-quality penalty.
+    Pricing & Quality Accounting:
+      - Static catalog price: price_in + price_out (USD per million tokens).
+      - Realized usage EMA: Request cost converted back to USD per million tokens.
+      - Variance-aware sample blending: EMA is weighted by sample count and damped
+        by observed cost variance so bursty outliers don't destabilize routing.
+      - Success rate penalty: Measured as successful requests / attempts; failure
+        events (HTTP 5xx, rate limits, fatal errors) penalize effective cost via
+        ``observed / max(success_rate, quality_min_success_rate)``.
+      - Model quality score: Configured ``quality_score`` acts as an efficiency divisor.
     """
     entry = _entry(model, config)
     ema = _ema.get(str(model))
@@ -99,9 +104,18 @@ def _entry_effective_value(model, config):
             rate = float(
                 ema.get("success_rate", ema["successes"] / max(1, ema["attempts"]))
             )
-            base = observed / max(
+            ema_rate = observed / max(
                 rate, float(getattr(selection, "quality_min_success_rate", 0.5))
             )
+            # Variance-aware sample confidence blending:
+            # Low sample counts (<5) or high relative cost variance damp the EMA
+            # shift towards the catalog baseline.
+            samples = int(ema.get("samples", 1))
+            cost_var = float(ema.get("cost_variance", 0.0))
+            sample_weight = min(1.0, samples / max(5, minimum + 2))
+            var_damp = 1.0 / (1.0 + math.sqrt(max(0.0, cost_var)) / max(0.01, (base / 1_000_000) or 0.01))
+            confidence = sample_weight * var_damp
+            base = (1.0 - confidence) * base + confidence * ema_rate
     quality = entry.get("quality_score", 1.0)
     try:
         quality = float(quality)
@@ -161,6 +175,8 @@ def record_error(model):
 
 
 def record_usage(model, prompt_tokens, completion_tokens, *, cost=None, success=True):
+    """Record observed token usage, cost, and success status for variance-aware EMA."""
+    import re
     prompt_tokens, completion_tokens = int(prompt_tokens), int(completion_tokens)
     if cost is None:
         entry = _entry(model)
@@ -179,6 +195,12 @@ def record_usage(model, prompt_tokens, completion_tokens, *, cost=None, success=
         )
     except Exception:
         pass
+    old_cost = old["cost"] if old else cost
+    cost_variance = (
+        (1 - alpha) * old.get("cost_variance", 0.0) + alpha * ((cost - old_cost) ** 2)
+        if old
+        else 0.0
+    )
     _ema[model] = {
         "prompt": prompt_tokens
         if not old
@@ -187,6 +209,7 @@ def record_usage(model, prompt_tokens, completion_tokens, *, cost=None, success=
         if not old
         else (1 - alpha) * old["completion"] + alpha * completion_tokens,
         "cost": cost if not old else (1 - alpha) * old["cost"] + alpha * cost,
+        "cost_variance": cost_variance,
         "samples": old["samples"] + 1 if old else 1,
         "attempts": old["attempts"] + 1 if old else 1,
         "successes": old["successes"] + (1 if success else 0)
@@ -272,14 +295,22 @@ def is_over_budget(model, config):
 
 
 def target_scaled_cost(value, pseudo_model, config):
+    import re
     sel = getattr(config, "selection", config)
     gamma = float(getattr(sel, "value_to_cost_gamma", 1.0))
-    bias = 0.0
+    bias = float(getattr(sel, "default_target_bias", 0.0))
     if getattr(sel, "pseudo_bias_enabled", True):
-        bias = {
-            "autoconduck-budget": getattr(sel, "pseudo_bias_budget", -0.2),
-            "autoconduck-expensive": getattr(sel, "pseudo_bias_expensive", 0.2),
-        }.get(pseudo_model, 0.0)
+        if pseudo_model == "autoconduck-budget":
+            bias = float(getattr(sel, "pseudo_bias_budget", -0.2))
+        elif pseudo_model == "autoconduck-expensive":
+            bias = float(getattr(sel, "pseudo_bias_expensive", 0.2))
+        elif pseudo_model:
+            match = re.search(r"(?:bias[=:]|bias-)([-+]?[0-9]*\.?[0-9]+)", str(pseudo_model))
+            if match:
+                try:
+                    bias = float(match.group(1))
+                except ValueError:
+                    pass
     return max(0.0, min(1.0, float(value) ** gamma + bias))
 
 
@@ -312,6 +343,12 @@ def select_closest(pool, value, config, *, pseudo_model=None, band=None, degrade
             inside = [m for m in eligible if band[0] <= costs[m] <= band[1]]
             eligible = inside or eligible
         target = target_scaled_cost(value, pseudo_model, config)
+        sel = getattr(config, "selection", config)
+        latency_sens = float(getattr(sel, "latency_sensitivity", 0.0)) if sel else 0.0
+        if latency_sens > 0 and band is None:
+            target = max(0.0, target - 0.25 * latency_sens)
         return min(eligible, key=lambda m: (abs(costs[m] - target), costs[m], m))
     except Exception:
         return cheapest_enabled(config)
+
+

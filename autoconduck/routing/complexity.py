@@ -34,11 +34,13 @@ _CROSS_REFS_PATTERN = re.compile(r"@\w+|#\d+|https?://\S+")
 # Code density: backtick spans, code fences, CLI flags, env vars
 _CODE_DENSITY_PATTERN = re.compile(r"`[^`]*`|```[\s\S]*?```|\b(?:--[a-z0-9_-]+|-\w)\b|\$[A-Z0-9_]+|%[A-Z0-9_]+%")
 
-# Scope breadth: filenames, CamelCase names (classes/components), path-like refs,
+# Scope breadth: filenames, CamelCase names, snake_case, kebab-case, path-like refs,
 # totality markers. Uses a set to count *distinct* entities for a breadth signal.
 _SCOPE_ENTITIES_PATTERN = re.compile(
     r"[\w./\\-]+\.\w{1,4}\b|"          # filenames
-    r"\b[A-Z][a-zA-Z]{2,}\w*\b|"       # CamelCase identifiers (class/component names)
+    r"\b[A-Z][a-zA-Z0-9]{2,}\w*\b|"    # CamelCase identifiers (class/component names)
+    r"\b[a-z0-9]+(?:_[a-z0-9]+)+\b|"   # snake_case identifiers (Python, Rust, Ruby, etc.)
+    r"\b[a-z0-9]+(?:-[a-z0-9]+)+\b|"   # kebab-case identifiers (Lisp, CSS, configs)
     r"/[\w/]{3,}\b|"                    # path-like refs
     r"\b(?:all|every|entire|whole|each|across|throughout)\b",  # totality markers
     re.IGNORECASE,
@@ -81,7 +83,7 @@ _UNCERTAINTY_SIGNALS = re.compile(
     re.IGNORECASE,
 )
 
-# 2c. Cross-domain complexity — hard signals across 5 domains, easy signals universal
+# 2c. Cross-domain complexity — hard signals across systems, frontend, db, ML, math, ops
 _DOMAIN_HARD_PATTERN = re.compile(
     r"\b(?:"
     # Software / Systems
@@ -89,11 +91,20 @@ _DOMAIN_HARD_PATTERN = re.compile(
     r"performance|distributed|security|auth|permission|schema|migration|"
     r"optimization|profiling|packaging|dependency|build system|compilation|"
     r"latency|throughput|cache|eviction|sharding|partitioning|consensus|replication|"
-    # Data / ML
+    # Frontend / UI / Rendering / Animations
+    r"canvas|webgl|shader|animation|keyframe|flexbox|grid layout|z-index|event loop|shadow dom|"
+    r"hydration|reconciliation|virtual dom|layout shift|paint|rerender|state management|"
+    r"redux|zustand|react|vue|svelte|css transition|responsiveness|web worker|"
+    # Database / SQL Query Performance
+    r"query plan|explain analyze|index scan|table scan|composite index|deadlock|n\+1|"
+    r"transaction isolation|acid|wal|foreign key|materialized view|stored procedure|database index|query optimiz|"
+    # Data / ML / Deep Learning Stability
     r"aggregation|normalization|etl|transform|feature engineer|"
     r"model train|hyperparameter|dimensionality|embedding|clustering|"
     r"cross.?validation|overfitting|regularization|gradient|backpropagation|"
     r"data pipeline|inference|fine.?tun|pre.?train|"
+    r"loss divergence|vanishing gradient|exploding gradient|cuda oom|gpu out of memory|"
+    r"nan loss|checkpoint|tensorboard|dataloader bottleneck|quantization|lora|mixed precision|ddp|"
     # Writing / Rhetoric
     r"narrative arc|thesis|argument structure|tone shift|voice consistency|"
     r"rhetorical|persuasive|academic|synthesis|coherence|discourse|"
@@ -118,13 +129,14 @@ _DOMAIN_EASY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# 2d. Task novelty — creating new things vs operating on existing ones
+# 2d. Task novelty — creating new things / scaffolding vs operating on existing ones
 _HIGH_NOVELTY = re.compile(
     r"\b(?:from scratch|brand.?new|ground up|"
     r"new (?:system|design|approach|feature|module|service|component|"
-    r"algorithm|protocol|interface|schema|architecture|library|tool|endpoint)|"
+    r"algorithm|protocol|interface|schema|architecture|library|tool|endpoint|microservice|repo|project)|"
+    r"scaffold|scaffolding|bootstrap|boilerplate|"
     r"create|invent|devise|propose|prototype|proof of concept|"
-    r"novel|innovative|custom|bespoke|greenfield|spin up|bootstrap)\b",
+    r"novel|innovative|custom|bespoke|greenfield|spin up)\b",
     re.IGNORECASE,
 )
 _LOW_NOVELTY = re.compile(
@@ -133,6 +145,21 @@ _LOW_NOVELTY = re.compile(
     r"based on|following|per the|using the existing)\b",
     re.IGNORECASE,
 )
+
+# Non-Latin script detection (CJK, Cyrillic, Arabic, Hangul, Kana, Devanagari, Thai, Hebrew)
+_NON_LATIN_SCRIPT_PATTERN = re.compile(
+    r"[\u0400-\u04ff\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f\u0590-\u05ff\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]"
+)
+
+
+def is_non_english(text: str) -> bool:
+    """Detect if text contains significant non-English/non-Latin script content."""
+    t = str(text or "").strip()
+    if not t:
+        return False
+    non_latin_chars = len(_NON_LATIN_SCRIPT_PATTERN.findall(t))
+    total_chars = len(t)
+    return total_chars > 0 and (non_latin_chars / total_chars >= 0.15 or non_latin_chars >= 6)
 
 # 2e. Imperative strength bands — ordered from highest to lowest strength
 # Each entry: (score, compiled_regex)
@@ -262,9 +289,13 @@ def complexity_of(text: str, config=None) -> float:
     # ── Layer 2: Semantic signals ─────────────────────────────────────────
 
     # 2a. abstraction_level: abstract concepts vs concrete micro-operations
+    # Guard ratio swings on short prompts (<15 words) with log-dampening towards neutral (0.50)
     abstract_hits = len(_ABSTRACT_SIGNALS.findall(t))
     concrete_hits = len(_CONCRETE_SIGNALS.findall(t))
-    abstraction_level = (max(-4, min(4, abstract_hits - concrete_hits)) + 4) / 8
+    word_count = len(t.split())
+    damp = min(1.0, max(0.25, word_count / 15.0))
+    diff = (abstract_hits - concrete_hits) * damp
+    abstraction_level = (max(-4.0, min(4.0, diff)) + 4.0) / 8.0
 
     # 2b. uncertainty_hedge: discovery/diagnostic work
     uncertainty_hedge = min(1.0, len(_UNCERTAINTY_SIGNALS.findall(t)) / 3)
@@ -326,10 +357,47 @@ def complexity_of(text: str, config=None) -> float:
     # factors in config are silently ignored; missing factors default to 0 weight).
     value = sum(weights.get(k, 0.0) * v for k, v in factor_values.items())
 
+    # Non-English detection fallback: if text is non-English and keyword hits are sparse,
+    # apply a balanced fallback floor rather than erroneously scoring near 0.0.
+    if is_non_english(t):
+        non_en_floor = float(
+            getattr(getattr(config, "selection", None), "non_english_fallback_complexity", 0.45)
+        )
+        non_en_score = min(0.75, non_en_floor + 0.20 * length + 0.15 * structural)
+        value = max(value, non_en_score)
+
     # ── Layer 3: Additive boosts ──────────────────────────────────────────
     trace_boost = STACK_TRACE_BOOST if has_stack_trace(t) else 0.0
     escalation_boost = 0.30 if has_escalation_signal(t) else 0.0
 
     return min(1.0, value + trace_boost + escalation_boost)
+
+
+def complexity_confidence(text: str, score: float) -> float:
+    """Compute confidence ∈ [0.0, 1.0] for the computed complexity score.
+
+    Short ambiguous inputs have lower confidence; clear structural signals
+    or stack traces yield higher confidence.
+    """
+    t = str(text or "")
+    if not t.strip():
+        return 0.0
+    if has_stack_trace(t) or has_escalation_signal(t):
+        return 0.95
+    if is_non_english(t):
+        return 0.60
+    word_count = len(t.split())
+    length_conf = min(1.0, word_count / 20.0)
+    signal_hits = (
+        len(_STRUCTURAL_PATTERN.findall(t))
+        + len(_DOMAIN_HARD_PATTERN.findall(t))
+        + len(_ABSTRACT_SIGNALS.findall(t))
+        + len(_UNCERTAINTY_SIGNALS.findall(t))
+    )
+    signal_conf = min(1.0, signal_hits / 3.0)
+    # Ambiguous zone [0.55, 0.75] slightly lowers confidence if signal is sparse
+    ambiguity_penalty = 0.15 if 0.55 <= score <= 0.75 and signal_hits < 2 else 0.0
+    return max(0.20, min(1.0, 0.5 * length_conf + 0.5 * signal_conf - ambiguity_penalty))
+
 
 
