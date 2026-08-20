@@ -26,7 +26,7 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
 
 ## Non-Negotiable Architecture Invariants
 
-- **Sub-5ms Fast Path**: `routing/semantic_router.py` and `routing/evaluator.py` are strictly synchronous (zero async, zero I/O, zero LLM calls). Default fast path executes through the compiled zero-reflection micro-DAG in `routing/fast_graph.py` (input_sanitize → route_match → evaluate_score → tiebreaker_resolve → model_select), gated by `enable_fast_path_graph` (default on).
+- **Sub-5ms Fast Path**: `routing/semantic_router.py` and `routing/evaluator.py` are strictly synchronous (zero async, zero I/O, zero LLM calls). Default fast path executes through the streamlined zero-reflection pipeline in `routing/dispatcher.py` (input_sanitize → route_match → evaluate_score → tiebreaker_resolve → model_select) with a lightweight facade in `routing/fast_graph.py`.
 - **Fast-Path File Digests**: Deterministic parallel local reads prepended bounded by `fast_path_digest_*` config — never an LLM call.
 - **Ambiguous Zone & Tiebreaker**: Tunable zone (default `0.60–0.75`). LLM tiebreaker is **disabled by default** (`tiebreaker_enabled: false`), so ambiguous turns use deterministic complexity decisions. If tiebreaker fails or is unavailable, routing falls back deterministically to SLOW when complexity >= `slow_threshold` (0.75) unless provider is degraded.
 - **Fail-Soft Degradation**: Any LangGraph, orchestrator, tool, or schema error degrades gracefully to the fast path—never surfacing a client-facing 500 error.
@@ -46,8 +46,8 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
 ## Key Modules
 
 - `routing/`:
-  - `dispatcher.py`: fast-path delegator to `fast_graph.py`.
-  - `fast_graph.py`: compiled zero-reflection micro-DAG (~0.1 ms execution).
+  - `dispatcher.py`: fast-path routing pipeline and model selector.
+  - `fast_graph.py`: lightweight execution facade for backwards compatibility.
   - `semantic_router.py`: wrapper over `semantic-router` (Aurelio pillar) with fast/slow route embeddings.
   - `evaluator.py`: single-pass regex complexity scoring across 10 factors + boosts + hysteresis clamping.
   - `complexity.py` & `complexity_helpers.py`: complexity extractors and factor weights.

@@ -401,3 +401,71 @@ def test_per_turn_task_routing_delegates_to_flash_tier():
     assert res_edit.model == "glm-5.2"
 
 
+# ---------------------------------------------------------------------------
+# Switchyard Stagnation & Repetitive Tool Loop Escalation Tests
+# ---------------------------------------------------------------------------
+
+
+def test_stagnant_tool_loop_repetition_escalates():
+    """Verify 3 consecutive identical tool calls trigger stagnation escalation."""
+    messages = [
+        {"role": "user", "content": "Fix the broken parser"},
+        {
+            "role": "assistant",
+            "content": "Trying read",
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read_file", "arguments": '{"path": "parser.py"}'}}],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "content 1"},
+        {
+            "role": "assistant",
+            "content": "Trying read again",
+            "tool_calls": [{"id": "c2", "type": "function", "function": {"name": "read_file", "arguments": '{"path": "parser.py"}'}}],
+        },
+        {"role": "tool", "tool_call_id": "c2", "content": "content 2"},
+        {
+            "role": "assistant",
+            "content": "Trying read 3rd time",
+            "tool_calls": [{"id": "c3", "type": "function", "function": {"name": "read_file", "arguments": '{"path": "parser.py"}'}}],
+        },
+        {"role": "tool", "tool_call_id": "c3", "content": "content 3"},
+    ]
+
+    assert evaluator.has_stagnant_tool_loop(messages) is True
+    assert evaluator.is_tool_loop(messages) is False
+
+    match = RouteMatch("fast_path", 0.5)
+    res = score(messages, [], match)
+    assert res.path == "slow"
+    assert res.reason == "stagnant tool loop escalation"
+    assert res.complexity >= 0.80
+
+
+def test_stagnant_tool_loop_consecutive_errors_escalates():
+    """Verify 2 consecutive tool errors trigger stagnation escalation."""
+    messages = [
+        {"role": "user", "content": "Run tests and fix issues"},
+        {
+            "role": "assistant",
+            "content": "Running test 1",
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "bash", "arguments": '{"cmd": "pytest test_a.py"}'}}],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "Error: Traceback (most recent call last):\n  File 'test_a.py'\nAssertionError: failed"},
+        {
+            "role": "assistant",
+            "content": "Running test 2",
+            "tool_calls": [{"id": "c2", "type": "function", "function": {"name": "bash", "arguments": '{"cmd": "pytest test_b.py"}'}}],
+        },
+        {"role": "tool", "tool_call_id": "c2", "content": "failed with exit code 1. SyntaxError: invalid syntax"},
+    ]
+
+    assert evaluator.has_stagnant_tool_loop(messages) is True
+    assert evaluator.is_tool_loop(messages) is False
+
+    match = RouteMatch("fast_path", 0.5)
+    res = score(messages, [], match)
+    assert res.path == "slow"
+    assert res.reason == "stagnant tool loop escalation"
+    assert res.complexity >= 0.80
+
+
+

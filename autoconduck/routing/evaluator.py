@@ -36,6 +36,95 @@ class Score:
     reason: str
 
 
+
+def has_stagnant_tool_loop(messages: list) -> bool:
+    """Detect if the agent is caught in a stagnant or repetitive tool loop.
+
+    Inspired by NVIDIA Switchyard's escalation router:
+    1. Tool call repetition: 3+ consecutive tool calls with identical tool name and arguments.
+    2. Consecutive tool errors: 2+ consecutive tool results with failure/error signatures.
+    """
+    if not isinstance(messages, list) or len(messages) < 2:
+        return False
+
+    # Find recent active turn messages after the latest genuine user prompt
+    last_user_idx = -1
+    for i, m in enumerate(messages):
+        if isinstance(m, dict) and m.get("role") == "user" and "<system-reminder>" not in str(m.get("content", "")):
+            c = m.get("content")
+            if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
+                continue
+            last_user_idx = i
+
+    active = messages[last_user_idx + 1:] if last_user_idx >= 0 else messages[-8:]
+
+    # 1. Check for repetitive tool call signatures
+    tool_calls: list[tuple[str, str]] = []
+    for msg in active:
+        if not isinstance(msg, dict):
+            continue
+        tcs = msg.get("tool_calls") or msg.get("toolCalls")
+        if isinstance(tcs, list):
+            for tc in tcs:
+                if isinstance(tc, dict):
+                    fn = tc.get("function", {}) if isinstance(tc.get("function"), dict) else tc
+                    name = str(fn.get("name") or tc.get("name") or "").strip().lower()
+                    args = str(fn.get("arguments") or tc.get("arguments") or "").strip()
+                    if name:
+                        tool_calls.append((name, args))
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    name = str(block.get("name") or "").strip().lower()
+                    inp = str(block.get("input") or "").strip()
+                    if name:
+                        tool_calls.append((name, inp))
+
+    if len(tool_calls) >= 3:
+        last3 = tool_calls[-3:]
+        if last3[0] == last3[1] == last3[2]:
+            return True
+
+    # 2. Check for consecutive tool result errors/failures
+    tool_results: list[str] = []
+    for msg in active:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        if role in ("tool", "toolResult", "function"):
+            tool_results.append(str(msg.get("content", "")))
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    tool_results.append(str(block.get("content") or block.get("text") or ""))
+
+    if len(tool_results) >= 2:
+        error_keywords = (
+            "traceback (most recent call last)",
+            "syntaxerror:",
+            "typeerror:",
+            "valueerror:",
+            "filenotfounderror:",
+            "failed with exit code",
+            "command not found",
+            "permission denied",
+            "patch failed",
+            "patcherror:",
+            "diff failed",
+            "error:",
+        )
+        recent_errs = [
+            any(kw in res.lower() for kw in error_keywords)
+            for res in tool_results[-2:]
+        ]
+        if all(recent_errs):
+            return True
+
+    return False
+
+
 def is_tool_loop(messages: list, config=None) -> bool:
     """Return True if the message sequence is an in-flight tool loop turn.
 
@@ -46,6 +135,7 @@ def is_tool_loop(messages: list, config=None) -> bool:
     ESCALATION EXCEPTIONS (return False, allow full scoring):
       - Explicit escalation signal in the tool result.
       - Stack trace / fatal error in the tool result.
+      - Stagnant/repetitive tool loop or consecutive tool errors (Switchyard escalation).
       - Tool chain length > 12 (long-running tool loops may need more capability).
       - First user message complexity >= slow_threshold (the original task was
         complex — don't suppress slow-path routing mid-flight).
@@ -113,7 +203,11 @@ def is_tool_loop(messages: list, config=None) -> bool:
     if signal_index + 1 < len(recent):
         adjacent_text += "\n" + str(recent[signal_index + 1].get("content", ""))
 
-    if has_escalation_signal(adjacent_text) or has_stack_trace(adjacent_text):
+    if (
+        has_escalation_signal(adjacent_text)
+        or has_stack_trace(adjacent_text)
+        or has_stagnant_tool_loop(messages)
+    ):
         return False
 
     # Long tool chain soft-escalation: if >12 tool turns have fired in the *active* chain, allow re-scoring.
@@ -234,9 +328,10 @@ def score(
     complexity = complexity_of(text, cfg)
     trace = has_stack_trace(text)
     escalation = has_escalation_signal(text)
+    stagnant = has_stagnant_tool_loop(messages)
 
-    # Active tool loops stay on the fast path UNLESS an escalation or stack trace
-    # trigger fired (handled inside is_tool_loop) or the tool chain is very long.
+    # Active tool loops stay on the fast path UNLESS an escalation, stack trace,
+    # or stagnation trigger fired (handled inside is_tool_loop) or the tool chain is very long.
     if is_tool_loop(messages, config=cfg):
         ctx = _context_boost(messages, config=cfg)
         first_comp = _first_user_complexity(messages, cfg)
@@ -251,16 +346,21 @@ def score(
         1.0,
         max(float(match.confidence), complexity * 0.75)
         + (stack_trace_boost if trace else 0)
-        + (0.30 if escalation else 0),
+        + (0.30 if (escalation or stagnant) else 0),
     )
 
-    if trace or escalation:
+    if trace or escalation or stagnant:
+        reason = (
+            "stagnant tool loop escalation"
+            if stagnant
+            else ("agent complexity escalation" if escalation else "stack trace boost")
+        )
         return Score(
             "slow",
             "slow",
             confidence,
-            max(complexity, 0.85 if escalation else complexity),
-            "agent complexity escalation" if escalation else "stack trace boost",
+            max(complexity, 0.85 if (escalation or stagnant) else complexity),
+            reason,
         )
 
     deescalation_threshold = float(

@@ -113,129 +113,126 @@ def route(
         from ..config import get_config
 
         config = get_config()
-    if getattr(getattr(config, "selection", None), "enable_fast_path_graph", True):
-        from .fast_graph import execute_fast_graph, FastGraphState
 
-        state = execute_fast_graph(
-            FastGraphState(
-                messages=messages,
-                history=history,
-                pseudo_model=pseudo_model,
-                config=config,
-                tiebreaker=tiebreaker,
-            )
-        )
-        return RoutingDecision(
-            path=state.path,
-            confidence_band=state.confidence_band,
-            confidence=state.confidence,
-            complexity=state.complexity,
-            reason=state.reason,
-            model=state.model,
-        )
-    user_messages = _user_messages(messages)
-    last = user_messages[-1] if user_messages else ""
+    # Step 1: Input text extraction & sanitization
+    user_msgs = _user_messages(messages)
+    last = user_msgs[-1] if user_msgs else ""
     text = (
         last.get("content", "")
         if isinstance(last, dict)
         else getattr(last, "content", str(last))
     )
-    text = evaluator.clean_routing_text(text)
-    match = semantic_router.route(text)
-    result = evaluator.score(messages, history, match, pseudo_model, config)
-    if len(enabled) <= 1 and result.confidence_band == "ambiguous":
-        path = "slow" if match.route == "slow_path" else "fast"
-        model = (
-            pricing.select_closest(
-                pricing.pool_ids(config),
-                result.complexity,
-                config,
-                pseudo_model=pseudo_model,
-            )
-            if path == "fast"
-            else None
-        )
-        if path == "fast" and not model:
-            from ..config import resolve_orchestrator_model
+    raw_text = evaluator.clean_routing_text(text)
 
-            model = resolve_orchestrator_model(config)
-        if model:
-            from ..stats import record_selection
+    # Step 2: Semantic route matching
+    route_match = semantic_router.route(raw_text)
 
-            record_selection(
-                result.complexity,
-                pricing.target_scaled_cost(result.complexity, pseudo_model, config),
-                model,
-                config,
-            )
-        return RoutingDecision(
-            path=path,
-            confidence_band="ambiguous",
-            confidence=result.confidence,
-            complexity=result.complexity,
-            reason=f"single-model, router-resolved: {path}",
-            model=model,
-        )
-    if result.confidence_band == "ambiguous":
-        selection = getattr(config, "selection", config)
-        tiebreaker_floor = float(getattr(selection, "tiebreaker_min_complexity", 0.45))
-        if pseudo_model.endswith("budget"):
-            tiebreaker_floor = float(
-                getattr(selection, "budget_tiebreaker_min_complexity", 0.65)
-            )
-        use_tiebreaker = tiebreaker is not None or (
-            bool(getattr(selection, "tiebreaker_enabled", True))
-            and result.complexity >= tiebreaker_floor
-        )
-        if not use_tiebreaker:
-            path, complexity = "fast", result.complexity
-            reason_suffix = "fast (below-floor)"
+    # Step 3: Complexity scoring and factor evaluation
+    score = evaluator.score(messages, history, route_match, pseudo_model, config)
+    path = getattr(score, "path", "fast")
+    confidence_band = getattr(score, "confidence_band", "fast")
+    confidence = getattr(score, "confidence", 0.0)
+    complexity = getattr(score, "complexity", 0.0)
+    reason = getattr(score, "reason", "")
+
+    # Step 4: Ambiguous tiebreaker resolution
+    if confidence_band == "ambiguous":
+        enabled = [
+            entry
+            for entry in (getattr(config, "model_list", []) or [])
+            if entry.get("enabled", True)
+        ]
+        if len(enabled) <= 1:
+            path = "slow" if route_match.route == "slow_path" else "fast"
+            reason = f"single-model, router-resolved: {path}"
         else:
-            try:
-                answer = str((tiebreaker or _default_tiebreaker)(messages[-1], pseudo_model, config)).upper()
-            except Exception:
-                answer = "NONE"
-            import re
-
-            match = re.match(r"^(FAST|SLOW)(?:\s+([1-9]))?\s*$", answer)
-            if answer == "NONE" or not match:
-                slow_threshold = float(getattr(selection, "slow_threshold", 0.75))
-                tiebreaker_model = pricing.cheapest_enabled(config)
-                degraded = bool(
-                    tiebreaker_model
-                    and pricing.is_degraded(
-                        tiebreaker_model,
-                        getattr(config, "degraded_window_s", 300),
-                        getattr(config, "degraded_error_rate", 0.2),
-                    )
+            selection = getattr(config, "selection", config)
+            tiebreaker_floor = float(getattr(selection, "tiebreaker_min_complexity", 0.45))
+            if pseudo_model.endswith("budget"):
+                tiebreaker_floor = float(
+                    getattr(selection, "budget_tiebreaker_min_complexity", 0.65)
                 )
-                if degraded:
-                    path = "fast"
-                    reason_suffix = "unavailable: degraded-provider"
-                else:
-                    path = "slow" if result.complexity >= slow_threshold else "fast"
-                    reason_suffix = "unavailable: complexity-fallback"
-                complexity = result.complexity
-            else:
-                digit = int(match.group(2)) if match.group(2) else None
-                complexity = (
-                    0.5 * result.complexity + 0.5 * (digit / 9)
-                    if digit is not None
-                    else result.complexity
-                )
-                path = "slow" if match.group(1) == "SLOW" else "fast"
-                reason_suffix = path
-        model = (
-            pricing.select_closest(
-                pricing.pool_ids(config), complexity, config, pseudo_model=pseudo_model
+            use_tiebreaker = tiebreaker is not None or (
+                bool(getattr(selection, "tiebreaker_enabled", True))
+                and complexity >= tiebreaker_floor
             )
-            if path == "fast"
-            else None
-        )
-        if path == "fast" and not model:
-            from ..config import resolve_orchestrator_model
+            if not use_tiebreaker:
+                path = "fast"
+                reason = "tiebreaker: fast (below-floor)"
+            else:
+                try:
+                    tb_fn = tiebreaker or _default_tiebreaker
+                    last_msg = messages[-1] if messages else ""
+                    answer = str(tb_fn(last_msg, pseudo_model, config)).upper()
+                except Exception:
+                    answer = "NONE"
 
-            model = resolve_orchestrator_model(config)
+                import re
+
+                m = re.match(r"^(FAST|SLOW)(?:\s+([1-9]))?\s*$", answer)
+                if answer == "NONE" or not m:
+                    slow_threshold = float(getattr(selection, "slow_threshold", 0.75))
+                    tiebreaker_model = pricing.cheapest_enabled(config)
+                    degraded = bool(
+                        tiebreaker_model
+                        and pricing.is_degraded(
+                            tiebreaker_model,
+                            getattr(config, "degraded_window_s", 300),
+                            getattr(config, "degraded_error_rate", 0.2),
+                        )
+                    )
+                    if degraded:
+                        path = "fast"
+                        reason_suffix = "unavailable: degraded-provider"
+                    else:
+                        path = "slow" if complexity >= slow_threshold else "fast"
+                        reason_suffix = "unavailable: complexity-fallback"
+                    reason = f"tiebreaker_{reason_suffix}"
+                else:
+                    digit = int(m.group(2)) if m.group(2) else None
+                    if digit is not None:
+                        complexity = 0.5 * complexity + 0.5 * (digit / 9)
+                    path = "slow" if m.group(1) == "SLOW" else "fast"
+                    reason = f"tiebreaker: {path}"
+
+    # Step 5: Dynamic closest-cost model selection
+    model = None
+    if path == "fast":
+        from ..config import resolve_orchestrator_model
+
+        selection = getattr(config, "selection", config)
+        max_fast_cost = getattr(selection, "fast_path_max_scaled_cost", 0.50)
+        try:
+            max_fast_cost = float(max_fast_cost)
+        except (TypeError, ValueError):
+            max_fast_cost = 0.50
+
+        per_turn_enabled = bool(getattr(selection, "enable_per_turn_task_routing", True))
+        turn_task = evaluator.detect_turn_task(messages) if per_turn_enabled else None
+
+        turn_complexity = complexity
+        band = None
+        if turn_task == "recon":
+            recon_max = float(getattr(selection, "recon_max_complexity", 0.20))
+            turn_complexity = min(turn_complexity, recon_max)
+            recon_band = getattr(selection, "recon_task_band", [0.05, 0.35])
+            if isinstance(recon_band, (list, tuple)) and len(recon_band) == 2:
+                max_fast_cost = min(max_fast_cost, float(recon_band[1]))
+        elif turn_task == "edit":
+            edit_min = float(getattr(selection, "edit_min_complexity", 0.45))
+            turn_complexity = max(turn_complexity, edit_min)
+            edit_band = getattr(selection, "edit_task_band", [0.30, 1.0])
+            if isinstance(edit_band, (list, tuple)) and len(edit_band) == 2:
+                max_fast_cost = max(max_fast_cost, float(edit_band[1]))
+
+        model = pricing.select_closest(
+            pricing.pool_ids(config),
+            turn_complexity,
+            config,
+            pseudo_model=pseudo_model,
+            band=band,
+            max_scaled_cost=max_fast_cost,
+        ) or resolve_orchestrator_model(config)
         if model:
             from ..stats import record_selection
 
@@ -245,72 +242,13 @@ def route(
                 model,
                 config,
             )
-        return RoutingDecision(
-            path=path,
-            confidence_band="ambiguous",
-            confidence=result.confidence,
-            complexity=complexity,
-            reason=(
-                "tiebreaker: " + reason_suffix
-                if not reason_suffix.startswith("unavailable:")
-                else "tiebreaker_" + reason_suffix
-            ),
-            model=model,
-        )
-    selection = getattr(config, "selection", config)
-    max_fast_cost = getattr(selection, "fast_path_max_scaled_cost", 0.50)
-    try:
-        max_fast_cost = float(max_fast_cost)
-    except (TypeError, ValueError):
-        max_fast_cost = 0.50
 
-    per_turn_enabled = bool(getattr(selection, "enable_per_turn_task_routing", True))
-    turn_task = evaluator.detect_turn_task(messages) if per_turn_enabled else None
-    turn_complexity = result.complexity
-    band = None
-    if turn_task == "recon":
-        recon_max = float(getattr(selection, "recon_max_complexity", 0.20))
-        turn_complexity = min(turn_complexity, recon_max)
-        recon_band = getattr(selection, "recon_task_band", [0.05, 0.35])
-        if isinstance(recon_band, (list, tuple)) and len(recon_band) == 2:
-            max_fast_cost = min(max_fast_cost, float(recon_band[1]))
-    elif turn_task == "edit":
-        edit_min = float(getattr(selection, "edit_min_complexity", 0.45))
-        turn_complexity = max(turn_complexity, edit_min)
-        edit_band = getattr(selection, "edit_task_band", [0.30, 1.0])
-        if isinstance(edit_band, (list, tuple)) and len(edit_band) == 2:
-            max_fast_cost = max(max_fast_cost, float(edit_band[1]))
-
-    model = (
-        pricing.select_closest(
-            pricing.pool_ids(config),
-            turn_complexity,
-            config,
-            pseudo_model=pseudo_model,
-            band=band,
-            max_scaled_cost=max_fast_cost,
-        )
-        if result.path == "fast"
-        else None
-    )
-    if result.path == "fast" and not model:
-        from ..config import resolve_orchestrator_model
-
-        model = resolve_orchestrator_model(config)
-    if model:
-        from ..stats import record_selection
-
-        record_selection(
-            result.complexity,
-            pricing.target_scaled_cost(result.complexity, pseudo_model, config),
-            model,
-            config,
-        )
     return RoutingDecision(
-        path=result.path,
-        confidence_band=result.confidence_band,
-        confidence=result.confidence,
-        complexity=result.complexity,
-        reason=result.reason,
+        path=path,
+        confidence_band=confidence_band,
+        confidence=confidence,
+        complexity=complexity,
+        reason=reason,
         model=model,
     )
+
