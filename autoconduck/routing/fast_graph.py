@@ -173,11 +173,33 @@ class FastGraph:
             except (TypeError, ValueError):
                 max_fast_cost = 0.50
 
+            per_turn_enabled = bool(getattr(selection, "enable_per_turn_task_routing", True))
+            messages = getattr(state, "messages", []) or []
+            turn_task = evaluator.detect_turn_task(messages) if per_turn_enabled else None
+
+            turn_complexity = state.complexity
+            band = None
+            if turn_task == "recon":
+                # File reads, greps, searches, listings: cap complexity to route to budget/flash tier
+                recon_max = float(getattr(selection, "recon_max_complexity", 0.20))
+                turn_complexity = min(turn_complexity, recon_max)
+                recon_band = getattr(selection, "recon_task_band", [0.05, 0.35])
+                if isinstance(recon_band, (list, tuple)) and len(recon_band) == 2:
+                    max_fast_cost = min(max_fast_cost, float(recon_band[1]))
+            elif turn_task == "edit":
+                # Code modifications and edits: apply floor to route to balanced/capable tier
+                edit_min = float(getattr(selection, "edit_min_complexity", 0.45))
+                turn_complexity = max(turn_complexity, edit_min)
+                edit_band = getattr(selection, "edit_task_band", [0.30, 1.0])
+                if isinstance(edit_band, (list, tuple)) and len(edit_band) == 2:
+                    max_fast_cost = max(max_fast_cost, float(edit_band[1]))
+
             model = pricing.select_closest(
                 pricing.pool_ids(state.config),
-                state.complexity,
+                turn_complexity,
                 state.config,
                 pseudo_model=state.pseudo_model,
+                band=band,
                 max_scaled_cost=max_fast_cost,
             ) or resolve_orchestrator_model(state.config)
             state.model = model

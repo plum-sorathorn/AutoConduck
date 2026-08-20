@@ -98,6 +98,17 @@ class SelectionConfig(BaseModel):
     executor_enable_bash: bool = False
     slow_stream_progress: bool = True
     default_target_bias: float = 0.0
+    # Whether AutoConduck should emit a synthetic `subagent` tool call to Pi
+    # when delivering an orchestrator handoff.  Disabled by default so Pi
+    # executes handoff subtasks cleanly in-session without launching detached
+    # background workflows.
+    enable_pi_subagent_tool_call: bool = False
+    # Dynamic per-turn task delegation: routes recon/reading turns to budget/flash tier
+    # and coding/edit turns to balanced/capable tier, preventing 50+ turn sessions from
+    # locking into a single expensive model.
+    enable_per_turn_task_routing: bool = True
+    recon_task_band: list[float] = [0.05, 0.35]
+    edit_task_band: list[float] = [0.30, 0.65]
     latency_sensitivity: float = 0.0
     intent_drift_enabled: bool = True
     intent_drift_threshold: float = 0.70
@@ -314,6 +325,18 @@ def resolve_orchestrator_model(cfg=None) -> str:
             model = entry["litellm_params"].get("model")
         if model:
             return str(model)
+    try:
+        from autoconduck.auth.auth import load_auth
+        auth = load_auth()
+        if auth:
+            from autoconduck.presets.presets_fallback import _FALLBACK_PRESETS
+            for prov in auth:
+                presets = _FALLBACK_PRESETS.get(prov, [])
+                for p in presets:
+                    if isinstance(p, dict) and p.get("id"):
+                        return str(p["id"])
+    except Exception:
+        pass
     return "gpt-4o"
 
 

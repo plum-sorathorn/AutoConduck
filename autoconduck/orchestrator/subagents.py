@@ -110,6 +110,10 @@ async def run_subagent(
         params.setdefault("max_tokens", int(getattr(cfg.selection, "subagent_max_tokens", 4096)))
         timeout_s = float(getattr(cfg.selection, "subagent_timeout_s", 120.0))
         params.setdefault("timeout", timeout_s)
+        # Stamp a depth header so that if the target model endpoint is AutoConduck
+        # itself (i.e. the user proxied through us again), the re-entrant request
+        # is immediately downgraded to FAST, preventing recursive SLOW loops.
+        params.setdefault("extra_headers", {})["x-autoconduck-depth"] = "1"
         prompt_log = logging.getLogger("autoconduck.orchestrator").info if getattr(getattr(cfg, "selection", None), "dump_prompts", True) else logging.getLogger("autoconduck.orchestrator").debug
         prompt_log(
             "SUBAGENT PROMPT [%s]:\n%s", task.id, prompt

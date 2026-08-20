@@ -1,23 +1,43 @@
 """FastAPI route installation for the lazily loaded server."""
 
+import asyncio
 import json
 import logging
 import os
 import time
-import asyncio
 from typing import Any
 
 
-def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Field,
-                   helpers, serve_model_ids, PSEUDO_MODELS, cache):
-    (openai_messages_from_anthropic, openai_tools_from_anthropic,
-     openai_tool_choice_from_anthropic, litellm_params_for, count_tokens,
-     AnthropicSSETranslator, anthropic_response_text, coerce_content_text,
-     sanitize_tools, messages_litellm_kwargs, *extra_helpers) = helpers
+def install_routes(
+    app,
+    Request,
+    JSONResponse,
+    StreamingResponse,
+    BaseModel,
+    Field,
+    helpers,
+    serve_model_ids,
+    PSEUDO_MODELS,
+    cache,
+):
+    (
+        openai_messages_from_anthropic,
+        openai_tools_from_anthropic,
+        openai_tool_choice_from_anthropic,
+        litellm_params_for,
+        count_tokens,
+        AnthropicSSETranslator,
+        anthropic_response_text,
+        coerce_content_text,
+        sanitize_tools,
+        messages_litellm_kwargs,
+        *extra_helpers,
+    ) = helpers
     normalize_messages_for_llm = extra_helpers[0] if extra_helpers else None
     if normalize_messages_for_llm is None:
         from .messages_api import normalize_messages_for_llm
     from fastapi import FastAPI
+
     from autoconduck.config import get_config
     from autoconduck.stats import aggregate, load_records, record
 
@@ -51,6 +71,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
 
     async def _call(model, body, path=None, pseudo=None, messages=None):
         from .server_streaming import _litellm
+
         llm = _litellm()
         if llm is None:
             raise RuntimeError("litellm unavailable")
@@ -67,11 +88,54 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
         result = await llm.acompletion(**kwargs)
         return result.model_dump() if hasattr(result, "model_dump") else result
 
-    async def _route_target(body_model, messages, request=None, on_progress=None, client_type=None):
+    def is_active_tool_session(messages: list) -> bool:
+        """Return True if the conversation is an active agentic tool loop.
+
+        In an active tool loop, the client agent (Pi, Claude Code, OpenCode, etc.)
+        is managing its own tool execution loop. AutoConduck must relay requests
+        directly to the selected model rather than hijacking the turn with the
+        multi-agent LangGraph orchestrator.
+        """
+        if not isinstance(messages, list) or not messages:
+            return False
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            if (
+                m.get("role") in ("tool", "function", "toolResult")
+                or "tool_calls" in m
+                or "function_call" in m
+            ):
+                return True
+            content = m.get("content")
+            if isinstance(content, list) and any(
+                isinstance(b, dict) and b.get("type") in ("tool_use", "tool_result")
+                for b in content
+            ):
+                return True
+        return False
+
+    async def _route_target(
+        body_model, messages, request=None, on_progress=None, client_type=None
+    ):
         started = time.perf_counter()
         cfg = get_config()
         messages = normalize_messages_for_llm(messages)
         target, path = body_model, "direct"
+        # Detect nested/re-entrant calls from subagent workers via the depth
+        # header that AutoConduck stamps on every outbound orchestrator LLM call.
+        # Workers that route back to AutoConduck would otherwise trigger a full
+        # SLOW orchestration, producing another subagent tool call they cannot
+        # execute — causing an infinite loop.
+        request_depth = 0
+        if request is not None and hasattr(request, "headers"):
+            try:
+                request_depth = int(request.headers.get("x-autoconduck-depth", "0"))
+            except (ValueError, TypeError):
+                request_depth = 0
+            if client_type is None:
+                client_type = request.headers.get("x-agent-id", None)
+        is_nested = request_depth >= 1
         if body_model in PSEUDO_MODELS:
             try:
                 from autoconduck.routing.dispatcher import route
@@ -86,38 +150,99 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
             # is genuinely high enough to justify 3-5 extra LLM calls.
             task_complexity = float(getattr(decision, "complexity", 0.5))
             min_orch = float(
-                getattr(getattr(cfg, "selection", None), "min_orchestrator_complexity", 0.62)
+                getattr(
+                    getattr(cfg, "selection", None), "min_orchestrator_complexity", 0.62
+                )
             )
             if path == "SLOW" and task_complexity < min_orch:
                 path = "FAST"
                 model = model or None  # will be resolved below
+            # Re-entrancy guard: requests from AutoConduck subagent workers carry
+            # X-AutoConduck-Depth >= 1.  Running the full orchestrator for those
+            # would produce another subagent tool call the worker can't execute,
+            # triggering an infinite SLOW→tool-error→SLOW loop.
+            if path == "SLOW" and is_nested:
+                path = "FAST"
+                model = model or None
+                logging.getLogger("autoconduck").info(
+                    "Nested orchestrator call (depth=%d) downgraded to FAST",
+                    request_depth,
+                )
             if on_progress is not None:
                 try:
                     on_progress({"kind": "route", "path": path})
                 except Exception:
                     pass
-            decisions.append({"path": path, "model": model or body_model, "time": time.time()})
-            logging.getLogger("autoconduck").info("route=%s model=%s ms=%.1f", path, model or body_model, (time.perf_counter() - started) * 1000)
-            if path == "SLOW" and not (request is not None and await request.is_disconnected()):
+            decisions.append(
+                {"path": path, "model": model or body_model, "time": time.time()}
+            )
+            logging.getLogger("autoconduck").info(
+                "route=%s model=%s ms=%.1f",
+                path,
+                model or body_model,
+                (time.perf_counter() - started) * 1000,
+            )
+            # Interactive tool loop guard: if the client is currently in an
+            # active tool execution loop (contains tool calls or tool results),
+            # do not invoke the LangGraph orchestrator DAG.  The client agent
+            # is waiting for the LLM to inspect the tool results and continue
+            # its reasoning — hijacking the turn with a synthetic handoff plan
+            # breaks the agent's interactive session.
+            in_tool_loop = is_active_tool_session(messages)
+            if in_tool_loop and path == "SLOW":
+                logging.getLogger("autoconduck").debug(
+                    "Active tool loop detected — delegating completion directly to selected model %s",
+                    model or body_model,
+                )
+            if (
+                path == "SLOW"
+                and not in_tool_loop
+                and not (request is not None and await request.is_disconnected())
+            ):
                 try:
                     from autoconduck.orchestrator import run
-                    result = await run(messages, [], pseudo_model=body_model,
-                                       task_value=float(getattr(decision, "complexity", .5)), request=request,
-                                       on_progress=on_progress, client_type=client_type)
+
+                    result = await run(
+                        messages,
+                        [],
+                        pseudo_model=body_model,
+                        task_value=float(getattr(decision, "complexity", 0.5)),
+                        request=request,
+                        on_progress=on_progress,
+                        client_type=client_type,
+                        is_nested=is_nested,
+                    )
                     if result is not None:
-                        tool_calls = getattr(result, "tool_calls", None) or (result.get("tool_calls") if isinstance(result, dict) else None)
-                        content = str(result) if not isinstance(result, dict) else result.get("content", str(result))
+                        tool_calls = getattr(result, "tool_calls", None) or (
+                            result.get("tool_calls")
+                            if isinstance(result, dict)
+                            else None
+                        )
+                        content = (
+                            str(result)
+                            if not isinstance(result, dict)
+                            else result.get("content", str(result))
+                        )
                         ans: dict[str, Any] = {"content": content}
                         if tool_calls:
                             ans["tool_calls"] = tool_calls
-                        return None, {"__answer__": ans, "_path": path, "_pseudo": body_model}
+                        return None, {
+                            "__answer__": ans,
+                            "_path": path,
+                            "_pseudo": body_model,
+                        }
                 except Exception as exc:
-                    logging.getLogger("autoconduck").warning("Orchestrator execution failed: %s", exc)
+                    logging.getLogger("autoconduck").warning(
+                        "Orchestrator execution failed: %s", exc
+                    )
             if not model:
                 try:
-                    from autoconduck.routing.pricing import pool_ids, select_closest
                     from autoconduck.config import resolve_orchestrator_model
-                    selected = select_closest(pool_ids(cfg), .15, cfg, pseudo_model=body_model)
+                    from autoconduck.routing.pricing import pool_ids, select_closest
+
+                    selected = select_closest(
+                        pool_ids(cfg), 0.15, cfg, pseudo_model=body_model
+                    )
                     model = selected or resolve_orchestrator_model(cfg)
                     if not selected:
                         logging.getLogger("autoconduck").warning(
@@ -126,31 +251,58 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                         )
                 except Exception:
                     from autoconduck.config import resolve_orchestrator_model
+
                     model = resolve_orchestrator_model(cfg)
             if not model:
-                logging.getLogger("autoconduck").warning("No model available for request")
+                logging.getLogger("autoconduck").warning(
+                    "No model available for request"
+                )
             target = model
         extra = litellm_params_for(target, cfg)
-        extra.update(_path=path if body_model in PSEUDO_MODELS else "direct", _pseudo=body_model)
+        extra.update(
+            _path=path if body_model in PSEUDO_MODELS else "direct", _pseudo=body_model
+        )
+        # Stamp the routing complexity so the usage recorder can persist it as
+        # an outcome signal for offline cost/quality tuning calibration.
+        if body_model in PSEUDO_MODELS:
+            extra.update(
+                _complexity=float(
+                    getattr(decision, "complexity", 0.5) if decision else 0.5
+                )
+            )
         return target, extra
 
     def healthz():
         return {"status": "ok"}
 
     async def models():
-        return {"object": "list", "data": [{"id": m, "object": "model", "owned_by": "autoconduck"}
-                for m in serve_model_ids(get_config())]}
+        return {
+            "object": "list",
+            "data": [
+                {"id": m, "object": "model", "owned_by": "autoconduck"}
+                for m in serve_model_ids(get_config())
+            ],
+        }
 
     async def get_stats():
         usage = aggregate(load_records())
-        return {"counts": decisions, "cost_saved_metered": 0.0, "cost_saved_subscription": 0.0,
-                "cache_hit_ratio": 0.0, "usage": usage["totals"], "models": usage["models"],
-                "path_counts": usage["paths"], "pseudo_counts": usage["pseudos"]}
+        return {
+            "counts": decisions,
+            "cost_saved_metered": 0.0,
+            "cost_saved_subscription": 0.0,
+            "cache_hit_ratio": 0.0,
+            "usage": usage["totals"],
+            "models": usage["models"],
+            "path_counts": usage["paths"],
+            "pseudo_counts": usage["pseudos"],
+        }
 
     async def completions(body: CompletionRequest, request: Request):
         body.messages = normalize_messages_for_llm(body.messages)
         cfg = get_config()
-        configured_progress = bool(getattr(getattr(cfg, "selection", None), "slow_stream_progress", True))
+        configured_progress = bool(
+            getattr(getattr(cfg, "selection", None), "slow_stream_progress", True)
+        )
         env_progress = os.environ.get("AUTOCONDUCK_STREAM_PROGRESS")
         if env_progress is None:
             progress_setting = configured_progress
@@ -162,8 +314,11 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                 progress_setting = False
             else:
                 progress_setting = configured_progress
-        progress_enabled = body.stream and progress_setting and body.model in PSEUDO_MODELS
+        progress_enabled = (
+            body.stream and progress_setting and body.model in PSEUDO_MODELS
+        )
         if progress_enabled:
+
             async def progress_stream():
                 progress_q: asyncio.Queue = asyncio.Queue()
                 first_event = asyncio.get_running_loop().create_future()
@@ -176,7 +331,9 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                     except Exception:
                         pass
 
-                task = asyncio.create_task(_route_target(body.model, body.messages, request, on_progress))
+                task = asyncio.create_task(
+                    _route_target(body.model, body.messages, request, on_progress)
+                )
                 try:
                     first = await first_event
                     first_path = (
@@ -187,16 +344,23 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                     is_slow = str(first_path).upper() == "SLOW"
                     target, extra = await task if not is_slow else (None, None)
                     if is_slow:
-                        labels = {"recon": "recon", "recon_subagent_pool": "reading files",
-                                  "planner": "planner", "subagent_pool": "subagents",
-                                  "compactor": "compactor", "executor": "executor"}
+                        labels = {
+                            "recon": "recon",
+                            "recon_subagent_pool": "reading files",
+                            "planner": "planner",
+                            "subagent_pool": "subagents",
+                            "compactor": "compactor",
+                            "executor": "executor",
+                        }
                         created = int(time.time())
                         sent_role = False
                         while True:
                             if task.done() and progress_q.empty():
                                 break
                             try:
-                                event = await asyncio.wait_for(progress_q.get(), timeout=0.1)
+                                event = await asyncio.wait_for(
+                                    progress_q.get(), timeout=0.1
+                                )
                             except asyncio.TimeoutError:
                                 if task.done() and progress_q.empty():
                                     break
@@ -213,6 +377,7 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                                 delta_text = f"[{label}] {detail}\n"
                             else:
                                 from autoconduck.progress import ProgressFormatter
+
                                 formatted = ProgressFormatter(cfg).format(event)
                                 node = getattr(event, "name", "progress")
                                 if not formatted:
@@ -224,9 +389,25 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                             if not sent_role:
                                 delta["role"] = "assistant"
                                 sent_role = True
-                            yield "data: " + json.dumps({"id": "autoconduck", "object": "chat.completion.chunk",
-                                "created": created, "model": body.model,
-                                "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}) + "\n\n"
+                            yield (
+                                "data: "
+                                + json.dumps(
+                                    {
+                                        "id": "autoconduck",
+                                        "object": "chat.completion.chunk",
+                                        "created": created,
+                                        "model": body.model,
+                                        "choices": [
+                                            {
+                                                "index": 0,
+                                                "delta": delta,
+                                                "finish_reason": None,
+                                            }
+                                        ],
+                                    }
+                                )
+                                + "\n\n"
+                            )
                             if node == "idle":
                                 break
                             if task.done() and progress_q.empty():
@@ -234,8 +415,16 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                         target, extra = await task
                     answer = extra.get("__answer__") if extra else None
                     if answer is not None:
-                        content = answer.get("content", "") if isinstance(answer, dict) else str(answer)
-                        tool_calls = answer.get("tool_calls") if isinstance(answer, dict) else getattr(answer, "tool_calls", None)
+                        content = (
+                            answer.get("content", "")
+                            if isinstance(answer, dict)
+                            else str(answer)
+                        )
+                        tool_calls = (
+                            answer.get("tool_calls")
+                            if isinstance(answer, dict)
+                            else getattr(answer, "tool_calls", None)
+                        )
                         finish_reason = "tool_calls" if tool_calls else "stop"
                         created = int(time.time())
                         delta = {"role": "assistant"}
@@ -243,12 +432,44 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
                             delta["content"] = content
                         if tool_calls:
                             delta["tool_calls"] = tool_calls
-                        yield "data: " + json.dumps({"id": "autoconduck", "object": "chat.completion.chunk",
-                            "created": created, "model": target or body.model,
-                            "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}) + "\n\n"
-                        yield "data: " + json.dumps({"id": "autoconduck", "object": "chat.completion.chunk",
-                            "created": created, "model": target or body.model,
-                            "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}]}) + "\n\n"
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "id": "autoconduck",
+                                    "object": "chat.completion.chunk",
+                                    "created": created,
+                                    "model": target or body.model,
+                                    "choices": [
+                                        {
+                                            "index": 0,
+                                            "delta": delta,
+                                            "finish_reason": None,
+                                        }
+                                    ],
+                                }
+                            )
+                            + "\n\n"
+                        )
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "id": "autoconduck",
+                                    "object": "chat.completion.chunk",
+                                    "created": created,
+                                    "model": target or body.model,
+                                    "choices": [
+                                        {
+                                            "index": 0,
+                                            "delta": {},
+                                            "finish_reason": finish_reason,
+                                        }
+                                    ],
+                                }
+                            )
+                            + "\n\n"
+                        )
                         yield "data: [DONE]\n\n"
                     else:
                         # FAST (or an orchestrator fallback): relay the normal provider stream.
@@ -263,188 +484,418 @@ def install_routes(app, Request, JSONResponse, StreamingResponse, BaseModel, Fie
 
             async def relay_for(target, extra, messages):
                 from .server_streaming import _litellm
+
                 llm = _litellm()
                 if llm is None:
-                    yield 'data: ' + json.dumps({"error": {"message": "litellm unavailable", "type": "api_error"}}) + "\n\n"
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "error": {
+                                    "message": "litellm unavailable",
+                                    "type": "api_error",
+                                }
+                            }
+                        )
+                        + "\n\n"
+                    )
                     yield "data: [DONE]\n\n"
                     return
                 kwargs = body.model_dump(exclude_none=True)
                 kwargs["messages"] = normalize_messages_for_llm(messages)
-                if kwargs.get("tools"): kwargs["tools"] = sanitize_tools(kwargs["tools"])
+                if kwargs.get("tools"):
+                    kwargs["tools"] = sanitize_tools(kwargs["tools"])
                 kwargs.update(model=target, drop_params=True)
                 kwargs.update(extra or {})
                 response = await llm.acompletion(**kwargs)
                 async for chunk in response:
-                    if await request.is_disconnected(): return
-                    payload = chunk.model_dump() if hasattr(chunk, "model_dump") else chunk
+                    if await request.is_disconnected():
+                        return
+                    payload = (
+                        chunk.model_dump() if hasattr(chunk, "model_dump") else chunk
+                    )
                     yield f"data: {json.dumps(payload)}\n\n"
                 yield "data: [DONE]\n\n"
+
             return StreamingResponse(progress_stream(), media_type="text/event-stream")
         target, extra = await _route_target(body.model, body.messages, request)
         answer = extra.get("__answer__")
         if answer is not None:
-            record(extra.get("_path", "SLOW"), extra.get("_pseudo", body.model), target or "unknown", 0, 0)
+            record(
+                extra.get("_path", "SLOW"),
+                extra.get("_pseudo", body.model),
+                target or "unknown",
+                0,
+                0,
+            )
             created = int(time.time())
-            content = answer.get("content", "") if isinstance(answer, dict) else str(answer)
-            tool_calls = answer.get("tool_calls") if isinstance(answer, dict) else getattr(answer, "tool_calls", None)
+            content = (
+                answer.get("content", "") if isinstance(answer, dict) else str(answer)
+            )
+            tool_calls = (
+                answer.get("tool_calls")
+                if isinstance(answer, dict)
+                else getattr(answer, "tool_calls", None)
+            )
             finish_reason = "tool_calls" if tool_calls else "stop"
             msg: dict[str, Any] = {"role": "assistant", "content": content}
             if tool_calls:
                 msg["tool_calls"] = tool_calls
             if body.stream:
+
                 async def answer_stream():
-                    yield "data: " + json.dumps({
-                        "id": "autoconduck",
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": target or body.model,
-                        "choices": [{"index": 0, "delta": msg, "finish_reason": None}],
-                    }) + "\n\n"
-                    yield "data: " + json.dumps({
-                        "id": "autoconduck",
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": target or body.model,
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
-                    }) + "\n\n"
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "id": "autoconduck",
+                                "object": "chat.completion.chunk",
+                                "created": created,
+                                "model": target or body.model,
+                                "choices": [
+                                    {"index": 0, "delta": msg, "finish_reason": None}
+                                ],
+                            }
+                        )
+                        + "\n\n"
+                    )
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "id": "autoconduck",
+                                "object": "chat.completion.chunk",
+                                "created": created,
+                                "model": target or body.model,
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {},
+                                        "finish_reason": finish_reason,
+                                    }
+                                ],
+                            }
+                        )
+                        + "\n\n"
+                    )
                     yield "data: [DONE]\n\n"
-                return StreamingResponse(answer_stream(), media_type="text/event-stream")
-            return {"id": "autoconduck", "object": "chat.completion", "created": created, "model": target or body.model,
-                    "choices": [{"message": msg, "finish_reason": finish_reason}]}
+
+                return StreamingResponse(
+                    answer_stream(), media_type="text/event-stream"
+                )
+            return {
+                "id": "autoconduck",
+                "object": "chat.completion",
+                "created": created,
+                "model": target or body.model,
+                "choices": [{"message": msg, "finish_reason": finish_reason}],
+            }
         messages = normalize_messages_for_llm(body.messages)
         if extra.get("_path") == "FAST":
             from autoconduck.digest import maybe_digest_messages
-            digest = await maybe_digest_messages(messages, get_config(), request=request)
+
+            digest = await maybe_digest_messages(
+                messages, get_config(), request=request
+            )
             if digest:
                 messages = messages + digest
         if body.stream:
+
             async def relay():
                 from .server_streaming import _litellm
+
                 llm = _litellm()
                 if llm is None:
-                    yield 'data: ' + json.dumps({"error": {"message": "litellm unavailable", "type": "api_error"}}) + "\n\n"
-                    yield "data: [DONE]\n\n"; return
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "error": {
+                                    "message": "litellm unavailable",
+                                    "type": "api_error",
+                                }
+                            }
+                        )
+                        + "\n\n"
+                    )
+                    yield "data: [DONE]\n\n"
+                    return
                 kwargs = body.model_dump(exclude_none=True)
                 kwargs["messages"] = normalize_messages_for_llm(messages)
-                if kwargs.get("tools"): kwargs["tools"] = sanitize_tools(kwargs["tools"])
+                if kwargs.get("tools"):
+                    kwargs["tools"] = sanitize_tools(kwargs["tools"])
                 kwargs.update(model=target, drop_params=True)
                 kwargs.update(extra)
                 response = await llm.acompletion(**kwargs)
                 async for chunk in response:
-                    if await request.is_disconnected(): break
-                    payload = chunk.model_dump() if hasattr(chunk, "model_dump") else chunk
+                    if await request.is_disconnected():
+                        break
+                    payload = (
+                        chunk.model_dump() if hasattr(chunk, "model_dump") else chunk
+                    )
                     yield f"data: {json.dumps(payload)}\n\n"
                 yield "data: [DONE]\n\n"
+
             return StreamingResponse(relay(), media_type="text/event-stream")
         body.model = target
-        return JSONResponse(await _call(target, body, extra.get("_path"), extra.get("_pseudo"), messages=messages))
+        return JSONResponse(
+            await _call(
+                target,
+                body,
+                extra.get("_path"),
+                extra.get("_pseudo"),
+                messages=messages,
+            )
+        )
 
     async def messages_endpoint(body: MessagesRequest, request: Request):
-        try: oai_messages = normalize_messages_for_llm(openai_messages_from_anthropic(body.model_dump(exclude_none=True)))
-        except Exception as exc: return JSONResponse({"type": "error", "error": {"type": "invalid_request_error", "message": str(exc)}}, status_code=400)
-        try: target, extra = await _route_target(body.model, oai_messages, request, client_type="claude")
-        except Exception as exc: return JSONResponse({"type": "error", "error": {"type": "api_error", "message": str(exc)}}, status_code=500)
+        try:
+            oai_messages = normalize_messages_for_llm(
+                openai_messages_from_anthropic(body.model_dump(exclude_none=True))
+            )
+        except Exception as exc:
+            return JSONResponse(
+                {
+                    "type": "error",
+                    "error": {"type": "invalid_request_error", "message": str(exc)},
+                },
+                status_code=400,
+            )
+        try:
+            target, extra = await _route_target(
+                body.model, oai_messages, request, client_type="claude"
+            )
+        except Exception as exc:
+            return JSONResponse(
+                {"type": "error", "error": {"type": "api_error", "message": str(exc)}},
+                status_code=500,
+            )
         answer = extra.get("__answer__")
         if answer is not None:
-            content = answer.get("content", "") if isinstance(answer, dict) else str(answer)
-            tool_calls = answer.get("tool_calls") if isinstance(answer, dict) else getattr(answer, "tool_calls", None)
+            content = (
+                answer.get("content", "") if isinstance(answer, dict) else str(answer)
+            )
+            tool_calls = (
+                answer.get("tool_calls")
+                if isinstance(answer, dict)
+                else getattr(answer, "tool_calls", None)
+            )
             if tool_calls:
                 requested_tool_names = {
                     (t.get("name") if isinstance(t, dict) else getattr(t, "name", None))
                     for t in (body.tools or [])
                 }
                 valid_tool_calls = [
-                    tc for tc in tool_calls
+                    tc
+                    for tc in tool_calls
                     if ((tc.get("function") or {}).get("name") in requested_tool_names)
                 ]
                 tool_calls = valid_tool_calls or None
 
             if body.stream:
+
                 async def answer_stream():
-                    translator = AnthropicSSETranslator(target or body.model, input_text=json.dumps(oai_messages))
-                    for ev in translator._ensure_message_start(): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
+                    translator = AnthropicSSETranslator(
+                        target or body.model, input_text=json.dumps(oai_messages)
+                    )
+                    for ev in translator._ensure_message_start():
+                        yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                     delta: dict[str, Any] = {"role": "assistant", "content": content}
-                    if tool_calls: delta["tool_calls"] = tool_calls
-                    for ev in translator.translate({"choices": [{"delta": delta, "finish_reason": "tool_calls" if tool_calls else "stop"}]}): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
-                return StreamingResponse(answer_stream(), media_type="text/event-stream")
+                    if tool_calls:
+                        delta["tool_calls"] = tool_calls
+                    for ev in translator.translate(
+                        {
+                            "choices": [
+                                {
+                                    "delta": delta,
+                                    "finish_reason": "tool_calls"
+                                    if tool_calls
+                                    else "stop",
+                                }
+                            ]
+                        }
+                    ):
+                        yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
+
+                return StreamingResponse(
+                    answer_stream(), media_type="text/event-stream"
+                )
             if not tool_calls:
-                return JSONResponse(anthropic_response_text(content, target or body.model, input_text=json.dumps(oai_messages)))
+                return JSONResponse(
+                    anthropic_response_text(
+                        content,
+                        target or body.model,
+                        input_text=json.dumps(oai_messages),
+                    )
+                )
             import uuid
+
             content_blocks: list[dict[str, Any]] = []
             if content:
                 content_blocks.append({"type": "text", "text": content})
             for tc in tool_calls:
                 fn = tc.get("function") or {}
                 raw_args = fn.get("arguments", "{}")
-                parsed_args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
-                content_blocks.append({
-                    "type": "tool_use",
-                    "id": tc.get("id") or ("toolu_" + uuid.uuid4().hex[:12]),
-                    "name": fn.get("name"),
-                    "input": parsed_args,
-                })
-            return JSONResponse({
-                "id": "msg_" + uuid.uuid4().hex[:12],
-                "type": "message",
-                "role": "assistant",
-                "content": content_blocks,
-                "model": target or body.model,
-                "stop_reason": "tool_use",
-                "stop_sequence": None,
-                "usage": {
-                    "input_tokens": count_tokens(json.dumps(oai_messages)),
-                    "output_tokens": count_tokens(content) + count_tokens(json.dumps(content_blocks)),
-                },
-            })
+                parsed_args = (
+                    json.loads(raw_args)
+                    if isinstance(raw_args, str)
+                    else (raw_args or {})
+                )
+                content_blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": tc.get("id") or ("toolu_" + uuid.uuid4().hex[:12]),
+                        "name": fn.get("name"),
+                        "input": parsed_args,
+                    }
+                )
+            return JSONResponse(
+                {
+                    "id": "msg_" + uuid.uuid4().hex[:12],
+                    "type": "message",
+                    "role": "assistant",
+                    "content": content_blocks,
+                    "model": target or body.model,
+                    "stop_reason": "tool_use",
+                    "stop_sequence": None,
+                    "usage": {
+                        "input_tokens": count_tokens(json.dumps(oai_messages)),
+                        "output_tokens": count_tokens(content)
+                        + count_tokens(json.dumps(content_blocks)),
+                    },
+                }
+            )
         if extra.get("_path") == "FAST":
             from autoconduck.digest import maybe_digest_messages
-            digest = await maybe_digest_messages(oai_messages, get_config(), request=request)
+
+            digest = await maybe_digest_messages(
+                oai_messages, get_config(), request=request
+            )
             if digest:
                 oai_messages = oai_messages + digest
         kwargs = messages_litellm_kwargs(target, extra)
-        kwargs.update(_path=extra.get("_path", "unknown"), _pseudo=extra.get("_pseudo", body.model))
-        for name, value in (("tools", openai_tools_from_anthropic(body.tools)), ("tool_choice", openai_tool_choice_from_anthropic(body.tool_choice)),
-                            ("max_tokens", body.max_tokens), ("stop", body.stop_sequences), ("temperature", body.temperature),
-                            ("top_p", body.top_p), ("thinking", body.thinking), ("metadata", body.metadata), ("cache_control", body.cache_control)):
-            if value is not None: kwargs[name] = value
+        kwargs.update(
+            _path=extra.get("_path", "unknown"),
+            _pseudo=extra.get("_pseudo", body.model),
+        )
+        for name, value in (
+            ("tools", openai_tools_from_anthropic(body.tools)),
+            ("tool_choice", openai_tool_choice_from_anthropic(body.tool_choice)),
+            ("max_tokens", body.max_tokens),
+            ("stop", body.stop_sequences),
+            ("temperature", body.temperature),
+            ("top_p", body.top_p),
+            ("thinking", body.thinking),
+            ("metadata", body.metadata),
+            ("cache_control", body.cache_control),
+        ):
+            if value is not None:
+                kwargs[name] = value
         from .server_streaming import _litellm
+
         llm = _litellm()
-        if llm is None: return JSONResponse({"type": "error", "error": {"type": "api_error", "message": "litellm unavailable"}}, status_code=502 if body.stream else 503)
+        if llm is None:
+            return JSONResponse(
+                {
+                    "type": "error",
+                    "error": {"type": "api_error", "message": "litellm unavailable"},
+                },
+                status_code=502 if body.stream else 503,
+            )
         if body.stream:
-            try: response = await llm.acompletion(messages=oai_messages, stream=True, drop_params=True, **kwargs)
-            except Exception as exc: return JSONResponse({"type": "error", "error": {"type": "api_error", "message": str(exc)}}, status_code=502)
+            try:
+                response = await llm.acompletion(
+                    messages=oai_messages, stream=True, drop_params=True, **kwargs
+                )
+            except Exception as exc:
+                return JSONResponse(
+                    {
+                        "type": "error",
+                        "error": {"type": "api_error", "message": str(exc)},
+                    },
+                    status_code=502,
+                )
+
             async def relay():
-                translator = AnthropicSSETranslator(target, input_text=json.dumps(oai_messages))
+                translator = AnthropicSSETranslator(
+                    target, input_text=json.dumps(oai_messages)
+                )
                 try:
-                    for ev in translator._ensure_message_start(): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
+                    for ev in translator._ensure_message_start():
+                        yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                     async for chunk in response:
-                        if await request.is_disconnected(): break
-                        payload = chunk.model_dump() if hasattr(chunk, "model_dump") else chunk
-                        for ev in translator.translate(payload): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
-                    for ev in translator.finish(): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
+                        if await request.is_disconnected():
+                            break
+                        payload = (
+                            chunk.model_dump()
+                            if hasattr(chunk, "model_dump")
+                            else chunk
+                        )
+                        for ev in translator.translate(payload):
+                            yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
+                    for ev in translator.finish():
+                        yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                 except Exception as exc:
                     exc_str = str(exc)
-                    if "Error building chunks" in exc_str or "stream_chunk_builder" in exc_str or "list index out of range" in exc_str:
-                        for ev in translator.finish(): yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
+                    if (
+                        "Error building chunks" in exc_str
+                        or "stream_chunk_builder" in exc_str
+                        or "list index out of range" in exc_str
+                    ):
+                        for ev in translator.finish():
+                            yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
                     else:
-                        for ev in translator.error(str(exc)): yield f"event: {ev['event']}\ndata: {ev['data']}\n\n"
+                        for ev in translator.error(str(exc)):
+                            yield f"event: {ev['event']}\ndata: {ev['data']}\n\n"
+
             return StreamingResponse(relay(), media_type="text/event-stream")
         try:
-            result = await llm.acompletion(messages=oai_messages, stream=False, drop_params=True, **kwargs)
-            text = result.choices[0].message.content if hasattr(result, "choices") else None
-        except Exception as exc: return JSONResponse({"type": "error", "error": {"type": "api_error", "message": str(exc)}}, status_code=500)
-        return JSONResponse(anthropic_response_text(coerce_content_text(text), target, input_text=json.dumps(oai_messages)))
+            result = await llm.acompletion(
+                messages=oai_messages, stream=False, drop_params=True, **kwargs
+            )
+            text = (
+                result.choices[0].message.content
+                if hasattr(result, "choices")
+                else None
+            )
+        except Exception as exc:
+            return JSONResponse(
+                {"type": "error", "error": {"type": "api_error", "message": str(exc)}},
+                status_code=500,
+            )
+        return JSONResponse(
+            anthropic_response_text(
+                coerce_content_text(text), target, input_text=json.dumps(oai_messages)
+            )
+        )
 
     async def messages_count_tokens(request: Request):
-        try: body = await request.json()
-        except Exception: body = {}
-        return {"input_tokens": count_tokens(json.dumps(openai_messages_from_anthropic(body)))}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        return {
+            "input_tokens": count_tokens(
+                json.dumps(openai_messages_from_anthropic(body))
+            )
+        }
 
-    app.get("/healthz")(healthz); app.get("/v1/models")(models); app.get("/stats")(get_stats)
-    app.post("/v1/chat/completions")(completions); app.post("/v1/messages")(messages_endpoint)
+    app.get("/healthz")(healthz)
+    app.get("/v1/models")(models)
+    app.get("/stats")(get_stats)
+    app.post("/v1/chat/completions")(completions)
+    app.post("/v1/messages")(messages_endpoint)
     app.post("/v1/messages/count_tokens")(messages_count_tokens)
     if cache is not None:
-        cache.update(CompletionRequest=CompletionRequest, MessagesRequest=MessagesRequest,
-                     _route_target=_route_target, _call=_call, completions=completions,
-                     messages_endpoint=messages_endpoint, healthz=healthz, models=models, get_stats=get_stats)
+        cache.update(
+            CompletionRequest=CompletionRequest,
+            MessagesRequest=MessagesRequest,
+            _route_target=_route_target,
+            _call=_call,
+            completions=completions,
+            messages_endpoint=messages_endpoint,
+            healthz=healthz,
+            models=models,
+            get_stats=get_stats,
+        )
     return app

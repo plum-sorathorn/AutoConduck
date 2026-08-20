@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-def check_subagent_support(user_agent: str = "", client_type: str | None = None) -> tuple[bool, bool]:
+def check_subagent_support(user_agent: str = "", client_type: str | None = None, cfg=None) -> tuple[bool, bool]:
     """Check if Pi is configured and whether the pi-subagents package/extension is installed.
 
     Returns (is_pi_configured, has_subagents).
@@ -19,6 +19,19 @@ def check_subagent_support(user_agent: str = "", client_type: str | None = None)
         ua_lower = user_agent.lower()
         if any(agent in ua_lower for agent in ("opencode", "claude", "anthropic")):
             return False, False
+
+    if cfg is None:
+        try:
+            from ..config import get_config
+            cfg = get_config()
+        except Exception:
+            cfg = None
+
+    # Synthetic subagent tool calls require explicit opt-in via config
+    if cfg is not None:
+        sel = getattr(cfg, "selection", None)
+        if not getattr(sel, "enable_pi_subagent_tool_call", False):
+            return True, False
 
     try:
         agent_dir = (
@@ -190,13 +203,23 @@ def format_execution_handoff(
     compacted: str,
     user_agent: str = "",
     client_type: str | None = None,
+    is_nested: bool = False,
 ) -> ExecutionHandoff:
-    """Format a clean, structured implementation plan with verified context for the client agent."""
+    """Format a clean, structured implementation plan with verified context for the client agent.
+
+    When ``is_nested`` is True the caller is an AutoConduck subagent worker, not
+    a top-level user session.  In that case we never emit a ``subagent`` tool call
+    (the worker cannot execute it) and instead emit plain markdown directives.
+    """
     is_pi, has_subagents = check_subagent_support(user_agent=user_agent, client_type=client_type)
+    # Nested worker contexts must not receive subagent tool calls even if the main
+    # Pi session has pi-subagents installed — workers don't register that tool.
+    if is_nested:
+        has_subagents = False
     sections: list[str] = []
 
     # Warning / Notice if Pi is configured but pi-subagents extension is missing
-    if is_pi and not has_subagents:
+    if is_pi and not has_subagents and not is_nested:
         sections.append(
             "> [!NOTE]\n"
             "> **Linear Execution Mode**: The `pi-subagents` extension is not detected in your Pi configuration. "

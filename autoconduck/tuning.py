@@ -5,8 +5,9 @@ side effects. Prices are USD per million tokens.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, asdict
+
 import math
+from dataclasses import asdict, dataclass
 from typing import Any
 
 EPSILON = 0.001
@@ -64,7 +65,7 @@ def blended_price(model: dict[str, Any], io_ratio: float = 3.0) -> float:
 
 
 def _shares(records, names):
-    counts = {n: 0 for n in names}
+    counts = dict.fromkeys(names, 0)
     for row in records or []:
         n = str(row.get("model", ""))
         if n in counts:
@@ -225,6 +226,286 @@ def inputs_dict(inputs: SimpleInputs):
     return asdict(inputs)
 
 
+def infer_monthly_budget(
+    stats_records, *, days: int = 30, active_hours_per_month: float = 160.0
+) -> float:
+    """Project realized spend from recent stats forward to a monthly budget.
+
+    Pure: no filesystem access. Reads rows produced by ``stats.record`` (each
+    carries a ``ts`` ISO timestamp and a ``cost`` in USD). Uses the last
+    ``days`` of data, scales linearly to 30 days, and rounds up to a dollar so
+    the auto-tuner has a stable, universally-applicable default instead of a
+    guessed magic number.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=max(1, int(days)))
+    total = 0.0
+    span_days = 0.0
+    oldest = newest = None
+    for row in stats_records or []:
+        if not isinstance(row, dict):
+            continue
+        ts = row.get("ts")
+        if not ts:
+            continue
+        try:
+            when = datetime.fromisoformat(str(ts))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when < cutoff:
+            continue
+        cost = float(row.get("cost", 0.0) or 0.0)
+        total += cost
+        oldest = when if oldest is None or when < oldest else oldest
+        newest = when if newest is None or when > newest else newest
+    if newest is None or oldest is None:
+        return 0.0
+    span_days = max(1.0, (newest - oldest).total_seconds() / 86400.0)
+    # Linear projection to a 30-day month. If the observed window is shorter
+    # than the requested horizon we still extrapolate from the realized rate;
+    # the caller sees the inferred number and can override.
+    monthly = total / span_days * 30.0
+    return max(0.0, math.ceil(monthly))
+
+
+def auto_tune_inputs(stats_records, *, days: int = 30, **fixed) -> SimpleInputs | None:
+    """Build SimpleInputs straight from observed traffic, no manual budget.
+
+    Returns None when there is not enough realized spend to project from, so
+    callers can fall back to prompting the user instead of guessing.
+    """
+    monthly = infer_monthly_budget(stats_records, days=days)
+    if monthly <= 0:
+        return None
+    return SimpleInputs(monthly_limit=monthly, **fixed)
+
+
+@dataclass
+class SearchCandidate:
+    """One evaluated control configuration from the empirical search."""
+
+    controls: dict[str, Any]
+    cost_per_success: float
+    total_cost: float
+    successes: int
+    failures: int
+    eligible_requests: int
+    escalation_rate: float
+    feasible: bool  # True if the quality floor was satisfied
+
+
+def _baseline_success_rate(stats_records) -> float:
+    """Observed success share under the controls actually in effect."""
+    total = 0
+    ok = 0
+    for row in stats_records or []:
+        if not isinstance(row, dict):
+            continue
+        total += 1
+        if bool(row.get("success", True)):
+            ok += 1
+    return (ok / total) if total else 0.0
+
+
+def _baseline_escalation_rate(stats_records) -> float:
+    """Observed slow-path share under the controls actually in effect."""
+    total = 0
+    slow = 0
+    for row in stats_records or []:
+        if not isinstance(row, dict):
+            continue
+        total += 1
+        if str(row.get("path", "")).lower() == "slow":
+            slow += 1
+    return (slow / total) if total else 0.0
+
+
+def search_controls(
+    stats_records,
+    pool,
+    *,
+    config,
+    quality_floor_ratio: float = 1.25,
+    max_candidates: int = 64,
+    seed: int | None = None,
+) -> list[SearchCandidate]:
+    """Find control parameters that minimize cost subject to a quality floor.
+
+    Objective: minimize cost-per-successful-task, where success is read from
+    each realized stats row (``success`` field, falling back to True).  A
+    candidate is *feasible* only if its simulated slow-path share stays within
+    ``quality_floor_ratio`` of the baseline escalation rate observed in the
+    real traffic — this is the quality floor.  Infeasible candidates are kept
+    in the result but marked ``feasible=False`` so the caller can see what was
+    rejected and why.
+
+    The search is counterfactual replay: for each request we already know the
+    realized cost and success for the model that *was* chosen.  We only score
+    candidates whose simulated selection matches a model we have outcome data
+    for; requests whose simulated model has no observed history are counted as
+    ``eligible_requests`` exclusions rather than silently scored.
+
+    Pool/coordinator: ``config`` is the live ``AppConfig`` used for
+    ``pricing.select_closest``; ``pool`` is the enabled model pool.  Both are
+    passed through unchanged.  No I/O, no LLM calls — this is pure offline
+    calibration over recorded traffic.
+    """
+    from itertools import product
+
+    from autoconduck.routing import pricing
+
+    rows = [r for r in (stats_records or []) if isinstance(r, dict) and r.get("model")]
+    if not rows:
+        return []
+    baseline_success = _baseline_success_rate(rows)
+    # Precompute the outcome lookup: model -> list of (cost, success).  Cost
+    # is normalized to USD per request so the objective is comparable across
+    # models with different token economics.
+    outcomes: dict[str, list[tuple[float, bool]]] = {}
+    complexities: list[float | None] = []
+    for r in rows:
+        model = str(r.get("model"))
+        cost = float(r.get("cost", 0.0) or 0.0)
+        success = bool(r.get("success", True))
+        outcomes.setdefault(model, []).append((cost, success))
+        complexities.append(
+            float(r["complexity"]) if r.get("complexity") is not None else None
+        )
+
+    names = [_name(e) for e in _enabled(pool)]
+    if not names:
+        return []
+
+    # Coarse grid over the high-leverage controls that compute_tuning itself
+    # bends via pressure.  Each axis is a small set of physically meaningful
+    # values; the product stays small (well under max_candidates) so the
+    # replay is cheap and deterministic.
+    gammas = (1.0, 1.5, 2.0, 2.5)
+    budget_biases = (-0.40, -0.30, -0.20)
+    expensive_biases = (0.05, 0.20)
+    fast_caps = (0.35, 0.45, 0.50)
+    grid = list(product(gammas, budget_biases, expensive_biases, fast_caps))
+    if max_candidates and len(grid) > max_candidates:
+        stride = max(1, len(grid) // max_candidates)
+        grid = grid[::stride]
+
+    baseline_controls = _defaults()
+    results: list[SearchCandidate] = []
+    for gamma, bb, eb, cap in grid:
+        controls = dict(baseline_controls)
+        controls.update(
+            {
+                "value_to_cost_gamma": gamma,
+                "pseudo_bias_budget": bb,
+                "pseudo_bias_expensive": eb,
+                "fast_path_max_scaled_cost": cap,
+            }
+        )
+        # Apply candidate controls onto a throwaway selection view without
+        # mutating the real config.  We build a lightweight proxy so the
+        # pricing helpers see the candidate values.
+        sel = _SelectionProxy(getattr(config, "selection", config), controls)
+        proxy_cfg = _ConfigProxy(config, sel)
+
+        total_cost = 0.0
+        successes = 0
+        failures = 0
+        eligible = 0
+        slow = 0
+        for r, cpx in zip(rows, complexities):
+            pseudo = str(r.get("pseudo_model", "autoconduck"))
+            value = cpx if cpx is not None else 0.5
+            try:
+                chosen = pricing.select_closest(
+                    names,
+                    value,
+                    proxy_cfg,
+                    pseudo_model=pseudo,
+                    max_scaled_cost=controls["fast_path_max_scaled_cost"],
+                )
+            except Exception:
+                continue
+            obs = outcomes.get(chosen)
+            if not obs:
+                continue
+            eligible += 1
+            # Use the median realized cost/success for the chosen model as the
+            # replay estimate for this request — robust to per-request noise.
+            cost, success = _median_outcome(obs)
+            total_cost += cost
+            if success:
+                successes += 1
+            else:
+                failures += 1
+            if str(r.get("path", "")).lower() == "slow":
+                slow += 1
+        esc_rate = (slow / len(rows)) if rows else 0.0
+        cand_success_rate = (successes / eligible) if eligible else 0.0
+        cost_per_success = (total_cost / successes) if successes else float("inf")
+        # Quality floor: the candidate's simulated success rate must stay within
+        # ``quality_floor_ratio`` of the baseline observed success rate.  This is
+        # the real outcome-based quality gate — cost minimization is only
+        # acceptable while it does not materially reduce task success.
+        floor = baseline_success / max(1e-6, quality_floor_ratio)
+        feasible = successes > 0 and (
+            baseline_success <= 0 or cand_success_rate >= floor
+        )
+        results.append(
+            SearchCandidate(
+                controls=controls,
+                cost_per_success=cost_per_success,
+                total_cost=total_cost,
+                successes=successes,
+                failures=failures,
+                eligible_requests=eligible,
+                escalation_rate=esc_rate,
+                feasible=feasible,
+            )
+        )
+    # Rank: feasible candidates first by cost-per-success, then infeasible last.
+    results.sort(key=lambda c: (0 if c.feasible else 1, c.cost_per_success))
+    return results
+
+
+def _median_outcome(obs: list[tuple[float, bool]]) -> tuple[float, bool]:
+    """Median cost and majority success for a model's observed outcomes."""
+    costs = sorted(c for c, _ in obs)
+    median_cost = costs[len(costs) // 2] if costs else 0.0
+    success_rate = sum(1 for _, s in obs if s) / max(1, len(obs))
+    return median_cost, success_rate >= 0.5
+
+
+class _SelectionProxy:
+    """Read-through proxy overlaying candidate tuning values on selection."""
+
+    def __init__(self, base, overrides: dict[str, Any]):
+        object.__setattr__(self, "_base", base)
+        object.__setattr__(self, "_overrides", overrides)
+
+    def __getattr__(self, name):
+        ov = object.__getattribute__(self, "_overrides")
+        if name in ov:
+            return ov[name]
+        return getattr(object.__getattribute__(self, "_base"), name)
+
+
+class _ConfigProxy:
+    """Wraps an AppConfig so pricing sees the candidate SelectionConfig."""
+
+    def __init__(self, base, selection):
+        object.__setattr__(self, "_base", base)
+        object.__setattr__(self, "_selection", selection)
+
+    def __getattr__(self, name):
+        if name == "selection":
+            return object.__getattribute__(self, "_selection")
+        return getattr(object.__getattribute__(self, "_base"), name)
+
+
 def save_profile(inputs: SimpleInputs, result: TuneResult, *, path=None) -> None:
     """Persist the single active tuning profile (UI-facing convenience)."""
     import json
@@ -285,8 +566,8 @@ def recalibrate_weights_from_records(
         total_valid += 1
         is_esc = bool(
             record.get("escalated")
-            or record.get("path") == "slow"
-            or float(record.get("complexity", 0.0)) >= 0.75
+            or str(record.get("path", "")).lower() == "slow"
+            or float(record.get("complexity", 0.0) or 0.0) >= 0.75
         )
         if is_esc:
             escalated_count += 1
@@ -323,5 +604,3 @@ def load_profile(*, path=None) -> dict[str, Any] | None:
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-
-

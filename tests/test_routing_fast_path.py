@@ -335,3 +335,69 @@ def test_tool_loop_soft_escalation_on_active_chain():
 
     assert evaluator.is_tool_loop(messages) is False
 
+
+def test_detect_turn_task_classification():
+    """Verify detect_turn_task identifies recon, edit, and bash turns in O(1) time."""
+    recon_msg = [
+        {"role": "user", "content": "check file"},
+        {"role": "assistant", "tool_calls": [{"name": "read", "arguments": "{}"}]},
+        {"role": "tool", "name": "read", "content": "def foo(): pass"},
+    ]
+    assert evaluator.detect_turn_task(recon_msg) == "recon"
+
+    edit_msg = [
+        {"role": "user", "content": "edit file"},
+        {"role": "assistant", "tool_calls": [{"name": "edit", "arguments": "{}"}]},
+        {"role": "tool", "name": "edit", "content": "Applied patch"},
+    ]
+    assert evaluator.detect_turn_task(edit_msg) == "edit"
+
+    pi_recon = [
+        {"role": "user", "content": "search code"},
+        {"role": "toolResult", "toolName": "ffgrep", "content": [{"type": "text", "text": "found 2 lines"}]},
+    ]
+    assert evaluator.detect_turn_task(pi_recon) == "recon"
+
+
+def test_per_turn_task_routing_delegates_to_flash_tier():
+    """Verify recon turn in a multi-turn session selects cheaper model than edit turn."""
+    cfg = Config(
+        model_list=[
+            {"id": "deepseek-v4-flash", "price_in": 0.14, "price_out": 0.28, "enabled": True},
+            {"id": "glm-5.2", "price_in": 0.55, "price_out": 1.93, "enabled": True},
+            {"id": "kimi-k3", "price_in": 3.00, "price_out": 15.00, "enabled": True},
+        ],
+        selection=SelectionConfig(enable_per_turn_task_routing=True),
+    )
+
+    recon_messages = [
+        {"role": "user", "content": "Read all files in src and analyze performance"},
+        {"role": "assistant", "content": "reading", "tool_calls": [{"name": "read", "arguments": "{}"}]},
+        {"role": "tool", "name": "read", "content": "long file output..."},
+    ]
+
+    edit_messages = [
+        {"role": "user", "content": "Read all files in src and analyze performance"},
+        {"role": "assistant", "content": "editing", "tool_calls": [{"name": "edit", "arguments": "{}"}]},
+        {"role": "tool", "name": "edit", "content": "edit success"},
+    ]
+
+    state_recon = FastGraphState(
+        messages=recon_messages,
+        history=[],
+        pseudo_model="autoconduck",
+        config=cfg,
+    )
+    res_recon = FastGraph().execute(state_recon)
+    assert res_recon.model == "deepseek-v4-flash"
+
+    state_edit = FastGraphState(
+        messages=edit_messages,
+        history=[],
+        pseudo_model="autoconduck",
+        config=cfg,
+    )
+    res_edit = FastGraph().execute(state_edit)
+    assert res_edit.model == "glm-5.2"
+
+

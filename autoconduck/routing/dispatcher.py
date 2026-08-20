@@ -264,12 +264,30 @@ def route(
     except (TypeError, ValueError):
         max_fast_cost = 0.50
 
+    per_turn_enabled = bool(getattr(selection, "enable_per_turn_task_routing", True))
+    turn_task = evaluator.detect_turn_task(messages) if per_turn_enabled else None
+    turn_complexity = result.complexity
+    band = None
+    if turn_task == "recon":
+        recon_max = float(getattr(selection, "recon_max_complexity", 0.20))
+        turn_complexity = min(turn_complexity, recon_max)
+        recon_band = getattr(selection, "recon_task_band", [0.05, 0.35])
+        if isinstance(recon_band, (list, tuple)) and len(recon_band) == 2:
+            max_fast_cost = min(max_fast_cost, float(recon_band[1]))
+    elif turn_task == "edit":
+        edit_min = float(getattr(selection, "edit_min_complexity", 0.45))
+        turn_complexity = max(turn_complexity, edit_min)
+        edit_band = getattr(selection, "edit_task_band", [0.30, 1.0])
+        if isinstance(edit_band, (list, tuple)) and len(edit_band) == 2:
+            max_fast_cost = max(max_fast_cost, float(edit_band[1]))
+
     model = (
         pricing.select_closest(
             pricing.pool_ids(config),
-            result.complexity,
+            turn_complexity,
             config,
             pseudo_model=pseudo_model,
+            band=band,
             max_scaled_cost=max_fast_cost,
         )
         if result.path == "fast"

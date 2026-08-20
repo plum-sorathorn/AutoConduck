@@ -151,6 +151,66 @@ def is_tool_loop(messages: list, config=None) -> bool:
     return True
 
 
+def detect_turn_task(messages: list) -> str | None:
+    """Detect the operational task of the latest turn in O(1) time.
+
+    Returns:
+      'recon' - reading files, grepping, searching, listing directories
+      'edit'  - modifying files, applying diffs, writing code
+      'bash'  - running shell commands or test runners
+      'chat'  - conversational interaction or direct user query
+    """
+    if not isinstance(messages, list) or not messages:
+        return None
+
+    for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        if role in ("tool", "toolResult", "function"):
+            tool_name = str(msg.get("toolName") or msg.get("name") or "").lower()
+            if any(t in tool_name for t in ("read", "view", "grep", "find", "glob", "list", "search", "fetch", "cat")):
+                return "recon"
+            if any(t in tool_name for t in ("edit", "write", "patch", "diff", "replace")):
+                return "edit"
+            if any(t in tool_name for t in ("bash", "exec", "terminal", "command", "cmd", "sh")):
+                return "bash"
+            return "recon"
+
+        # Check content blocks for Anthropic style tool_result / tool_use
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in reversed(content):
+                if isinstance(block, dict):
+                    btype = block.get("type")
+                    if btype == "tool_result":
+                        tool_name = str(block.get("name") or block.get("tool_name") or "").lower()
+                        if any(t in tool_name for t in ("read", "view", "grep", "find", "glob", "list", "search", "fetch", "cat")):
+                            return "recon"
+                        if any(t in tool_name for t in ("edit", "write", "patch", "diff", "replace")):
+                            return "edit"
+                        if any(t in tool_name for t in ("bash", "exec", "terminal", "command", "cmd", "sh")):
+                            return "bash"
+                        return "recon"
+
+        # Check tool_calls in assistant message
+        tool_calls = msg.get("tool_calls") or msg.get("toolCalls")
+        if tool_calls and isinstance(tool_calls, list):
+            for tc in reversed(tool_calls):
+                fn_name = ""
+                if isinstance(tc, dict):
+                    fn_name = str(tc.get("function", {}).get("name") or tc.get("name") or "").lower()
+                if any(t in fn_name for t in ("read", "view", "grep", "find", "glob", "list", "search", "fetch", "cat")):
+                    return "recon"
+                if any(t in fn_name for t in ("edit", "write", "patch", "diff", "replace")):
+                    return "edit"
+                if any(t in fn_name for t in ("bash", "exec", "terminal", "command", "cmd", "sh")):
+                    return "bash"
+        if role == "user":
+            break
+    return None
+
+
 def score(
     messages: list,
     history,

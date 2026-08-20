@@ -57,6 +57,7 @@ class State(BaseModel):
     task_value: float = 0.5
     user_agent: str = ""
     client_type: str | None = None
+    is_nested: bool = False
 
 
 async def _call(client: Any, model: str, messages: list[dict[str, str]]) -> str:
@@ -71,6 +72,9 @@ async def _call(client: Any, model: str, messages: list[dict[str, str]]) -> str:
     params["_path"] = "orchestrator-executor"
     params["_pseudo"] = "autoconduck"
     params["drop_params"] = True
+    # Stamp re-entrancy depth so any call-back into AutoConduck is immediately
+    # downgraded to FAST, preventing recursive orchestrator invocations.
+    params.setdefault("extra_headers", {})["x-autoconduck-depth"] = "1"
     logger = logging.getLogger("autoconduck.orchestrator")
     prompt_log = logger.info if getattr(getattr(cfg, "selection", None), "dump_prompts", True) else logger.debug
     prompt_log(
@@ -103,6 +107,7 @@ async def run(
     on_progress: Any = None,
     user_agent: str = "",
     client_type: str | None = None,
+    is_nested: bool = False,
 ) -> str | None:
     if not _LANGGRAPH_AVAILABLE:
         return None
@@ -303,6 +308,7 @@ async def run(
                 compacted=state.compacted,
                 user_agent=getattr(state, "user_agent", "") or "",
                 client_type=getattr(state, "client_type", None),
+                is_nested=getattr(state, "is_nested", False),
             )
             return {"result": handoff_result}
 
@@ -324,6 +330,7 @@ async def run(
                     task_value=task_value,
                     user_agent=req_ua,
                     client_type=req_client_type,
+                    is_nested=is_nested,
                 )
             )
             state = State.model_validate(final)
