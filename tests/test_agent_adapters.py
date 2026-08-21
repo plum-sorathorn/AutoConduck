@@ -1,7 +1,7 @@
 """Coding agent adapters unit tests for Pi, Claude Code, OpenCode, and all supported tools."""
+
 import json
 from pathlib import Path
-import pytest
 
 from autoconduck.agents import all_adapters, binary_name_for
 from autoconduck.agents.aider import AiderAdapter
@@ -15,8 +15,8 @@ from autoconduck.agents.pi import PiAdapter
 from autoconduck.cli.cli_launch import resolve_agent_ids
 from autoconduck.config import Config
 from autoconduck.launcher import shim_script, shim_script_win
-from autoconduck.presets.model_presets import discover_models, curated_model_catalog
-from autoconduck.presets.presets_data import PRESETS, PRESET_ORDER
+from autoconduck.presets.model_presets import curated_model_catalog, discover_models
+from autoconduck.presets.presets_data import PRESETS
 
 
 def test_all_adapters_registered():
@@ -42,10 +42,12 @@ def test_claude_code_adapter_patch_and_revert(tmp_path, monkeypatch):
     settings_file = tmp_path / ".claude" / "settings.json"
     settings_file.parent.mkdir(parents=True, exist_ok=True)
     settings_file.write_text(
-        json.dumps({
-            "env": {"EXISTING": "val"},
-            "permissions": {"allow": ["Notebook", "Task", "Read", "Write", "Edit"]},
-        }),
+        json.dumps(
+            {
+                "env": {"EXISTING": "val"},
+                "permissions": {"allow": ["Notebook", "Task", "Read", "Write", "Edit"]},
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -58,7 +60,12 @@ def test_claude_code_adapter_patch_and_revert(tmp_path, monkeypatch):
     data = json.loads(settings_file.read_text(encoding="utf-8"))
     assert "ANTHROPIC_BASE_URL" in data["env"]
     assert "http://127.0.0.1:11434" in data["env"]["ANTHROPIC_BASE_URL"]
-    assert "autoconduck" in data.get("modelOverrides", {})
+    overrides = data.get("modelOverrides", {})
+    assert "autoconduck" in overrides
+    # modelOverrides values must be strings (provider model IDs), not objects.
+    for pseudo_name in ("autoconduck", "autoconduck-budget", "autoconduck-expensive"):
+        assert overrides[pseudo_name] == pseudo_name
+        assert isinstance(overrides[pseudo_name], str)
 
     # Revert restores original state
     adapter.revert()
@@ -162,7 +169,10 @@ def test_continue_adapter_patch_and_revert(tmp_path, monkeypatch):
     continue_dir = tmp_path / ".continue"
     continue_dir.mkdir(parents=True, exist_ok=True)
     continue_cfg = continue_dir / "config.json"
-    continue_cfg.write_text(json.dumps({"models": [{"title": "existing", "model": "gpt-4"}]}), encoding="utf-8")
+    continue_cfg.write_text(
+        json.dumps({"models": [{"title": "existing", "model": "gpt-4"}]}),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     adapter = ContinueDevAdapter()
@@ -209,7 +219,15 @@ def test_generic_openai_adapter():
 
 def test_launcher_shims_generation():
     real_bin = "/usr/local/bin/agent_mock"
-    for agent_id in ("claude_code", "opencode", "pi", "aider", "cursor", "continue_dev", "kilocode"):
+    for agent_id in (
+        "claude_code",
+        "opencode",
+        "pi",
+        "aider",
+        "cursor",
+        "continue_dev",
+        "kilocode",
+    ):
         bash = shim_script(agent_id, real_bin)
         assert "ensure --port" in bash
         assert "release --port" in bash
@@ -228,7 +246,19 @@ def test_agent_alias_resolution():
 
 
 def test_all_provider_presets_resolve():
-    for provider in ("openai", "anthropic", "google", "mistral", "deepseek", "groq", "openrouter", "together", "xai", "llmgateway", "devpass"):
+    for provider in (
+        "openai",
+        "anthropic",
+        "google",
+        "mistral",
+        "deepseek",
+        "groq",
+        "openrouter",
+        "together",
+        "xai",
+        "llmgateway",
+        "devpass",
+    ):
         assert provider in PRESETS
         models = PRESETS[provider]
         assert len(models) >= 1
@@ -239,8 +269,63 @@ def test_all_provider_presets_resolve():
             assert "price_in" in m
             assert "price_out" in m
 
-    discovered = discover_models(preset_keys=["openai", "anthropic", "google", "mistral", "deepseek", "groq", "openrouter", "together", "xai"])
+    discovered = discover_models(
+        preset_keys=[
+            "openai",
+            "anthropic",
+            "google",
+            "mistral",
+            "deepseek",
+            "groq",
+            "openrouter",
+            "together",
+            "xai",
+        ]
+    )
     assert len(discovered) >= 40
     catalog = curated_model_catalog()
     assert len(catalog) >= 100
 
+    # Verify grok-4.6 presence in xai and devpass
+    assert any(m["id"] == "grok-4.6" for m in PRESETS["xai"])
+    assert any(m["id"] == "grok-4.6" for m in PRESETS["devpass"])
+
+
+def test_claude_code_sanitizes_legacy_object_model_overrides(tmp_path, monkeypatch):
+    """Ensure legacy object modelOverrides values are sanitized into strings."""
+    settings_file = tmp_path / ".claude" / "settings.json"
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(
+        json.dumps(
+            {
+                "env": {"EXISTING": "val"},
+                "modelOverrides": {
+                    "autoconduck": {"contextWindow": 1000000},
+                    "autoconduck-budget": {"contextWindow": 1000000},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    adapter = ClaudeCodeAdapter()
+    cfg = Config(port=11434)
+    adapter.patch(cfg, port=11434)
+
+    data = json.loads(settings_file.read_text(encoding="utf-8"))
+    overrides = data.get("modelOverrides", {})
+    for pseudo_name in ("autoconduck", "autoconduck-budget", "autoconduck-expensive"):
+        assert overrides[pseudo_name] == pseudo_name
+        assert isinstance(overrides[pseudo_name], str)
+
+
+def test_onboarding_configure_selected_agents(tmp_path, monkeypatch):
+    from autoconduck.tui.onboarding.helpers import configure_selected_agents
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / ".pi" / "agent"))
+
+    configured = configure_selected_agents(["claude_code", "pi"])
+    assert "claude_code" in configured
+    assert "pi" in configured

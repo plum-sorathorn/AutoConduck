@@ -1,6 +1,6 @@
 # Model Catalog
 
-Total models: 1402
+Total models: 1416
 
 ## Models per provider
 - ai21: 9
@@ -19,9 +19,10 @@ Total models: 1402
 - cohere_chat: 7
 - darkbloom: 1
 - dashscope: 21
-- databricks: 26
+- databricks: 40
 - deepinfra: 55
 - deepseek: 5
+- devpass: 1
 - fireworks_ai: 229
 - fireworks_ai-embedding-models: 2
 - friendliai: 2
@@ -38,7 +39,7 @@ Total models: 1402
 - lemonade: 5
 - libertai: 7
 - llamagate: 11
-- llmgateway: 29
+- llmgateway: 28
 - meta: 3
 - minimax: 4
 - mistral: 45
@@ -449,14 +450,28 @@ Total models: 1402
 - databricks-claude-opus-4 ($15.00 / 75.00 per 1M)
 - databricks-claude-opus-4-1 ($15.00 / 75.00 per 1M)
 - databricks-claude-opus-4-5 ($5.00 / 25.00 per 1M)
+- databricks-claude-opus-4-6 ($5.00 / 25.00 per 1M)
 - databricks-claude-sonnet-4 ($3.00 / 15.00 per 1M)
 - databricks-claude-sonnet-4-1 ($3.00 / 15.00 per 1M)
 - databricks-claude-sonnet-4-5 ($3.00 / 15.00 per 1M)
+- databricks-claude-sonnet-4-6 ($3.00 / 15.00 per 1M)
 - databricks-gemini-2-5-flash ($0.300 / 2.50 per 1M)
 - databricks-gemini-2-5-pro ($1.25 / 10.00 per 1M)
+- databricks-gemini-3-1-flash-lite ($0.312 / 1.88 per 1M)
+- databricks-gemini-3-1-pro ($2.50 / 15.00 per 1M)
+- databricks-gemini-3-flash ($0.625 / 3.75 per 1M)
+- databricks-gemini-3-pro ($2.50 / 15.00 per 1M)
 - databricks-gemma-3-12b ($0.150 / 0.500 per 1M)
 - databricks-gpt-5 ($1.25 / 10.00 per 1M)
 - databricks-gpt-5-1 ($1.25 / 10.00 per 1M)
+- databricks-gpt-5-1-codex-max ($1.25 / 10.00 per 1M)
+- databricks-gpt-5-1-codex-mini ($0.250 / 2.00 per 1M)
+- databricks-gpt-5-2 ($1.75 / 14.00 per 1M)
+- databricks-gpt-5-2-codex ($1.75 / 14.00 per 1M)
+- databricks-gpt-5-3-codex ($1.75 / 14.00 per 1M)
+- databricks-gpt-5-4 ($2.50 / 15.00 per 1M)
+- databricks-gpt-5-4-mini ($0.750 / 4.50 per 1M)
+- databricks-gpt-5-4-nano ($0.200 / 1.25 per 1M)
 - databricks-gpt-5-mini ($0.250 / 2.00 per 1M)
 - databricks-gpt-5-nano ($0.050 / 0.400 per 1M)
 - databricks-gpt-oss-120b ($0.150 / 0.600 per 1M)
@@ -532,6 +547,8 @@ Total models: 1402
 - deepseek-reasoner ($0.280 / 0.420 per 1M)
 - deepseek-v4-flash ($0.140 / 0.280 per 1M)
 - deepseek-v4-pro ($0.435 / 0.870 per 1M)
+### devpass
+- qwen3.7-flash ($0.030 / 0.130 per 1M)
 ### fireworks_ai
 - chronos-hermes-13b-v2 ($0.200 / 0.200 per 1M)
 - code-llama-13b ($0.200 / 0.200 per 1M)
@@ -900,7 +917,6 @@ Total models: 1402
 - qwen3-vl-flash ($0.020 / 0.210 per 1M)
 - qwen3.6-flash ($0.170 / 0.990 per 1M)
 - qwen3.6-max-preview ($1.30 / 7.80 per 1M)
-- qwen3.7-flash ($0.030 / 0.130 per 1M)
 - qwen3.7-plus ($0.400 / 1.60 per 1M)
 - seed-1-6-250615 ($0.250 / 2.00 per 1M)
 - seed-1-6-250915 ($0.250 / 2.00 per 1M)
@@ -1453,7 +1469,7 @@ Total models: 1402
 - gemini-3.1-pro-preview-customtools ($2.00 / 12.00 per 1M)
 - gemini-3.5-flash ($1.50 / 9.00 per 1M)
 - gemini-3.5-flash-lite ($0.300 / 2.50 per 1M)
-- gemini-3.6-flash ($1.50 / 7.50 per 1M)
+- gemini-3.6-flash ($0.750 / 3.75 per 1M)
 - gemini-3.7-flash ($0.750 / 3.75 per 1M)
 - gemini-omni-flash-preview ($1.50 / 9.00 per 1M)
 - gemini-robotics-er-1.5-preview ($0.300 / 2.50 per 1M)

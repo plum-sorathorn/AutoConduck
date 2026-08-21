@@ -221,9 +221,19 @@ def route(
         elif turn_task == "edit":
             edit_min = float(getattr(selection, "edit_min_complexity", 0.45))
             turn_complexity = max(turn_complexity, edit_min)
-            edit_band = getattr(selection, "edit_task_band", [0.30, 1.0])
+            edit_band = getattr(selection, "edit_task_band", [0.30, 0.65])
             if isinstance(edit_band, (list, tuple)) and len(edit_band) == 2:
                 max_fast_cost = max(max_fast_cost, float(edit_band[1]))
+        elif turn_task == "verify":
+            verify_band = getattr(selection, "verify_task_band", [0.15, 0.50])
+            if isinstance(verify_band, (list, tuple)) and len(verify_band) == 2:
+                turn_complexity = max(float(verify_band[0]), min(float(verify_band[1]), turn_complexity))
+                max_fast_cost = min(max_fast_cost, float(verify_band[1]))
+        elif turn_task == "bash":
+            bash_band = getattr(selection, "bash_task_band", [0.20, 0.55])
+            if isinstance(bash_band, (list, tuple)) and len(bash_band) == 2:
+                turn_complexity = max(float(bash_band[0]), min(float(bash_band[1]), turn_complexity))
+                max_fast_cost = min(max_fast_cost, float(bash_band[1]))
 
         model = pricing.select_closest(
             pricing.pool_ids(config),

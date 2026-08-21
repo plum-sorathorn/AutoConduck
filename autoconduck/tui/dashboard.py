@@ -84,6 +84,7 @@ if _TEXTUAL:
         MENU_ITEMS = [
             ("d", "Live Routing Stats",     "Real-time routing decisions & cost tracker"),
             ("m", "Configure Models",       "Add providers, select models, set API keys"),
+            ("u", "Update Catalog",         "Run catalog update scripts & sync latest models"),
             ("t", "Tune Budget",            "Budget limits, cost targets, ambiguity bands"),
             ("s", "Settings",               "Launch behaviour, thresholds, log level"),
             ("a", "Launch Agent",           "Start a configured coding agent"),
@@ -164,13 +165,15 @@ if _TEXTUAL:
             elif idx == 1:  # Configure Models
                 from .onboarding import ModelSourceScreen
                 app.push_screen(ModelSourceScreen(app))
-            elif idx == 2:  # Tune Budget
+            elif idx == 2:  # Update Catalog
+                app.push_screen(UpdateCatalogScreen(app))
+            elif idx == 3:  # Tune Budget
                 from .tune import TuneScreen
                 app.push_screen(TuneScreen(app))
-            elif idx == 3:  # Settings
+            elif idx == 4:  # Settings
                 from .settings import SettingsScreen
                 app.push_screen(SettingsScreen(app))
-            elif idx == 4:  # Launch Agent
+            elif idx == 5:  # Launch Agent
                 app.push_screen(LaunchAgentScreen(app))
 
         def on_key(self, event):
@@ -189,6 +192,87 @@ if _TEXTUAL:
                         self.query_one("#menu").update(self._menu())
                         self._navigate(i)
                         break
+
+    class UpdateCatalogScreen(Screen):
+        """Update model presets and refresh catalog snapshot."""
+
+        def __init__(self, controller=None):
+            super().__init__()
+            self.controller = controller
+            self._status = "Press [bold cyan][enter][/bold cyan] or [bold cyan][u][/bold cyan] to sync latest models & pricing."
+            self._running = False
+            self._log_lines = []
+
+        def compose(self):
+            yield Vertical(
+                Static("┌─ AutoConduck · Update Model Catalog ─┐", markup=True),
+                Static(self._status, id="status", markup=True),
+                Static("\n".join(self._log_lines) or "  Ready to sync.", id="log", markup=True),
+                Static(
+                    "[enter/u] sync catalog  [left/esc] back  [ctrl+c] quit",
+                    id="footer",
+                    markup=False,
+                ),
+            )
+
+        def on_key(self, event):
+            if event.key in ("left", "escape"):
+                self.app.pop_screen()
+            elif event.key in ("enter", "u") and not self._running:
+                self._run_sync()
+
+        def _run_sync(self):
+            self._running = True
+            self._status = "[bold cyan]Syncing latest model presets and pricing… please wait…[/bold cyan]"
+            self._log_lines = []
+            try:
+                self.query_one("#status", Static).update(self._status)
+                self.query_one("#log", Static).update("Starting catalog update…")
+            except Exception:
+                pass
+
+            try:
+                from autoconduck.presets import presets_data, model_presets
+
+                self._log_lines.append("[dim]1. Syncing upstream model database & presets…[/dim]")
+                try:
+                    from scripts.sync_all_presets import sync_all
+                    synced = sync_all()
+                    presets_data.PRESETS.update(synced)
+                    self._log_lines.append(f"[green]✓[/green] Synced {len(synced)} provider groups")
+                except Exception as exc:
+                    self._log_lines.append(f"[yellow]⚠[/yellow] sync_all: {exc}")
+
+                self._log_lines.append("[dim]2. Syncing DevPass models…[/dim]")
+                try:
+                    from scripts.sync_devpass_presets import fetch_devpass_catalog
+                    devpass_entries = fetch_devpass_catalog()
+                    if devpass_entries:
+                        presets_data.PRESETS["devpass"] = devpass_entries
+                        presets_data.FALLBACK_PRESETS["devpass"] = devpass_entries
+                        self._log_lines.append(f"[green]✓[/green] Synced {len(devpass_entries)} DevPass models")
+                except Exception as exc:
+                    self._log_lines.append(f"[yellow]⚠[/yellow] devpass sync: {exc}")
+
+                self._log_lines.append("[dim]3. Refreshing curated catalog snapshot…[/dim]")
+                try:
+                    from scripts.refresh_catalog import curated_model_catalog
+                    model_presets._catalog_cache = None
+                    cat = curated_model_catalog()
+                    self._log_lines.append(f"[green]✓[/green] Curated catalog contains {len(cat)} models")
+                except Exception as exc:
+                    self._log_lines.append(f"[yellow]⚠[/yellow] refresh_catalog: {exc}")
+
+                self._status = "[bold green]✓ Catalog updated successfully with latest models (including grok-4.6 and DevPass)![/bold green]"
+            except Exception as exc:
+                self._status = f"[bold red]Sync failed: {exc}[/bold red]"
+            finally:
+                self._running = False
+                try:
+                    self.query_one("#status", Static).update(self._status)
+                    self.query_one("#log", Static).update("\n".join(self._log_lines))
+                except Exception:
+                    pass
 
     class LaunchAgentScreen(Screen):
         """Pick and launch a configured coding agent."""

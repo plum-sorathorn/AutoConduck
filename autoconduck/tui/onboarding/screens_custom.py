@@ -92,6 +92,7 @@ if _TEXTUAL:
                             LauncherIntegrationScreen(self.controller, self.agents)
                         )
                     else:
+                        configure_selected_agents(self.agents)
                         self._finish()
                 except Exception as exc:
                     self.query_one("#error").update(str(exc))
@@ -207,6 +208,7 @@ if _TEXTUAL:
                         LauncherIntegrationScreen(self.controller, self.agents)
                     )
                 else:
+                    configure_selected_agents(self.agents)
                     from ..dashboard import MainMenuScreen
 
                     self.controller.switch_screen(MainMenuScreen())

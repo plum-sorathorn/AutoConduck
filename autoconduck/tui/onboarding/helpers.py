@@ -198,6 +198,38 @@ def _delete_provider(provider):
     save_config(cfg)
 
 
+def configure_selected_agents(agents, port: int | None = None) -> list[str]:
+    """Patch configuration and install shims for all selected coding agents."""
+    from autoconduck.agents import all_adapters
+    from autoconduck.config import get_config
+
+    try:
+        from autoconduck import launcher
+    except ImportError:
+        launcher = None
+
+    cfg = get_config()
+    effective_port = int(port if port is not None else getattr(cfg, "port", 11434))
+    configured = []
+    adapters = {a.id: a for a in all_adapters()}
+    for aid in sorted(set(agents or ())):
+        adapter = adapters.get(aid)
+        if adapter is None:
+            continue
+        try:
+            adapter.patch(cfg, port=effective_port)
+            adapter.install_features()
+            configured.append(aid)
+        except Exception:
+            pass
+    if launcher is not None and configured:
+        try:
+            launcher.install_shims(configured)
+        except Exception:
+            pass
+    return configured
+
+
 
 try:
     import textual as _TEXTUAL

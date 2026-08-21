@@ -145,6 +145,7 @@ def build_provider_presets(costs: dict[str, dict[str, Any]]) -> dict[str, list[d
             "grok-2-vision-latest",
             "grok-beta",
             "grok-4.5",
+            "grok-4.6",
         ],
     }
 

@@ -480,6 +480,14 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "price_out": 6.0,
             "api_key_env": "XAI_API_KEY",
         },
+        {
+            "id": "grok-4.6",
+            "provider": "xai",
+            "tier": "balanced",
+            "price_in": 2.0,
+            "price_out": 6.0,
+            "api_key_env": "XAI_API_KEY",
+        },
     ],
 }
 PRESETS.update(FALLBACK_PRESETS)

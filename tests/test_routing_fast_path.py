@@ -337,7 +337,7 @@ def test_tool_loop_soft_escalation_on_active_chain():
 
 
 def test_detect_turn_task_classification():
-    """Verify detect_turn_task identifies recon, edit, and bash turns in O(1) time."""
+    """Verify detect_turn_task identifies recon, edit, verify, and bash turns in O(1) time."""
     recon_msg = [
         {"role": "user", "content": "check file"},
         {"role": "assistant", "tool_calls": [{"name": "read", "arguments": "{}"}]},
@@ -358,22 +358,54 @@ def test_detect_turn_task_classification():
     ]
     assert evaluator.detect_turn_task(pi_recon) == "recon"
 
+    verify_tool_msg = [
+        {"role": "user", "content": "run tests"},
+        {"role": "assistant", "tool_calls": [{"name": "pytest", "arguments": '{"test_path": "tests/"}'}]},
+        {"role": "tool", "name": "pytest", "content": "5 passed"},
+    ]
+    assert evaluator.detect_turn_task(verify_tool_msg) == "verify"
+
+    verify_bash_msg = [
+        {"role": "user", "content": "run pytest"},
+        {"role": "assistant", "tool_calls": [{"function": {"name": "bash", "arguments": '{"command": "pytest tests/ -q"}'}}]},
+        {"role": "tool", "name": "bash", "content": "145 passed in 30s"},
+    ]
+    assert evaluator.detect_turn_task(verify_bash_msg) == "verify"
+
+    bash_msg = [
+        {"role": "user", "content": "check git status"},
+        {"role": "assistant", "tool_calls": [{"function": {"name": "bash", "arguments": '{"command": "git status"}'}}]},
+        {"role": "tool", "name": "bash", "content": "On branch main"},
+    ]
+    assert evaluator.detect_turn_task(bash_msg) == "bash"
+
 
 def test_per_turn_task_routing_delegates_to_flash_tier():
-    """Verify recon turn in a multi-turn session selects cheaper model than edit turn."""
+    """Verify recon, verify, and edit turns select appropriate tiered models."""
     cfg = Config(
         model_list=[
             {"id": "deepseek-v4-flash", "price_in": 0.14, "price_out": 0.28, "enabled": True},
             {"id": "glm-5.2", "price_in": 0.55, "price_out": 1.93, "enabled": True},
             {"id": "kimi-k3", "price_in": 3.00, "price_out": 15.00, "enabled": True},
         ],
-        selection=SelectionConfig(enable_per_turn_task_routing=True),
+        selection=SelectionConfig(
+            enable_per_turn_task_routing=True,
+            recon_task_band=[0.05, 0.35],
+            verify_task_band=[0.15, 0.50],
+            edit_task_band=[0.30, 0.65],
+        ),
     )
 
     recon_messages = [
         {"role": "user", "content": "Read all files in src and analyze performance"},
         {"role": "assistant", "content": "reading", "tool_calls": [{"name": "read", "arguments": "{}"}]},
         {"role": "tool", "name": "read", "content": "long file output..."},
+    ]
+
+    verify_messages = [
+        {"role": "user", "content": "Run tests and verify performance"},
+        {"role": "assistant", "content": "testing", "tool_calls": [{"name": "bash", "arguments": '{"cmd": "pytest"}'}]},
+        {"role": "tool", "name": "bash", "content": "10 passed"},
     ]
 
     edit_messages = [
@@ -390,6 +422,15 @@ def test_per_turn_task_routing_delegates_to_flash_tier():
     )
     res_recon = FastGraph().execute(state_recon)
     assert res_recon.model == "deepseek-v4-flash"
+
+    state_verify = FastGraphState(
+        messages=verify_messages,
+        history=[],
+        pseudo_model="autoconduck",
+        config=cfg,
+    )
+    res_verify = FastGraph().execute(state_verify)
+    assert res_verify.model in ("deepseek-v4-flash", "glm-5.2")
 
     state_edit = FastGraphState(
         messages=edit_messages,

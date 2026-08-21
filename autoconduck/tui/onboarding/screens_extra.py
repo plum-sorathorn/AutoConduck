@@ -1,22 +1,29 @@
 """Additional advanced onboarding screens."""
+
 from __future__ import annotations
-from .helpers import *
-from ..onboarding_models import upsert_custom_models, search_match
-from autoconduck.config import get_config, save_config, resolve_api_key
+
+from autoconduck.config import get_config, resolve_api_key, save_config
 from autoconduck.model_presets import curated_model_catalog, resolve_models
+
+from ..onboarding_models import search_match, upsert_custom_models
+from .helpers import *
+
 
 def _models_value(widget):
     return getattr(widget, "text", getattr(widget, "value", ""))
+
+
 try:
     from autoconduck import launcher
 except ImportError:
-    launcher=None
+    launcher = None
 try:
     from textual.app import ComposeResult
+    from textual.binding import Binding
     from textual.containers import Vertical
     from textual.screen import Screen
-    from textual.binding import Binding
-    from textual.widgets import Static, Input, Label
+    from textual.widgets import Input, Label, Static
+
     try:
         from textual.widgets import TextArea
     except ImportError:
@@ -24,9 +31,13 @@ try:
     _TEXTUAL = True
 except ImportError:
     _TEXTUAL = False
-    class Screen: pass
+
+    class Screen:
+        pass
+
     ComposeResult = object
     Binding = None
+
 
 class ProviderFormScreen(Screen):
     BINDINGS = [("ctrl+s", "save", "Save"), ("/", "focus_search", "filter")]
@@ -117,13 +128,11 @@ class ProviderFormScreen(Screen):
             mark = i == self._search_cursor
             lines.append(
                 (
-                    (
-                        (["[reverse]› " if mark else "  "][0])
-                        + model_option_label(r)
-                        + f" · {r['provider']}"
-                    )
-                    + (["[/reverse]" if mark else ""][0])
+                    (["[reverse]› " if mark else "  "][0])
+                    + model_option_label(r)
+                    + f" · {r['provider']}"
                 )
+                + (["[/reverse]" if mark else ""][0])
             )
         self.query_one("#model_results").update("\n".join(lines) or "No matches")
 
@@ -138,9 +147,7 @@ class ProviderFormScreen(Screen):
                 area = self.query_one("#models")
                 current = _models_value(area)
                 value = self._search_rows[self._search_cursor]["id"]
-                ids = [
-                    line.strip() for line in current.splitlines() if line.strip()
-                ]
+                ids = [line.strip() for line in current.splitlines() if line.strip()]
                 if value not in ids:
                     area.text = (
                         current.rstrip() + "\n" if current.strip() else ""
@@ -182,9 +189,7 @@ class ProviderFormScreen(Screen):
             name = self.query_one("#provider").value.strip()
             base_url = self.query_one("#base_url").value.strip()
             try:
-                anthropic_base_url = self.query_one(
-                    "#anthropic_base_url"
-                ).value.strip()
+                anthropic_base_url = self.query_one("#anthropic_base_url").value.strip()
             except Exception:
                 anthropic_base_url = ""
             api_key = self.query_one("#api_key").value.strip()
@@ -200,11 +205,7 @@ class ProviderFormScreen(Screen):
             cfg = get_config()
             old = self.provider
             cfg.custom_models = upsert_custom_models(
-                [
-                    x
-                    for x in cfg.custom_models
-                    if x.get("provider") != old or not old
-                ],
+                [x for x in cfg.custom_models if x.get("provider") != old or not old],
                 name,
                 base_url,
                 api_key,
@@ -219,6 +220,7 @@ class ProviderFormScreen(Screen):
                 self.query_one("#error").update(str(exc))
             except Exception:
                 pass
+
 
 class LauncherIntegrationScreen(Screen):
     ELIGIBLE = {"claude_code", "opencode", "pi"}
@@ -239,9 +241,7 @@ class LauncherIntegrationScreen(Screen):
                 id="agents",
                 markup=True,
             ),
-            Static(
-                "[enter] toggle · [right] install · [left] back · [ctrl+c] quit"
-            ),
+            Static("[enter] toggle · [right] install · [left] back · [ctrl+c] quit"),
         )
 
     def on_key(self, e):
@@ -261,18 +261,15 @@ class LauncherIntegrationScreen(Screen):
 
     def _install(self):
         try:
-            self.query_one("#agents").update("[bold cyan]Installing AutoConduck agent integrations… please wait…[/bold cyan]")
+            self.query_one("#agents").update(
+                "[bold cyan]Installing AutoConduck agent integrations… please wait…[/bold cyan]"
+            )
         except Exception:
             pass
-        if launcher is not None:
-            try:
-                launcher.install_shims(sorted(self.checked))
-            except Exception:
-                pass
+        configure_selected_agents(self.checked)
         self._finish()
 
     def _finish(self):
         from ..dashboard import MainMenuScreen
 
         self.controller.switch_screen(MainMenuScreen())
-

@@ -1,8 +1,11 @@
-"""Sync the curated DevPass preset from https://devpass.llmgateway.io/models."""
-import urllib.request
-import re
 import json
 from pathlib import Path
+import re
+import sys
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from autoconduck.model_presets import _ingest_litellm_costs, clean_model_id
 

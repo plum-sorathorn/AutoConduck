@@ -109,6 +109,11 @@ class SelectionConfig(BaseModel):
     enable_per_turn_task_routing: bool = True
     recon_task_band: list[float] = [0.05, 0.35]
     edit_task_band: list[float] = [0.30, 0.65]
+    verify_task_band: list[float] = [0.15, 0.50]
+    bash_task_band: list[float] = [0.20, 0.55]
+    recon_max_complexity: float = 0.20
+    edit_min_complexity: float = 0.45
+    verify_complexity_band: list[float] = [0.20, 0.50]
     latency_sensitivity: float = 0.0
     intent_drift_enabled: bool = True
     intent_drift_threshold: float = 0.70
