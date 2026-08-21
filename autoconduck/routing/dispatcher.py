@@ -153,7 +153,7 @@ def route(
                     getattr(selection, "budget_tiebreaker_min_complexity", 0.65)
                 )
             use_tiebreaker = tiebreaker is not None or (
-                bool(getattr(selection, "tiebreaker_enabled", True))
+                bool(getattr(selection, "tiebreaker_enabled", False))
                 and complexity >= tiebreaker_floor
             )
             if not use_tiebreaker:

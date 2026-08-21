@@ -15,7 +15,10 @@ from .semantic_router import RouteMatch
 
 STACK_TRACE_BOOST = 0.25
 ESCALATION_THRESHOLD = 0.80
-HYSTERESIS_FLOOR = 0.50
+# Lowered from 0.50 → 0.35: at 0.50 the floor pushed escalated sessions'
+# complexity above the ambiguous zone's lower bound (0.60), causing tiebreaker
+# calls on every easy follow-up turn.  At 0.35 it sits safely below the zone.
+HYSTERESIS_FLOOR = 0.35
 
 
 def _first_user_complexity_text(messages: list) -> str:
@@ -322,14 +325,37 @@ def detect_turn_task(messages: list) -> str | None:
     if not isinstance(messages, list) or not messages:
         return None
 
-    for msg in reversed(messages):
+    for idx, msg in enumerate(reversed(messages)):
         if not isinstance(msg, dict):
             continue
         role = msg.get("role")
         if role in ("tool", "toolResult", "function"):
             tool_name = str(msg.get("toolName") or msg.get("name") or "").lower()
             content = str(msg.get("content") or "")
-            return _classify_tool_or_command(tool_name, content)
+            task = _classify_tool_or_command(tool_name, content)
+            # If we landed on "bash" but had no verify signal in the result
+            # content, also check the immediately preceding assistant's
+            # tool_calls for the actual command — e.g. bash(command="pytest …")
+            # returns "145 passed" with no verify keywords in the output.
+            if task == "bash":
+                real_idx = len(messages) - 1 - idx
+                if real_idx > 0:
+                    prev = messages[real_idx - 1]
+                    if isinstance(prev, dict) and "tool_calls" in prev:
+                        for tc in prev["tool_calls"]:
+                            if isinstance(tc, dict):
+                                fn_name = str(
+                                    (tc.get("function") or {}).get("name")
+                                    or tc.get("name") or ""
+                                ).lower()
+                                fn_args = str(
+                                    (tc.get("function") or {}).get("arguments")
+                                    or tc.get("arguments") or ""
+                                )
+                                if fn_name == tool_name:
+                                    task = _classify_tool_or_command(fn_name, fn_args)
+                                    break
+            return task
 
         # Check content blocks for Anthropic style tool_result / tool_use
         content = msg.get("content")

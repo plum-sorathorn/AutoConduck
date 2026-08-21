@@ -292,6 +292,25 @@ def test_stop_server_clears_pid_claims_and_owner(tmp_path, monkeypatch):
     assert not claims.exists()
 
 
+def test_stop_server_stale_pidfile_falls_back_to_port(tmp_path, monkeypatch):
+    """When pidfile is absent or PID is dead, stop_server kills via port lookup."""
+    pidfile = tmp_path / "server.pid"
+    claims = tmp_path / "server.claims"
+    claims.write_text("123 owner\n")
+    # No pidfile — pid is None path.
+    monkeypatch.setattr(launcher, "_files", lambda: (pidfile, claims, tmp_path / "server.log"))
+    monkeypatch.setattr(launcher, "_run_dir", lambda: tmp_path)
+    monkeypatch.setattr(launcher, "_port", lambda port: 11434)
+    killed = []
+    monkeypatch.setattr(launcher, "find_process_on_port", lambda port: 9999)
+    monkeypatch.setattr(launcher, "kill_process", lambda pid: killed.append(pid) or True)
+    monkeypatch.setattr(launcher, "_pid_alive", lambda pid: False)
+    result = launcher.stop_server(11434)
+    assert result is True
+    assert 9999 in killed
+    assert not claims.exists()
+
+
 def test_ensure_server_removes_dead_owner_claim(tmp_path, monkeypatch):
     pidfile = tmp_path / "server.pid"
     claims = tmp_path / "server.claims"

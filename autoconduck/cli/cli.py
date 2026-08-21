@@ -212,24 +212,41 @@ def _run_detached_self_destruct(command_args, cwd=None):
     else:
         os.execvp(command_args[0], command_args)
 def cmd_uninstall(args):
+    # Capture port before cmd_reset purges the home dir.
+    try:
+        _pre_cfg = load_config()
+        _port = getattr(_pre_cfg, "port", None) or DEFAULT_PORT
+    except Exception:
+        _port = DEFAULT_PORT
     cmd_reset(args)
     from autoconduck import update, launcher
-    cfg = load_config()
-    port = getattr(cfg, "port", None) or DEFAULT_PORT
+    # Kill any daemon still alive on the port (pidfile may already be gone).
     try:
-        launcher.stop_server(port)
-        launcher.kill_existing_on_port(port)
+        launcher.stop_server(_port)
+        launcher.kill_existing_on_port(_port)
     except Exception:
         pass
     method = update.detect_install_method()
     command = update.uninstall_hint(method)
-    if command:
-        print(f"Uninstalling package via: {command}")
-        tool = shutil.which(command.split()[0])
-        if tool:
-            subprocess.run([tool, *command.split()[1:]], check=False)
-        else:
-            subprocess.run(command, shell=True, check=False)
+    if not command:
+        return
+    print(f"Uninstalling package via: {command}")
+    tool = shutil.which(command.split()[0])
+    full_cmd = [tool or command.split()[0], *command.split()[1:]]
+    # When installed as a uv tool the current process is loaded from the very
+    # directory uv wants to delete.  Running the uninstall synchronously
+    # therefore fails with "Access is denied".  Detach a small shell snippet
+    # that waits for us to exit before invoking uv, so the Lib/ directory is
+    # released in time.
+    if method.startswith("uv-tool") and tool:
+        _run_detached_self_destruct(full_cmd)
+        # _run_detached_self_destruct calls sys.exit() on Windows and
+        # os.execvp() on POSIX — this line is never reached.
+        return
+    if tool:
+        subprocess.run(full_cmd, check=False)
+    else:
+        subprocess.run(command, shell=True, check=False)
 def purge_home_dir(home: Path) -> None:
     """Remove state, refusing obvious catastrophic paths."""
     import shutil

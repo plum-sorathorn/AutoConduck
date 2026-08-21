@@ -23,7 +23,7 @@ class ModelEntry(BaseModel):
 
 class SelectionConfig(BaseModel):
     phase_role_cards: bool = True
-    dump_prompts: bool = True
+    dump_prompts: bool = False
     planner_model_override: str | None = None
     planner_response_format: str = "json_object"
     planner_retry_cheaper: bool = True
@@ -76,7 +76,9 @@ class SelectionConfig(BaseModel):
     # Minimum complexity required before the full LangGraph orchestrator is
     # invoked.  Requests below this threshold are treated as fast-path even
     # when the dispatcher returns path=slow, saving 3-5 LLM calls per turn.
-    min_orchestrator_complexity: float = 0.62
+    # Raised from 0.62 → 0.72: common mid-complexity coding tasks (fix errors,
+    # debug this, explain output) score ~0.55–0.65 and should fast-path.
+    min_orchestrator_complexity: float = 0.72
     subagent_timeout_s: float = 120.0
     subagent_max_tokens: int = 4096
     # Maximum scaled cost permitted for file reading / recon / read analyst subagents.
@@ -119,6 +121,9 @@ class SelectionConfig(BaseModel):
     intent_drift_threshold: float = 0.70
     hysteresis_window_size: int = 5
     hysteresis_decay: float = 0.85
+    # Lowered from 0.50 → 0.35: the old value kept escalated sessions in the
+    # ambiguous zone (0.60–0.75) for easy follow-up turns, causing unnecessary
+    # tiebreaker calls on every turn of a previously-complex session.
     non_english_fallback_complexity: float = 0.45
 
     @field_validator("progress_verbosity", mode="before")

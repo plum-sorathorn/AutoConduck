@@ -258,8 +258,6 @@ def stop_server(port=None) -> bool:
     pidfile, claims, _ = files_fn()
     read_pid_fn = getattr(mod, "_read_pid", _read_pid)
     pid = read_pid_fn()
-    if pid is None:
-        return False
     child_path = pidfile.parent / "child.pid"
     try:
         child_pid = int(child_path.read_text().strip())
@@ -268,6 +266,30 @@ def stop_server(port=None) -> bool:
     pid_alive_fn = getattr(mod, "_pid_alive", _pid_alive)
     os_mod = getattr(mod, "os", os)
     subproc_mod = getattr(mod, "subprocess", subprocess)
+
+    # If the pidfile is missing or its PID is already dead, fall back to
+    # discovering the daemon by the port it listens on.  This handles the case
+    # where the supervisor writes a stale pidfile (e.g. after a crash-restart
+    # cycle) and prevents the daemon from surviving a reset/uninstall.
+    if pid is None or not pid_alive_fn(pid):
+        port_fn = getattr(mod, "_port", _port)
+        resolved_port = port_fn(port)
+        find_proc_fn = getattr(mod, "find_process_on_port", find_process_on_port)
+        kill_fn = getattr(mod, "kill_process", kill_process)
+        port_pid = find_proc_fn(resolved_port)
+        if port_pid is not None:
+            kill_fn(port_pid)
+            deadline2 = time.monotonic() + 5.0
+            while time.monotonic() < deadline2 and pid_alive_fn(port_pid):
+                time.sleep(0.05)
+        # Clean up stale files regardless.
+        for path in (pidfile, claims, child_path):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        return port_pid is not None
+
     if child_pid is not None and pid_alive_fn(child_pid):
         try:
             if os_mod.name == "nt":
