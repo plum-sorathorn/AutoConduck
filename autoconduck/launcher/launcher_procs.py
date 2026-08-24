@@ -109,7 +109,7 @@ def kill_process(pid: int) -> bool:
 
 
 def prompt_kill_port(port: int, pid: int) -> bool:
-    if not sys.stdin.isatty():
+    if sys.stdin is None or not hasattr(sys.stdin, "isatty") or not sys.stdin.isatty():
         return False
     answer = input(
         f"Port {port} is in use by process {pid}. Kill it and start AutoConduck? [y/N] "

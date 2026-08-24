@@ -107,18 +107,30 @@ async def _do_router_dispatch(messages, body_model, cfg):
         return "FAST", None
 
 
-async def _do_slow_route(messages, body_model, on_progress=None):
+async def _do_slow_route(messages, body_model, on_progress=None, plan=None):
     try:
-        from autoconduck.routing.slm_planner import SLMPlanner
-        from autoconduck.orchestrator.dynamic_factory import DynamicState, build_dynamic_graph
+        if plan is None:
+            from autoconduck.routing.slm_planner import SLMPlanner
 
-        planner = SLMPlanner()
-        plan = await planner.plan(messages)
+            planner = SLMPlanner()
+            plan = await planner.plan(messages)
+
         if on_progress is not None:
             try:
-                on_progress(f"⚡ SLM Plan generated ({plan.suggested_tier.value}): {len(plan.subtasks)} subtasks")
+                tier_name = getattr(
+                    plan.suggested_tier, "value", str(plan.suggested_tier)
+                )
+                subtasks_cnt = len(getattr(plan, "subtasks", []))
+                on_progress(
+                    f"⚡ SLM Plan generated ({tier_name}): {subtasks_cnt} subtasks"
+                )
             except Exception:
                 pass
+
+        from autoconduck.orchestrator.dynamic_factory import (
+            DynamicState,
+            build_dynamic_graph,
+        )
 
         runner = build_dynamic_graph(plan)
         initial_state = DynamicState(
@@ -128,10 +140,18 @@ async def _do_slow_route(messages, body_model, on_progress=None):
             messages=messages,
         )
         res = await runner.ainvoke(initial_state)
-        final_res = getattr(res, "final_result", None) if not isinstance(res, dict) else res.get("final_result")
+        final_res = (
+            getattr(res, "final_result", None)
+            if not isinstance(res, dict)
+            else res.get("final_result")
+        )
         if final_res:
             return final_res
-        synth = getattr(res, "synthesizer_output", None) if not isinstance(res, dict) else res.get("synthesizer_output")
+        synth = (
+            getattr(res, "synthesizer_output", None)
+            if not isinstance(res, dict)
+            else res.get("synthesizer_output")
+        )
         return {"content": synth or "Task completed."}
     except Exception:
         return None

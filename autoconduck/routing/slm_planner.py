@@ -151,12 +151,34 @@ class SLMPlanner:
                 f"Lookup LanceDB vector index and LiteLLM proxy definitions for: {text[:80]}"
             ]
 
-        # Check for complex tasks: refactoring, multi-file, architecture overhaul
-        is_refactor = any(w in text_lower for w in ["refactor", "rewrite", "migration roadmap", "architect"])
-        is_multi_file = (" and " in text_lower and (".py" in text_lower or ".ts" in text_lower or "layer" in text_lower)) or "multi-file" in text_lower
-        is_debug = any(w in text_lower for w in ["fix bug", "investigate error", "traceback", "debug"])
+        # Check for complex tasks: refactoring, multi-file, architecture overhaul, audits, plans
+        is_refactor = any(
+            w in text_lower
+            for w in [
+                "refactor",
+                "rewrite",
+                "migration roadmap",
+                "architect",
+                "architecture",
+                "audit",
+                "cleanup",
+                "clean up",
+                "clean the directory",
+                "restructure",
+                "reorganize",
+                "overhaul",
+            ]
+        )
+        is_multi_file = (
+            (" and " in text_lower and (".py" in text_lower or ".ts" in text_lower or "layer" in text_lower or "codebase" in text_lower or "directory" in text_lower or "files" in text_lower))
+            or "multi-file" in text_lower
+            or "across files" in text_lower
+            or "split up" in text_lower
+        )
+        is_debug = any(w in text_lower for w in ["fix bug", "investigate error", "traceback", "debug", "root cause", "failure", "broken"])
+        is_plan = any(w in text_lower for w in ["create a plan", "implementation plan", "breakdown", "step by step plan"])
 
-        if is_refactor or (is_multi_file and len(text.split()) > 10):
+        if is_refactor or is_plan or (is_multi_file and len(text.split()) > 10):
             subtasks = [
                 SubTaskSpec(
                     id="recon",
@@ -183,7 +205,7 @@ class SLMPlanner:
                     depends_on=["implement_changes"],
                 ),
             ]
-            task_type = "refactor" if is_refactor else "multi_edit"
+            task_type = "refactor" if is_refactor else ("full_workflow" if is_plan else "multi_edit")
             return {
                 "route": "dynamic_dag",
                 "confidence": 0.95,
@@ -193,14 +215,14 @@ class SLMPlanner:
                 "rag_queries": rag_queries,
                 "subtasks": [t.model_dump() for t in subtasks],
                 "synthesizer_tier": "frontier_reasoning",
-                "rationale": "Multi-file refactoring requires dynamic orchestration DAG",
+                "rationale": "Multi-step architectural workflow requires dynamic orchestration DAG",
                 "fallback_used": False,
             }
 
         # Check explain / simple chat
         is_explain = any(text_lower.startswith(w) for w in ["explain", "what is", "how does", "why is", "tell me"])
-        task_type = "explain" if is_explain else "chat"
-        tier = "cheap_fast" if len(text.split()) < 15 and not needs_rag else "balanced"
+        task_type = "explain" if is_explain else ("debug" if is_debug else "chat")
+        tier = "cheap_fast" if len(text.split()) < 15 and not needs_rag and not is_debug else "balanced"
 
         return {
             "route": "fast_direct",
@@ -214,6 +236,30 @@ class SLMPlanner:
             "rationale": f"Direct response for {task_type} query",
             "fallback_used": False,
         }
+
+    def plan_sync(self, messages: list[dict[str, Any]], config: Any = None) -> ExecutionPlan:
+        """Generate an ExecutionPlan synchronously with circuit breaker / fallback protection."""
+        try:
+            res = self._raw_infer(messages, config)
+            if isinstance(res, ExecutionPlan):
+                return res
+            if isinstance(res, str):
+                try:
+                    data = json.loads(res)
+                except Exception:
+                    return self._create_fallback_plan(messages, reason="Unparseable non-JSON output")
+            elif isinstance(res, dict):
+                data = res
+            else:
+                return self._create_fallback_plan(messages, reason="Invalid SLM output type")
+
+            if not isinstance(data, dict) or "route" not in data:
+                return self._create_fallback_plan(messages, reason="Missing plan route structure")
+
+            return ExecutionPlan.model_validate(data)
+        except Exception as exc:
+            logger.warning("SLM sync planner error: %s; degrading to fallback.", exc)
+            return self._create_fallback_plan(messages, reason=f"Sync planning error: {exc}")
 
     async def plan(self, messages: list[dict[str, Any]], config: Any = None) -> ExecutionPlan:
         """Generate an ExecutionPlan with circuit breaker protection."""

@@ -9,8 +9,12 @@ try:
 except Exception:
     _COSTS = {}
 try:
-    _FALLBACK = json.loads(
-        (Path(__file__).with_name("pricing_fallback.json")).read_text()
+    from ..presets.presets_data import FALLBACK_PATH
+
+    _FALLBACK = (
+        json.loads(FALLBACK_PATH.read_text(encoding="utf-8"))
+        if FALLBACK_PATH.exists()
+        else {}
     )
 except Exception:
     _FALLBACK = {}

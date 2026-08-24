@@ -72,6 +72,7 @@ def record(
     task_value: float | None = None,
     plan: Any = None,
     route: str | None = None,
+    tier: str | None = None,
 ) -> None:
     try:
         prompt_tokens, completion_tokens = int(prompt_tokens), int(completion_tokens)
@@ -96,6 +97,8 @@ def record(
             row["task_value"] = float(task_value)
         if route is not None:
             row["route"] = route
+        if tier is not None:
+            row["tier"] = tier
         if plan is not None:
             if hasattr(plan, "model_dump"):
                 row["plan"] = plan.model_dump()
@@ -260,6 +263,9 @@ def install_recorder(llm: Any) -> None:
         path = kwargs.pop("_path", "unknown")
         pseudo = kwargs.pop("_pseudo", "unknown")
         complexity = kwargs.pop("_complexity", None)
+        route_val = kwargs.pop("_route", None)
+        tier_val = kwargs.pop("_tier", None)
+        plan_val = kwargs.pop("_plan", None)
         model = str(kwargs.get("model", "unknown"))
         try:
             if not kwargs.get("stream"):
@@ -275,6 +281,9 @@ def install_recorder(llm: Any) -> None:
                     cost=hidden.get("response_cost"),
                     complexity=complexity,
                     task_value=complexity,
+                    route=route_val,
+                    tier=tier_val,
+                    plan=plan_val,
                 )
                 return result
             options = dict(kwargs.get("stream_options") or {})
@@ -301,6 +310,9 @@ def install_recorder(llm: Any) -> None:
                         *(final_usage or (prompt, completion)),
                         complexity=complexity,
                         task_value=complexity,
+                        route=route_val,
+                        tier=tier_val,
+                        plan=plan_val,
                     )
                 except Exception as exc:
                     exc_str = str(exc)
@@ -316,6 +328,9 @@ def install_recorder(llm: Any) -> None:
                             *(final_usage or (prompt, completion)),
                             complexity=complexity,
                             task_value=complexity,
+                            route=route_val,
+                            tier=tier_val,
+                            plan=plan_val,
                         )
                         return
                     pricing.record_error(model)

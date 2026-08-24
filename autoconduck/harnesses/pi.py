@@ -70,7 +70,7 @@ class PiAdapter(BaseAdapter):
         return {
             "id": model,
             "name": model,
-            "reasoning": False,
+            "reasoning": True,
             "input": ["text", "image"],
             "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
             "contextWindow": context_window,

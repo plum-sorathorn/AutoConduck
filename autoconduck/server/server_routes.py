@@ -151,26 +151,27 @@ def install_routes(
                 history = decisions[-5:] if decisions else []
                 decision = route(messages, history, pseudo_model=body_model, config=cfg)
                 path = getattr(decision, "path", "FAST").upper()
+                route_name = getattr(decision, "route", "fast_direct")
+                tier = getattr(decision, "tier", "balanced")
+                plan = getattr(decision, "plan", None)
                 model = getattr(decision, "model", None)
             except Exception:
-                decision, path, model = None, "FAST", None
-            # Guard: only invoke the full LangGraph orchestrator when complexity
-            # is genuinely high enough to justify 3-5 extra LLM calls.
-            task_complexity = float(getattr(decision, "complexity", 0.5))
-            min_orch = float(
-                getattr(
-                    getattr(cfg, "selection", None), "min_orchestrator_complexity", 0.62
+                decision, path, route_name, tier, plan, model = (
+                    None,
+                    "FAST",
+                    "fast_direct",
+                    "balanced",
+                    None,
+                    None,
                 )
-            )
-            if path == "SLOW" and task_complexity < min_orch:
-                path = "FAST"
-                model = model or None  # will be resolved below
+            task_complexity = float(getattr(decision, "complexity", 0.5))
             # Re-entrancy guard: requests from AutoConduck subagent workers carry
             # X-AutoConduck-Depth >= 1.  Running the full orchestrator for those
             # would produce another subagent tool call the worker can't execute,
             # triggering an infinite SLOW→tool-error→SLOW loop.
             if path == "SLOW" and is_nested:
                 path = "FAST"
+                route_name = "fast_direct"
                 model = model or None
                 logging.getLogger("autoconduck").info(
                     "Nested orchestrator call (depth=%d) downgraded to FAST",
@@ -178,15 +179,22 @@ def install_routes(
                 )
             if on_progress is not None:
                 try:
-                    on_progress({"kind": "route", "path": path})
+                    on_progress({"kind": "route", "path": path, "route": route_name, "tier": tier})
                 except Exception:
                     pass
             decisions.append(
-                {"path": path, "model": model or body_model, "time": time.time()}
+                {
+                    "path": path,
+                    "route": route_name,
+                    "tier": tier,
+                    "model": model or body_model,
+                    "time": time.time(),
+                }
             )
             logging.getLogger("autoconduck").info(
-                "route=%s model=%s ms=%.1f",
-                path,
+                "route=%s tier=%s model=%s ms=%.1f",
+                route_name,
+                tier,
                 model or body_model,
                 (time.perf_counter() - started) * 1000,
             )
@@ -214,11 +222,12 @@ def install_routes(
                         messages,
                         [],
                         pseudo_model=body_model,
-                        task_value=float(getattr(decision, "complexity", 0.5)),
+                        task_value=task_complexity,
                         request=request,
                         on_progress=on_progress,
                         client_type=client_type,
                         is_nested=is_nested,
+                        plan=plan,
                     )
                     if result is not None:
                         tool_calls = getattr(result, "tool_calls", None) or (
@@ -238,6 +247,10 @@ def install_routes(
                             "__answer__": ans,
                             "_path": path,
                             "_pseudo": body_model,
+                            "_route": route_name,
+                            "_tier": tier,
+                            "_plan": plan,
+                            "_complexity": task_complexity,
                         }
                 except Exception as exc:
                     logging.getLogger("autoconduck").warning(
@@ -268,15 +281,17 @@ def install_routes(
             target = model
         extra = litellm_params_for(target, cfg)
         extra.update(
-            _path=path if body_model in PSEUDO_MODELS else "direct", _pseudo=body_model
+            _path=path if body_model in PSEUDO_MODELS else "direct",
+            _pseudo=body_model,
         )
-        # Stamp the routing complexity so the usage recorder can persist it as
-        # an outcome signal for offline cost/quality tuning calibration.
         if body_model in PSEUDO_MODELS:
             extra.update(
                 _complexity=float(
                     getattr(decision, "complexity", 0.5) if decision else 0.5
-                )
+                ),
+                _route=getattr(decision, "route", "fast_direct") if decision else "direct",
+                _tier=getattr(decision, "tier", None) if decision else None,
+                _plan=getattr(decision, "plan", None) if decision else None,
             )
         return target, extra
 
@@ -536,6 +551,10 @@ def install_routes(
                 target or "unknown",
                 0,
                 0,
+                complexity=extra.get("_complexity"),
+                route=extra.get("_route"),
+                tier=extra.get("_tier"),
+                plan=extra.get("_plan"),
             )
             created = int(time.time())
             content = (
@@ -875,7 +894,7 @@ def install_routes(
         except Exception as exc:
             return JSONResponse(
                 {"type": "error", "error": {"type": "api_error", "message": str(exc)}},
-                status_code=500,
+                status_code=502,
             )
         return JSONResponse(
             anthropic_response_text(
