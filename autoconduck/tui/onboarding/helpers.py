@@ -201,7 +201,7 @@ def is_agent_configured(agent_id: str) -> bool:
 def _persist(cfg):
     # Onboarding should not import LiteLLM's large registry just to persist a
     # user's selection. Runtime startup can enrich pricing lazily when needed.
-    from autoconduck.model_presets import resolve_models
+    from autoconduck.presets.model_presets import resolve_models
 
     models = resolve_models(cfg, use_litellm=False)
     cfg.model_list = [m.model_dump() for m in models]

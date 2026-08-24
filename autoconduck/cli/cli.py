@@ -159,7 +159,7 @@ def cmd_edit(args):
         or getattr(cfg, "model_list", [])
         or getattr(cfg, "custom_models", [])
     )
-    getattr(AutoConduckApp(configured=is_configured), "run")()
+    getattr(AutoConduckApp(configured=is_configured, initial_screen="edit"), "run")()
 def cmd_reset(args):
     if not getattr(args, "force", False) and input(
         "Reset AutoConduck, stop the daemon, revert coding agent configurations, and delete state under autoconduck home? [y/N] "

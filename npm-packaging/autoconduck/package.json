@@ -1,17 +1,17 @@
 {
   "name": "autoconduck",
-  "version": "0.2.3",
+  "version": "0.3.1",
   "description": "Local zero-overhead model router + task orchestrator \u2014 npm shim",
   "bin": {
     "autoconduck": "bin/autoconduck.js",
     "conduck": "bin/autoconduck.js"
   },
   "optionalDependencies": {
-    "autoconduck-darwin-arm64": "0.1.3",
-    "autoconduck-darwin-x64": "0.1.3",
-    "autoconduck-linux-x64": "0.1.3",
-    "autoconduck-linux-arm64": "0.1.3",
-    "autoconduck-win32-x64": "0.1.3"
+    "autoconduck-darwin-arm64": "0.3.1",
+    "autoconduck-darwin-x64": "0.3.1",
+    "autoconduck-linux-x64": "0.3.1",
+    "autoconduck-linux-arm64": "0.3.1",
+    "autoconduck-win32-x64": "0.3.1"
   },
   "files": [
     "bin/"

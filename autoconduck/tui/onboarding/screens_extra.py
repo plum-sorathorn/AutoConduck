@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from autoconduck.config import get_config, resolve_api_key, save_config
-from autoconduck.model_presets import curated_model_catalog, resolve_models
+from autoconduck.presets.model_presets import curated_model_catalog, resolve_models
 
 from ..onboarding_models import search_match, upsert_custom_models
 from .helpers import *

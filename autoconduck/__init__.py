@@ -1,4 +1,4 @@
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 import sys
 from . import _compat, auth, cli, launcher, presets, server, harnesses, orchestrator, routing, tui

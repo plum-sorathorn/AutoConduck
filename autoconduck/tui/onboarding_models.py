@@ -4,7 +4,7 @@ import re
 from copy import deepcopy
 from typing import Any
 
-from ..model_presets import _ingest_litellm_costs, clean_model_id
+from autoconduck.presets.model_presets import _ingest_litellm_costs, clean_model_id
 
 DEFAULT_PRICE_IN = 0.001
 DEFAULT_PRICE_OUT = 0.002
