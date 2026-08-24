@@ -267,7 +267,8 @@ class LauncherIntegrationScreen(Screen):
         except Exception:
             pass
         configure_selected_agents(self.checked)
-        self._finish()
+        from .screens_slm import SLMSetupScreen
+        self.controller.push_screen(SLMSetupScreen(self.controller))
 
     def _finish(self):
         from ..dashboard import MainMenuScreen

@@ -1,11 +1,15 @@
 __version__ = "0.3.0"
 
 import sys
-from . import _compat, auth, cli, launcher, presets, server, agents, orchestrator, routing, tui
+from . import _compat, auth, cli, launcher, presets, server, harnesses, orchestrator, routing, tui
 from .routing import dispatcher, pricing, model_pool, slm_planner
+
+agents = harnesses
 
 # Backwards-compatibility aliases in sys.modules
 sys.modules["autoconduck._compat"] = _compat
+sys.modules["autoconduck.harnesses"] = harnesses
+sys.modules["autoconduck.agents"] = harnesses
 sys.modules["autoconduck.auth"] = auth
 sys.modules["autoconduck.providers"] = auth.providers
 sys.modules["autoconduck.cli"] = cli

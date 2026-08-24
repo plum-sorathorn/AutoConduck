@@ -47,7 +47,7 @@ def test_cli_agent_shortcuts():
 def test_cli_reset_command(capsys, monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "home_dir", lambda: tmp_path / ".autoconduck")
     args = MagicMock(force=True)
-    with patch("autoconduck.agents.all_adapters", return_value=[]):
+    with patch("autoconduck.harnesses.all_adapters", return_value=[]):
         cli.cmd_reset(args)
     captured = capsys.readouterr().out
     assert "Coding agents reverted:" in captured

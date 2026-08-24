@@ -3,6 +3,10 @@
 import pytest
 from pydantic import BaseModel
 from autoconduck._compat import (
+    is_onnx_available,
+    is_onnx_genai_available,
+    get_onnx_model,
+    ONNXModelFallback,
     is_llama_cpp_available,
     get_llama_model,
     LlamaFallback,
@@ -17,6 +21,24 @@ from autoconduck._compat import (
     get_sqlite_checkpointer,
     SqliteSaverFallback,
 )
+
+
+def test_onnx_fallback_interface():
+    """Test ONNX fallback and mock completion generation."""
+    model = get_onnx_model("mock-qwen.onnx")
+    assert model is not None
+
+    resp = model.create_completion(prompt="Hello world", max_tokens=32)
+    assert "choices" in resp
+    assert len(resp["choices"]) > 0
+    assert "text" in resp["choices"][0]
+    assert resp["usage"]["prompt_tokens"] == 2
+
+    chat_resp = model.create_chat_completion(
+        messages=[{"role": "user", "content": "How are you?"}]
+    )
+    assert "choices" in chat_resp
+    assert chat_resp["choices"][0]["message"]["role"] == "assistant"
 
 
 def test_llama_fallback_interface():

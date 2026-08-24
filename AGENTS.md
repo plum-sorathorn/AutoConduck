@@ -73,7 +73,7 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
   - `cli.py` & `cli_launch.py`: CLI dispatch and agent setup.
 - `presets/`:
   - `model_presets.py`, `presets_data.py`, `presets_ingest.py`, `presets_fallback.py`: runtime catalog data and LiteLLM ingestion.
-- `agents/`: adapters for supported coding agents (Claude Code, OpenCode, Pi, Aider, Cursor, Continue, Kilocode, Generic OpenAI).
+- `harnesses/`: adapters for supported coding agent harnesses (Claude Code, OpenCode, Pi, Aider, Cursor, Continue, Kilocode, Generic OpenAI).
 - `tui/`: Textual terminal UI dashboard and interactive onboarding (`tui/onboarding/`).
 
 ## Development Guidelines & Gotchas

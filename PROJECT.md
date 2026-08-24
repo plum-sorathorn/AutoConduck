@@ -214,7 +214,7 @@ autoconduck/
 │   ├── vector_store.py             # LanceDB vector store wrapper
 │   ├── extractor.py                # AST & manifest extractor
 │   └── models.py                   # RAG data models
-├── agents/                         # 8 Agent adapters (Claude, OpenCode, Pi, Aider, etc.)
+├── harnesses/                      # 8 Agent harness adapters (Claude, OpenCode, Pi, Aider, etc.)
 ├── auth/                           # Provider credentials & auth
 ├── launcher/                       # Daemon launcher & binary PATH shims
 ├── cli/                            # CLI commands

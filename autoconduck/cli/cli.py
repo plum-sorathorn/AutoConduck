@@ -166,7 +166,7 @@ def cmd_reset(args):
     ).lower() not in ("y", "yes"):
         return
     cfg = load_config()
-    from autoconduck.agents import all_adapters
+    from autoconduck.harnesses import all_adapters
     from autoconduck import launcher, update
     try:
         launcher.stop_server(getattr(cfg, "port", None) or DEFAULT_PORT)
@@ -308,7 +308,7 @@ def cmd_release(args):
 def cmd_stop(args):
     from autoconduck import launcher
     launcher.stop_server(args.port)
-    from autoconduck.agents.claude_code import ClaudeCodeAdapter
+    from autoconduck.harnesses.claude_code import ClaudeCodeAdapter
     ClaudeCodeAdapter().revert()
 def cmd_stats(args):
     from autoconduck import stats

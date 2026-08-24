@@ -15,7 +15,13 @@ from enum import Enum
 from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
-from autoconduck._compat import get_llama_model, is_llama_cpp_available, is_outlines_available
+from autoconduck._compat import (
+    get_llama_model,
+    get_onnx_model,
+    is_llama_cpp_available,
+    is_onnx_available,
+    is_outlines_available,
+)
 
 logger = logging.getLogger(__name__)
 

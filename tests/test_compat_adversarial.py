@@ -74,8 +74,8 @@ def test_adversarial_dependency_syntax_and_sync():
 
     assert pyproject_names == req_names, f"Mismatch: {pyproject_names.symmetric_difference(req_names)}"
 
-    # Required M1 new dependencies
-    expected_new = {"llama-cpp-python", "outlines", "lancedb", "langgraph-checkpoint-sqlite"}
+    # Required 0.3.0 dependencies
+    expected_new = {"onnxruntime", "outlines", "lancedb", "langgraph-checkpoint-sqlite"}
     for dep in expected_new:
         assert dep in pyproject_names, f"Missing new dependency: {dep}"
 

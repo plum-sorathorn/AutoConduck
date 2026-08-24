@@ -26,7 +26,7 @@ AGENT_ALIASES: dict[str, str] = {
 
 def resolve_agent_ids(requested: list[str] | None) -> list[str]:
     from autoconduck import launcher
-    from autoconduck.agents import all_adapters
+    from autoconduck.harnesses import all_adapters
 
     adapters = all_adapters()
     if not requested:
@@ -48,7 +48,7 @@ def resolve_agent_ids(requested: list[str] | None) -> list[str]:
 
 def cmd_install(args):
     from autoconduck import launcher
-    from autoconduck.agents import all_adapters
+    from autoconduck.harnesses import all_adapters
 
     adapters = all_adapters()
     selected = resolve_agent_ids(getattr(args, "agents", None))
@@ -156,7 +156,7 @@ def cmd_launch_agent(agent_id: str, port: int | None = None, new_terminal: bool 
     caller's terminal stays clean for the agent.
     """
     from autoconduck import launcher
-    from autoconduck.agents import all_adapters
+    from autoconduck.harnesses import all_adapters
 
     # Find the adapter by ID
     adapter = next((a for a in all_adapters() if a.id == agent_id), None)

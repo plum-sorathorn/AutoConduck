@@ -7,6 +7,7 @@ from .screens import (
 )
 from .screens_custom import ApiKeyScreen, CustomProvidersScreen
 from .screens_extra import ProviderFormScreen, LauncherIntegrationScreen
+from .screens_slm import SLMSetupScreen
 
 
 def _require_textual() -> None:
@@ -20,6 +21,7 @@ __all__ = [
     "render_agent_rows",
     "render_source_rows",
     "render_provider_rows",
+    "render_slm_rows",
     "move_cursor",
     "detect_agents",
     "is_agent_configured",
@@ -31,4 +33,5 @@ __all__ = [
     "CustomProvidersScreen",
     "ProviderFormScreen",
     "LauncherIntegrationScreen",
+    "SLMSetupScreen",
 ]

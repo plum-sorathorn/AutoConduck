@@ -94,6 +94,24 @@ def render_check_rows(agents, checked, cursor):
     )
 
 
+def render_slm_rows(models, selected_id, cursor, target_dir=None):
+    from autoconduck.routing.slm_downloader import is_slm_model_installed
+
+    lines = []
+    for i, m in enumerate(models):
+        is_sel = m["id"] == selected_id or m["key"] == selected_id
+        installed = is_slm_model_installed(m["id"], target_dir=target_dir) if m["id"] != "none" else False
+        installed_tag = " [green][Installed][/green]" if installed else ""
+        size_tag = f" ({m['size_mb']} MB)" if m.get("size_mb") else ""
+        prefix = f"› {'✓' if is_sel else ' '}" if i == cursor else f"  {'✓' if is_sel else ' '}"
+        label = f"{m['name']}{size_tag}{installed_tag}"
+        if i == cursor:
+            lines.append(f"[reverse]{prefix} {label}[/reverse]")
+        else:
+            lines.append(f"{prefix} {label}")
+    return "\n".join(lines)
+
+
 def _models_value(widget):
     return getattr(widget, "text", None) or getattr(widget, "value", "")
 
@@ -199,8 +217,8 @@ def _delete_provider(provider):
 
 
 def configure_selected_agents(agents, port: int | None = None) -> list[str]:
-    """Patch configuration and install shims for all selected coding agents."""
-    from autoconduck.agents import all_adapters
+    """Patch configuration and install shims for all selected coding agents/harnesses."""
+    from autoconduck.harnesses import all_adapters
     from autoconduck.config import get_config
 
     try:

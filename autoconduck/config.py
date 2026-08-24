@@ -35,7 +35,7 @@ class SelectionConfig(BaseModel):
     """Selection controls; pool entries may set quality_score and max_usd_per_min."""
 
     # 0.3.0 SLM Architecture & Dynamic DAG Tunables
-    slm_model_path: str = "models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf"
+    slm_model_path: str = "models/qwen2.5-coder-0.5b-instruct-q4.onnx"
     slm_circuit_breaker_timeout_ms: int = 100
     cheap_fast_max_cost: float = 0.50
     balanced_max_cost: float = 4.00

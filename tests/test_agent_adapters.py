@@ -3,15 +3,15 @@
 import json
 from pathlib import Path
 
-from autoconduck.agents import all_adapters, binary_name_for
-from autoconduck.agents.aider import AiderAdapter
-from autoconduck.agents.claude_code import ClaudeCodeAdapter
-from autoconduck.agents.continue_dev import ContinueDevAdapter
-from autoconduck.agents.cursor import CursorAdapter
-from autoconduck.agents.generic_openai import GenericOpenAIAdapter
-from autoconduck.agents.kilocode import KiloCodeAdapter
-from autoconduck.agents.opencode import OpenCodeAdapter
-from autoconduck.agents.pi import PiAdapter
+from autoconduck.harnesses import all_adapters, all_harnesses, binary_name_for
+from autoconduck.harnesses.aider import AiderAdapter
+from autoconduck.harnesses.claude_code import ClaudeCodeAdapter
+from autoconduck.harnesses.continue_dev import ContinueDevAdapter
+from autoconduck.harnesses.cursor import CursorAdapter
+from autoconduck.harnesses.generic_openai import GenericOpenAIAdapter
+from autoconduck.harnesses.kilocode import KiloCodeAdapter
+from autoconduck.harnesses.opencode import OpenCodeAdapter
+from autoconduck.harnesses.pi import PiAdapter
 from autoconduck.cli.cli_launch import resolve_agent_ids
 from autoconduck.config import Config
 from autoconduck.launcher import shim_script, shim_script_win
@@ -36,6 +36,20 @@ def test_all_adapters_registered():
     assert binary_name_for("claude_code") == "claude"
     assert binary_name_for("opencode") == "opencode"
     assert binary_name_for("pi") == "pi"
+
+
+def test_harnesses_module_alias():
+    import autoconduck.harnesses as harnesses
+    adapters = harnesses.all_harnesses()
+    ids = {a.id for a in adapters}
+    assert "claude_code" in ids
+    assert "opencode" in ids
+    assert "pi" in ids
+    assert "aider" in ids
+    assert "cursor" in ids
+    assert "continue_dev" in ids
+    assert "kilocode" in ids
+    assert "generic_openai" in ids
 
 
 def test_claude_code_adapter_patch_and_revert(tmp_path, monkeypatch):

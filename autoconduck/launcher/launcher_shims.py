@@ -10,7 +10,7 @@ def _shims_dir() -> Path:
     return launcher.shims_dir()
 
 def _adapter(agent_id):
-    from autoconduck.agents import all_adapters
+    from autoconduck.harnesses import all_adapters
 
     return next((a for a in all_adapters() if a.id == agent_id), None)
 

@@ -1,5 +1,9 @@
-"""Compatibility layer providing fallback shims for optional binary dependencies."""
-
+from .onnx_fallback import (
+    ONNXModelFallback,
+    get_onnx_model,
+    is_onnx_available,
+    is_onnx_genai_available,
+)
 from .llama_fallback import (
     LlamaFallback,
     LlamaGrammarFallback,
@@ -26,6 +30,10 @@ from .sqlite_checkpointer import (
 )
 
 __all__ = [
+    "ONNXModelFallback",
+    "get_onnx_model",
+    "is_onnx_available",
+    "is_onnx_genai_available",
     "LlamaFallback",
     "LlamaGrammarFallback",
     "get_llama_model",

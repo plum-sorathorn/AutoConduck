@@ -93,7 +93,10 @@ if _TEXTUAL:
                         )
                     else:
                         configure_selected_agents(self.agents)
-                        self._finish()
+                        from .screens_slm import SLMSetupScreen
+                        self.controller.push_screen(
+                            SLMSetupScreen(self.controller)
+                        )
                 except Exception as exc:
                     self.query_one("#error").update(str(exc))
 
@@ -209,9 +212,10 @@ if _TEXTUAL:
                     )
                 else:
                     configure_selected_agents(self.agents)
-                    from ..dashboard import MainMenuScreen
-
-                    self.controller.switch_screen(MainMenuScreen())
+                    from .screens_slm import SLMSetupScreen
+                    self.controller.push_screen(
+                        SLMSetupScreen(self.controller)
+                    )
 
 
 from .screens_extra import ProviderFormScreen, LauncherIntegrationScreen

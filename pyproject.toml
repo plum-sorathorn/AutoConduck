@@ -15,7 +15,7 @@ dependencies = [
   "litellm[proxy]>=1.40",
   "langgraph",
   "langgraph-checkpoint-sqlite",
-  "llama-cpp-python>=0.3.0",
+  "onnxruntime>=1.17.0",
   "outlines>=0.1.0",
   "lancedb>=0.10",
   "json-repair",

@@ -25,9 +25,9 @@ from autoconduck.config import Config, ModelEntry, SelectionConfig
 import autoconduck.config as config_module
 from autoconduck.server_streaming import app
 from autoconduck.messages_api import normalize_messages_for_llm
-from autoconduck.agents.claude_code import ClaudeCodeAdapter
-from autoconduck.agents.pi import PiAdapter
-from autoconduck.agents.opencode import OpenCodeAdapter
+from autoconduck.harnesses.claude_code import ClaudeCodeAdapter
+from autoconduck.harnesses.pi import PiAdapter
+from autoconduck.harnesses.opencode import OpenCodeAdapter
 
 
 class MockLLMServer(BaseHTTPRequestHandler):
