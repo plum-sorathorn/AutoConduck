@@ -65,12 +65,13 @@ def load_config(path: str | Path | None = None) -> Config:
             "No models are configured in %s - add a preset or model_list or every request will fall back to a hardcoded default and may fail auth.",
             p,
         )
-    validate_phase_bands(config)
+    if getattr(getattr(config, "selection", None), "phase_bands", None):
+        validate_phase_bands(config)
     return config
 
 
 def validate_phase_bands(config: Config) -> list[str]:
-    """Validate configured phase bands against available models in the pool."""
+    """Validate configured phase bands against available models in the pool if explicitly specified."""
     warnings: list[str] = []
     try:
         from autoconduck.routing.pricing import pool_ids, scaled_cost
@@ -78,14 +79,12 @@ def validate_phase_bands(config: Config) -> list[str]:
         models = pool_ids(config)
         if not models:
             return warnings
-        costs = {m: scaled_cost(m, config) for m in models}
         phase_bands = getattr(
             getattr(config, "selection", None), "phase_bands", None
-        ) or {
-            "planner": [0.55, 0.85],
-            "subagent": [0.10, 0.55],
-            "executor": [0.35, 0.70],
-        }
+        )
+        if not phase_bands:
+            return warnings
+        costs = {m: scaled_cost(m, config) for m in models}
         for name, band in phase_bands.items():
             if not isinstance(band, (list, tuple)) or len(band) < 2:
                 continue

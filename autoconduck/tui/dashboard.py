@@ -309,8 +309,9 @@ if _TEXTUAL:
                     )
                 )
             else:
+                from autoconduck import __version__
                 lines = [
-                    "Engine: [bold]AutoConduck 0.3.0 Engine[/bold] | Standby | SLM & RAG Active",
+                    f"Engine: [bold]AutoConduck {__version__} Engine[/bold] | Standby | SLM & RAG Active",
                     "",
                     "[START] ──► [Turn Guard] ──► (Direct Fast Path / Dynamic DAG Engine)",
                 ]

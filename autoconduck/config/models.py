@@ -50,13 +50,7 @@ class SelectionConfig(BaseModel):
     ema_min_samples: int = 3
     closeness_epsilon: float = 0.02
     expose_value_in_stats: bool = True
-    phase_bands: dict[str, list[float]] = Field(
-        default_factory=lambda: {
-            "planner": [0.55, 0.85],
-            "subagent": [0.10, 0.55],
-            "executor": [0.35, 0.70],
-        }
-    )
+    phase_bands: dict[str, list[float]] = Field(default_factory=dict)
     complexity_weights: dict[str, float] = Field(
         default_factory=lambda: {
             # Layer 1 — surface signals

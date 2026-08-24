@@ -77,7 +77,7 @@ async def handle_chat_completions(
                     or ""
                 )
                 is_slow = str(first_path).upper() == "SLOW"
-                target, extra = await task if not is_slow else (None, None)
+                target, extra = (await task) if not is_slow else (None, None)
                 if is_slow:
                     labels = {
                         "recon": "recon",
@@ -102,7 +102,9 @@ async def handle_chat_completions(
                             continue
                         delta_text = None
                         if isinstance(event, str):
-                            delta_text, node = event, "progress"
+                            delta_text, node = (
+                                event if event.endswith("\n") else f"{event}\n"
+                            ), "progress"
                         elif isinstance(event, dict):
                             if event.get("kind") == "route":
                                 continue
@@ -122,7 +124,7 @@ async def handle_chat_completions(
                             delta_text = f"[{node}] {detail}\n"
                         if delta_text is None:
                             continue
-                        delta: dict[str, Any] = {"content": delta_text}
+                        delta: dict[str, Any] = {"reasoning_content": delta_text}
                         if not sent_role:
                             delta["role"] = "assistant"
                             sent_role = True

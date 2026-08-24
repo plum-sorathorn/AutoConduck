@@ -82,6 +82,10 @@ class ExecutionPlan(BaseModel):
                 sanitized.append(item)
         return sanitized
 
+    @property
+    def summary(self) -> str:
+        return self.rationale or f"Task execution plan ({self.task_type})"
+
 
 class SLMPlanner:
     """Intelligent task decomposition and routing planner."""

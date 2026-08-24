@@ -112,6 +112,9 @@ class PiAdapter(BaseAdapter):
             f'    baseUrl: "{base_url}",\n'
             f'    apiKey: "{api_key}",\n'
             '    api: "openai-completions",\n'
+            '    headers: {\n'
+            '      "x-agent-id": "pi",\n'
+            '    },\n'
             f"    models: {indented_models},\n"
             "  });\n"
             "}\n"

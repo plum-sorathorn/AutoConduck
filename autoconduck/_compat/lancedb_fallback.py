@@ -194,10 +194,20 @@ class LanceDBFallbackConnection:
 
 def connect(uri: str = "", **kwargs: Any) -> Any:
     """Connect to a LanceDB database or return an in-memory fallback connection."""
+    if uri == ":memory:" or not uri:
+        # On Windows or environments where native lancedb interprets :memory: as a relative file path,
+        # fallback connection provides seamless in-memory vector storage without path syntax errors.
+        if is_lancedb_available():
+            try:
+                return lancedb.connect(uri, **kwargs)  # type: ignore[union-attr]
+            except Exception:
+                return LanceDBFallbackConnection(uri, **kwargs)
+        return LanceDBFallbackConnection(uri, **kwargs)
+
     if is_lancedb_available():
         try:
             return lancedb.connect(uri, **kwargs)  # type: ignore[union-attr]
         except Exception as exc:
-            logger.warning("Failed to connect to native lancedb at %s (%s). Using fallback.", uri, exc)
+            logger.debug("Failed to connect to native lancedb at %s (%s). Using fallback.", uri, exc)
             return LanceDBFallbackConnection(uri, **kwargs)
     return LanceDBFallbackConnection(uri, **kwargs)

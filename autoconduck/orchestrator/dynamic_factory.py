@@ -89,23 +89,31 @@ def _make_subtask_handler(task: SubTaskSpec) -> Callable[[Any], Any]:
 
 
 async def _synthesizer_node_handler(state: DynamicState | dict[str, Any]) -> dict[str, Any]:
-    """Terminal node aggregating subtask outputs and producing final response."""
+    """Terminal node aggregating subtask outputs and producing actionable execution handoff."""
     outputs = getattr(state, "subtask_outputs", {}) if not isinstance(state, dict) else state.get("subtask_outputs", {})
     errors = getattr(state, "subtask_errors", {}) if not isinstance(state, dict) else state.get("subtask_errors", {})
     verified = getattr(state, "verified_context", []) if not isinstance(state, dict) else state.get("verified_context", [])
+    plan = getattr(state, "plan", None) if not isinstance(state, dict) else state.get("plan")
 
-    summary_parts = []
-    if verified:
-        summary_parts.append(f"Context verified: {len(verified)} sources.")
-    if outputs:
-        summary_parts.append(f"Executed {len(outputs)} subtasks.")
-    if errors:
-        summary_parts.append(f"Encountered {len(errors)} subtask warnings.")
+    from autoconduck.orchestrator.handoff import format_execution_handoff
+    compacted = "\n".join(f"• {c}" for c in verified) if verified else ""
+    handoff = format_execution_handoff(
+        plan=plan,
+        subagent_outputs=outputs,
+        compacted=compacted,
+    )
+    result_text = str(handoff)
+    final_dict: dict[str, Any] = {
+        "content": result_text,
+        "subtask_outputs": outputs,
+        "subtask_errors": errors,
+    }
+    if getattr(handoff, "tool_calls", None):
+        final_dict["tool_calls"] = handoff.tool_calls
 
-    result_text = " ".join(summary_parts) or "Task workflow completed successfully."
     return {
         "synthesizer_output": result_text,
-        "final_result": {"content": result_text, "subtask_outputs": outputs, "subtask_errors": errors},
+        "final_result": final_dict,
         "active_node": "synthesizer",
     }
 

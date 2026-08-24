@@ -103,6 +103,18 @@ async def route_target(
             request_depth = 0
         if client_type is None:
             client_type = request.headers.get("x-agent-id", None)
+        if client_type is None:
+            ua = request.headers.get("user-agent", "").lower()
+            if "pi" in ua or "pi-coding-agent" in ua:
+                client_type = "pi"
+            elif "opencode" in ua:
+                client_type = "opencode"
+            elif "claude" in ua:
+                client_type = "claude"
+            elif "aider" in ua:
+                client_type = "aider"
+            elif "cursor" in ua:
+                client_type = "cursor"
     is_nested = request_depth >= 1
     decision = None
     if body_model in PSEUDO_MODELS:

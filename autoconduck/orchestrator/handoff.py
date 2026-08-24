@@ -27,10 +27,10 @@ def check_subagent_support(user_agent: str = "", client_type: str | None = None,
         except Exception:
             cfg = None
 
-    # Synthetic subagent tool calls require explicit opt-in via config
+    # Allow subagent tool call unless explicitly disabled via config
     if cfg is not None:
         sel = getattr(cfg, "selection", None)
-        if not getattr(sel, "enable_pi_subagent_tool_call", False):
+        if getattr(sel, "enable_pi_subagent_tool_call", None) is False:
             return True, False
 
     try:
