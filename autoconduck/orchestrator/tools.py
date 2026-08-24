@@ -49,9 +49,9 @@ def tool_model(name: str, current_model: str, cfg) -> str:
     if not is_read_only_tool(name):
         return current_model
     try:
-        from autoconduck.resolver import _pick_fast_model
+        from autoconduck.routing.dispatcher import pick_fast_model
 
-        return _pick_fast_model("autoconduck", cfg)
+        return pick_fast_model("autoconduck", cfg)
     except Exception:
         return current_model
 

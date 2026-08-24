@@ -62,7 +62,7 @@ def test_turn_guard_active_tool_loop_bypasses_to_active_tier(turn_guard: TurnGua
             "role": "tool",
             "tool_call_id": "call_1",
             "name": "grep",
-            "content": "autoconduck/resolver.py:32: def resolve_model(...)",
+            "content": "autoconduck/orchestrator/runner.py:32: def run_dynamic_orchestration(...)",
         },
     ]
     result = turn_guard.classify_turn(messages)

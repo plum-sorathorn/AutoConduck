@@ -42,7 +42,7 @@ def test_rag_fallback_store_table_operations():
     assert table is not None
 
     table.add([
-        {"id": "s1", "symbol": "resolve_model", "file": "resolver.py", "content": "def resolve_model(): pass", "vector": [0.1, 0.2, 0.3]},
+        {"id": "s1", "symbol": "resolve_model", "file": "runner.py", "content": "def resolve_model(): pass", "vector": [0.1, 0.2, 0.3]},
         {"id": "s2", "symbol": "select_closest", "file": "pricing.py", "content": "def select_closest(): pass", "vector": [0.9, 0.8, 0.7]},
     ])
     assert table.count_rows() == 2

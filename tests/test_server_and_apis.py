@@ -101,7 +101,7 @@ def test_completions_with_orchestrator_tool_calls(monkeypatch):
     async def mock_slow_route(*args, **kwargs):
         return {"content": handoff.content, "tool_calls": handoff.tool_calls}
 
-    monkeypatch.setattr("autoconduck.resolver._do_slow_route", mock_slow_route)
+    monkeypatch.setattr("autoconduck.orchestrator.run", mock_slow_route)
     monkeypatch.setattr("autoconduck.routing.dispatcher.route", lambda *a, **kw: type("D", (), {"path": "SLOW", "model": None, "complexity": 0.85})())
     main._build()
     client = TestClient(main.app)
@@ -135,7 +135,7 @@ def test_messages_endpoint_guards_undeclared_tools(monkeypatch):
     async def mock_slow_route(*args, **kwargs):
         return {"content": handoff.content, "tool_calls": handoff.tool_calls}
 
-    monkeypatch.setattr("autoconduck.resolver._do_slow_route", mock_slow_route)
+    monkeypatch.setattr("autoconduck.orchestrator.run", mock_slow_route)
     monkeypatch.setattr("autoconduck.routing.dispatcher.route", lambda *a, **kw: type("D", (), {"path": "SLOW", "model": None, "complexity": 0.85})())
     main._build()
     client = TestClient(main.app)

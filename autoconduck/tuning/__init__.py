@@ -1,0 +1,63 @@
+"""Pure budget-to-routing tuning calculations and parameter search."""
+
+from autoconduck.tuning.engine import (
+    DEFAULT_BANDS,
+    EPSILON,
+    TOKENS_PER_MINUTE,
+    SimpleInputs,
+    TuneResult,
+    _defaults,
+    _enabled,
+    _name,
+    _shares,
+    auto_tune_inputs,
+    blended_price,
+    compute_tuning,
+    infer_monthly_budget,
+    inputs_dict,
+    project_spend,
+    token_to_usd,
+)
+from autoconduck.tuning.search import (
+    SearchCandidate,
+    _baseline_escalation_rate,
+    _baseline_success_rate,
+    _ConfigProxy,
+    _median_outcome,
+    _SelectionProxy,
+    search_controls,
+)
+from autoconduck.tuning.cli_helpers import (
+    load_profile,
+    recalibrate_weights_from_records,
+    save_profile,
+)
+
+__all__ = [
+    "DEFAULT_BANDS",
+    "EPSILON",
+    "TOKENS_PER_MINUTE",
+    "SimpleInputs",
+    "TuneResult",
+    "_defaults",
+    "_enabled",
+    "_name",
+    "_shares",
+    "auto_tune_inputs",
+    "blended_price",
+    "compute_tuning",
+    "infer_monthly_budget",
+    "inputs_dict",
+    "project_spend",
+    "token_to_usd",
+    "SearchCandidate",
+    "_baseline_escalation_rate",
+    "_baseline_success_rate",
+    "_ConfigProxy",
+    "_median_outcome",
+    "_SelectionProxy",
+    "search_controls",
+    "load_profile",
+    "recalibrate_weights_from_records",
+    "save_profile",
+]

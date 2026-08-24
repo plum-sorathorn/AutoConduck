@@ -154,3 +154,32 @@ def route(
         tier=tier,
     )
 
+
+def pick_fast_model(body_model: str = "autoconduck", cfg: Any = None) -> str:
+    """Pick an economical fast model within the fast path budget ceiling."""
+    if cfg is None:
+        from ..config import get_config
+        cfg = get_config()
+    try:
+        from ..config import resolve_orchestrator_model
+        selection = getattr(cfg, "selection", cfg)
+        max_fast_cost = getattr(selection, "fast_path_max_scaled_cost", 0.50)
+        try:
+            max_fast_cost = float(max_fast_cost)
+        except (TypeError, ValueError):
+            max_fast_cost = 0.50
+        return (
+            pricing.select_closest(
+                pricing.pool_ids(cfg),
+                0.15,
+                cfg,
+                pseudo_model=body_model,
+                max_scaled_cost=max_fast_cost,
+            )
+            or resolve_orchestrator_model(cfg)
+        )
+    except Exception:
+        from ..config import resolve_orchestrator_model
+        return resolve_orchestrator_model(cfg)
+
+
