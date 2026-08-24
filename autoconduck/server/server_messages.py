@@ -198,6 +198,8 @@ async def handle_messages(
                 messages=oai_messages, stream=True, drop_params=True, **kwargs
             )
         except Exception as exc:
+            from autoconduck.routing.pricing import record_error
+            record_error(target)
             return JSONResponse(
                 {
                     "type": "error",
@@ -226,6 +228,8 @@ async def handle_messages(
                 for ev in translator.finish():
                     yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
             except Exception as exc:
+                from autoconduck.routing.pricing import record_error
+                record_error(target)
                 exc_str = str(exc)
                 if (
                     "Error building chunks" in exc_str
@@ -249,6 +253,8 @@ async def handle_messages(
             else None
         )
     except Exception as exc:
+        from autoconduck.routing.pricing import record_error
+        record_error(target)
         return JSONResponse(
             {"type": "error", "error": {"type": "api_error", "message": str(exc)}},
             status_code=502,

@@ -298,9 +298,9 @@ def test_all_provider_presets_resolve():
     catalog = curated_model_catalog()
     assert len(catalog) >= 100
 
-    # Verify grok-4.6 presence in xai and devpass
-    assert any(m["id"] == "grok-4.6" for m in PRESETS["xai"])
-    assert any(m["id"] == "grok-4.6" for m in PRESETS["devpass"])
+    # Verify grok-4-6 presence in xai and devpass
+    assert any(m["id"] == "grok-4-6" for m in PRESETS["xai"])
+    assert any(m["id"] == "grok-4-6" for m in PRESETS["devpass"])
 
 
 def test_claude_code_sanitizes_legacy_object_model_overrides(tmp_path, monkeypatch):

@@ -263,17 +263,34 @@ async def handle_chat_completions(
                 kwargs["tools"] = sanitize_tools(kwargs["tools"])
             kwargs.update(model=target, drop_params=True)
             kwargs.update(extra or {})
-            response = await llm.acompletion(**kwargs)
-            async for chunk in response:
-                if await request.is_disconnected():
-                    return
-                payload = (
-                    chunk.model_dump()
-                    if hasattr(chunk, "model_dump")
-                    else chunk
+            try:
+                response = await llm.acompletion(**kwargs)
+                async for chunk in response:
+                    if await request.is_disconnected():
+                        return
+                    payload = (
+                        chunk.model_dump()
+                        if hasattr(chunk, "model_dump")
+                        else chunk
+                    )
+                    yield f"data: {json.dumps(payload)}\n\n"
+            except Exception as exc:
+                from autoconduck.routing.pricing import record_error
+                record_error(target)
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "error": {
+                                "message": str(exc),
+                                "type": "api_error",
+                            }
+                        }
+                    )
+                    + "\n\n"
                 )
-                yield f"data: {json.dumps(payload)}\n\n"
-            yield "data: [DONE]\n\n"
+            finally:
+                yield "data: [DONE]\n\n"
 
         return StreamingResponse(progress_stream(), media_type="text/event-stream")
 
@@ -413,26 +430,54 @@ async def handle_chat_completions(
                 kwargs["tools"] = sanitize_tools(kwargs["tools"])
             kwargs.update(model=target, drop_params=True)
             kwargs.update(extra)
-            response = await llm.acompletion(**kwargs)
-            async for chunk in response:
-                if await request.is_disconnected():
-                    break
-                payload = (
-                    chunk.model_dump()
-                    if hasattr(chunk, "model_dump")
-                    else chunk
+            try:
+                response = await llm.acompletion(**kwargs)
+                async for chunk in response:
+                    if await request.is_disconnected():
+                        break
+                    payload = (
+                        chunk.model_dump()
+                        if hasattr(chunk, "model_dump")
+                        else chunk
+                    )
+                    yield f"data: {json.dumps(payload)}\n\n"
+            except Exception as exc:
+                from autoconduck.routing.pricing import record_error
+                record_error(target)
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "error": {
+                                "message": str(exc),
+                                "type": "api_error",
+                            }
+                        }
+                    )
+                    + "\n\n"
                 )
-                yield f"data: {json.dumps(payload)}\n\n"
-            yield "data: [DONE]\n\n"
+            finally:
+                yield "data: [DONE]\n\n"
 
         return StreamingResponse(relay(), media_type="text/event-stream")
-    body.model = target
-    return JSONResponse(
-        await call_litellm_fn(
+    try:
+        result = await call_litellm_fn(
             target,
             body,
             extra.get("_path"),
             extra.get("_pseudo"),
             messages=messages,
         )
-    )
+        return JSONResponse(result)
+    except Exception as exc:
+        from autoconduck.routing.pricing import record_error
+        record_error(target)
+        return JSONResponse(
+            {
+                "error": {
+                    "message": str(exc),
+                    "type": "api_error",
+                }
+            },
+            status_code=502,
+        )

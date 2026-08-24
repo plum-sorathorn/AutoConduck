@@ -481,7 +481,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "api_key_env": "XAI_API_KEY",
         },
         {
-            "id": "grok-4.6",
+            "id": "grok-4-6",
             "provider": "xai",
             "tier": "balanced",
             "price_in": 2.0,

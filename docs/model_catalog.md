@@ -1,6 +1,6 @@
 # Model Catalog
 
-Total models: 1416
+Total models: 1445
 
 ## Models per provider
 - ai21: 9
@@ -11,11 +11,12 @@ Total models: 1416
 - azure_ai: 66
 - baseten: 6
 - bedrock: 40
-- bedrock_converse: 85
-- bedrock_mantle: 6
+- bedrock_converse: 92
+- bedrock_mantle: 7
 - cerebras: 6
 - cloudflare: 28
 - codestral: 2
+- cognition: 3
 - cohere_chat: 7
 - darkbloom: 1
 - dashscope: 21
@@ -23,10 +24,10 @@ Total models: 1416
 - deepinfra: 55
 - deepseek: 5
 - devpass: 1
-- fireworks_ai: 229
+- fireworks_ai: 237
 - fireworks_ai-embedding-models: 2
 - friendliai: 2
-- gemini: 17
+- gemini: 18
 - gigachat: 3
 - github_copilot: 2
 - gmi: 9
@@ -39,11 +40,11 @@ Total models: 1416
 - lemonade: 5
 - libertai: 7
 - llamagate: 11
-- llmgateway: 28
+- llmgateway: 26
 - meta: 3
 - minimax: 4
-- mistral: 45
-- moonshot: 19
+- mistral: 47
+- moonshot: 20
 - morph: 2
 - nebius: 8
 - nlp_cloud: 1
@@ -51,8 +52,8 @@ Total models: 1416
 - nscale: 8
 - oci: 29
 - ollama: 20
-- openai: 89
-- openrouter: 59
+- openai: 93
+- openrouter: 60
 - ovhcloud: 5
 - palm: 2
 - perplexity: 17
@@ -63,6 +64,7 @@ Total models: 1416
 - sambanova: 8
 - sarvam: 1
 - scaleway: 5
+- scx-ai: 2
 - snowflake: 10
 - tensormesh: 5
 - together: 4
@@ -82,7 +84,7 @@ Total models: 1416
 - vertex_ai-zai_models: 2
 - volcengine: 3
 - watsonx: 23
-- xai: 32
+- xai: 33
 - zai: 6
 
 ## Models
@@ -313,6 +315,10 @@ Total models: 1416
 - global.anthropic.claude-sonnet-4-5-20250929-v1:0 ($3.00 / 15.00 per 1M)
 - global.anthropic.claude-sonnet-4-6 ($3.00 / 15.00 per 1M)
 - global.anthropic.claude-sonnet-5 ($2.00 / 10.00 per 1M)
+- global.openai.gpt-5.6-luna ($0.200 / 1.20 per 1M)
+- global.openai.gpt-5.6-sol ($5.00 / 30.00 per 1M)
+- global.openai.gpt-5.6-terra ($2.00 / 12.00 per 1M)
+- global.xai.grok-4.6 ($2.00 / 6.00 per 1M)
 - google.gemma-3-12b-it ($0.090 / 0.290 per 1M)
 - google.gemma-3-27b-it ($0.230 / 0.380 per 1M)
 - google.gemma-3-4b-it ($0.040 / 0.080 per 1M)
@@ -346,6 +352,9 @@ Total models: 1416
 - nvidia.nemotron-nano-3-30b ($0.060 / 0.240 per 1M)
 - nvidia.nemotron-nano-9b-v2 ($0.060 / 0.230 per 1M)
 - nvidia.nemotron-super-3-120b ($0.150 / 0.650 per 1M)
+- openai.gpt-5.6-luna ($0.220 / 1.32 per 1M)
+- openai.gpt-5.6-sol ($5.50 / 33.00 per 1M)
+- openai.gpt-5.6-terra ($2.20 / 13.20 per 1M)
 - openai.gpt-oss-120b-1:0 ($0.150 / 0.600 per 1M)
 - openai.gpt-oss-20b-1:0 ($0.070 / 0.300 per 1M)
 - openai.gpt-oss-safeguard-120b ($0.150 / 0.600 per 1M)
@@ -373,6 +382,7 @@ Total models: 1416
 - openai.gpt-oss-120b ($0.150 / 0.600 per 1M)
 - openai.gpt-oss-20b ($0.075 / 0.300 per 1M)
 - xai.grok-4.3 ($1.25 / 2.50 per 1M)
+- xai.grok-4.6 ($2.20 / 6.60 per 1M)
 ### cerebras
 - llama-3.3-70b ($0.850 / 1.20 per 1M)
 - llama3.1-70b ($0.600 / 0.600 per 1M)
@@ -412,6 +422,10 @@ Total models: 1416
 ### codestral
 - codestral-2405 ($0.00 / 0.00 per 1M)
 - codestral-latest ($0.00 / 0.00 per 1M)
+### cognition
+- swe-1.6 ($0.500 / 2.50 per 1M)
+- swe-1.7 ($0.500 / 2.50 per 1M)
+- swe-1.7-lightning ($2.50 / 12.50 per 1M)
 ### cohere_chat
 - command-a-03-2025 ($2.50 / 10.00 per 1M)
 - command-light ($0.300 / 0.600 per 1M)
@@ -545,8 +559,8 @@ Total models: 1416
 - deepseek-chat ($0.280 / 0.420 per 1M)
 - deepseek-coder ($0.140 / 0.280 per 1M)
 - deepseek-reasoner ($0.280 / 0.420 per 1M)
-- deepseek-v4-flash ($0.140 / 0.280 per 1M)
-- deepseek-v4-pro ($0.435 / 0.870 per 1M)
+- deepseek-v4-flash ($0.440 / 1.32 per 1M)
+- deepseek-v4-pro ($1.32 / 3.96 per 1M)
 ### devpass
 - qwen3.7-flash ($0.030 / 0.130 per 1M)
 ### fireworks_ai
@@ -624,6 +638,8 @@ Total models: 1416
 - glm-5p1 ($1.40 / 4.40 per 1M)
 - glm-5p1-fast ($2.80 / 8.80 per 1M)
 - glm-5p2 ($1.40 / 4.40 per 1M)
+- glm-5p2-fast ($2.10 / 6.60 per 1M)
+- glm-5p2-fast-us ($2.10 / 6.60 per 1M)
 - gpt-oss-safeguard-120b ($1.20 / 1.20 per 1M)
 - hermes-2-pro-mistral-7b ($0.200 / 0.200 per 1M)
 - internvl3-38b ($0.900 / 0.900 per 1M)
@@ -640,6 +656,8 @@ Total models: 1416
 - kimi-k2p6-fast ($2.00 / 8.00 per 1M)
 - kimi-k2p7-code ($0.950 / 4.00 per 1M)
 - kimi-k2p7-code-fast ($1.90 / 8.00 per 1M)
+- kimi-k3-fast ($4.50 / 22.50 per 1M)
+- kimi-k3-us ($3.30 / 16.50 per 1M)
 - llama-guard-2-8b ($0.200 / 0.200 per 1M)
 - llama-guard-3-1b ($0.100 / 0.100 per 1M)
 - llama-v2-13b ($0.200 / 0.200 per 1M)
@@ -688,6 +706,9 @@ Total models: 1416
 - mixtral-8x22b-instruct-hf ($1.20 / 1.20 per 1M)
 - mixtral-8x7b ($0.500 / 0.500 per 1M)
 - mixtral-8x7b-instruct-hf ($0.500 / 0.500 per 1M)
+- muse-glimmer-30b ($0.350 / 1.50 per 1M)
+- nemotron-3-ultra-nvfp4 ($0.600 / 2.40 per 1M)
+- nemotron-lightning-3p5-30b-a3b ($0.050 / 0.200 per 1M)
 - nemotron-nano-v2-12b-vl ($0.100 / 0.100 per 1M)
 - nous-capybara-7b-v1p9 ($0.200 / 0.200 per 1M)
 - nous-hermes-2-mixtral-8x7b-dpo ($0.500 / 0.500 per 1M)
@@ -765,6 +786,7 @@ Total models: 1416
 - qwen3-vl-30b-a3b-thinking ($0.150 / 0.600 per 1M)
 - qwen3-vl-8b-instruct ($0.200 / 0.200 per 1M)
 - qwen3p7-plus ($0.400 / 1.60 per 1M)
+- qwen3p8-max ($2.00 / 6.00 per 1M)
 - rolm-ocr ($0.200 / 0.200 per 1M)
 - snorkel-mistral-7b-pairrm-dpo ($0.200 / 0.200 per 1M)
 - stablecode-3b ($0.100 / 0.100 per 1M)
@@ -790,6 +812,7 @@ Total models: 1416
 - gemini-2.5-flash-native-audio-preview-09-2025 ($0.300 / 2.50 per 1M)
 - gemini-2.5-flash-native-audio-preview-12-2025 ($0.300 / 2.50 per 1M)
 - gemini-3.1-flash-live-preview ($0.750 / 4.50 per 1M)
+- gemini-3.5-live-translate-preview ($3.50 / 21.00 per 1M)
 - gemini-exp-1114 ($0.00 / 0.00 per 1M)
 - gemini-exp-1206 ($0.300 / 2.50 per 1M)
 - gemini-flash-latest ($0.300 / 2.50 per 1M)
@@ -905,8 +928,6 @@ Total models: 1416
 - grok-build-0-1 ($1.00 / 2.00 per 1M)
 - hy3 ($0.140 / 0.580 per 1M)
 - kimi-k2.7-code-highspeed ($1.90 / 8.00 per 1M)
-- kimi-k3 ($3.00 / 15.00 per 1M)
-- kimi-k3-fast ($4.50 / 22.50 per 1M)
 - minimax-m2.5-highspeed ($0.600 / 2.40 per 1M)
 - minimax-m2.7-highspeed ($0.600 / 2.40 per 1M)
 - nemotron-3-ultra-550b ($0.500 / 2.50 per 1M)
@@ -941,6 +962,7 @@ Total models: 1416
 - devstral-small-2505 ($0.100 / 0.300 per 1M)
 - devstral-small-2507 ($0.100 / 0.300 per 1M)
 - devstral-small-latest ($0.100 / 0.300 per 1M)
+- glm-5-2 ($1.40 / 4.40 per 1M)
 - labs-devstral-small-2512 ($0.100 / 0.300 per 1M)
 - labs-leanstral-1-5 ($0.00 / 0.00 per 1M)
 - magistral-medium-1-2-2509 ($2.00 / 5.00 per 1M)
@@ -966,7 +988,7 @@ Total models: 1416
 - mistral-medium-latest ($1.50 / 7.50 per 1M)
 - mistral-small-2603 ($0.150 / 0.600 per 1M)
 - mistral-small-3-2-2506 ($0.060 / 0.180 per 1M)
-- mistral-small-latest ($0.060 / 0.180 per 1M)
+- mistral-small-latest ($0.150 / 0.600 per 1M)
 - mistral-tiny ($0.250 / 0.250 per 1M)
 - open-codestral-mamba ($0.250 / 0.250 per 1M)
 - open-mistral-7b ($0.250 / 0.250 per 1M)
@@ -977,11 +999,13 @@ Total models: 1416
 - pixtral-12b-2409 ($0.150 / 0.150 per 1M)
 - pixtral-large-2411 ($2.00 / 6.00 per 1M)
 - pixtral-large-latest ($2.00 / 6.00 per 1M)
+- zai-glm-5-2 ($1.40 / 4.40 per 1M)
 ### moonshot
 - kimi-k2-0711-preview ($0.600 / 2.50 per 1M)
 - kimi-k2-0905-preview ($0.600 / 2.50 per 1M)
 - kimi-k2-thinking-turbo ($1.15 / 8.00 per 1M)
 - kimi-k2-turbo-preview ($1.15 / 8.00 per 1M)
+- kimi-k3 ($3.00 / 15.00 per 1M)
 - kimi-latest ($2.00 / 5.00 per 1M)
 - kimi-latest-128k ($2.00 / 5.00 per 1M)
 - kimi-latest-32k ($1.00 / 3.00 per 1M)
@@ -1108,7 +1132,10 @@ Total models: 1416
 - mixtral-8x7B-Instruct-v0.1 ($0.00 / 0.00 per 1M)
 - qwen3-coder:480b-cloud ($0.00 / 0.00 per 1M)
 ### openai
+- chat-latest ($5.00 / 30.00 per 1M)
 - chatgpt-4o-latest ($5.00 / 15.00 per 1M)
+- daybreak-blue-latest ($4.00 / 20.00 per 1M)
+- daybreak-red-latest ($12.50 / 75.00 per 1M)
 - ft:gpt-3.5-turbo ($3.00 / 6.00 per 1M)
 - ft:gpt-3.5-turbo-0125 ($3.00 / 6.00 per 1M)
 - ft:gpt-3.5-turbo-0613 ($3.00 / 6.00 per 1M)
@@ -1179,9 +1206,10 @@ Total models: 1416
 - gpt-5.4-nano-2026-03-17 ($0.200 / 1.25 per 1M)
 - gpt-5.5 ($5.00 / 30.00 per 1M)
 - gpt-5.5-2026-04-23 ($5.00 / 30.00 per 1M)
-- gpt-5.6 ($5.00 / 30.00 per 1M)
+- gpt-5.6 ($4.00 / 20.00 per 1M)
+- gpt-5.6-cyber ($12.50 / 75.00 per 1M)
 - gpt-5.6-luna ($0.200 / 1.20 per 1M)
-- gpt-5.6-sol ($5.00 / 30.00 per 1M)
+- gpt-5.6-sol ($4.00 / 20.00 per 1M)
 - gpt-5.6-terra ($2.00 / 12.00 per 1M)
 - gpt-audio ($2.50 / 10.00 per 1M)
 - gpt-audio-1.5 ($2.50 / 10.00 per 1M)
@@ -1212,6 +1240,7 @@ Total models: 1416
 - deepseek-chat-v3-0324 ($0.140 / 0.280 per 1M)
 - deepseek-chat-v3.1 ($0.200 / 0.800 per 1M)
 - deepseek-v3.2-exp ($0.200 / 0.400 per 1M)
+- deepseek-v4-pro-0813 ($1.32 / 3.96 per 1M)
 - deepseek/deepseek-r1 ($0.550 / 2.19 per 1M)
 - free ($0.00 / 0.00 per 1M)
 - glm-4.6 ($0.400 / 1.75 per 1M)
@@ -1336,6 +1365,9 @@ Total models: 1416
 - mistral-medium-3.5-128b ($1.50 / 7.50 per 1M)
 - mistral-small-3.2-24b-instruct-2506 ($0.150 / 0.350 per 1M)
 - qwen3.6-35b-a3b ($0.250 / 1.50 per 1M)
+### scx-ai
+- GLM-5.2 ($0.610 / 1.98 per 1M)
+- Qwen3.8-Max ($1.65 / 4.99 per 1M)
 ### snowflake
 - claude-3-5-sonnet ($3.00 / 15.00 per 1M)
 - llama3.1-405b ($1.20 / 1.20 per 1M)
@@ -1446,7 +1478,7 @@ Total models: 1416
 - claude-sonnet-5@default ($2.00 / 10.00 per 1M)
 ### vertex_ai-deepseek_models
 - deepseek-r1-0528-maas ($1.35 / 5.40 per 1M)
-- deepseek-v3.1-maas ($1.35 / 5.40 per 1M)
+- deepseek-v3.1-maas ($0.600 / 1.70 per 1M)
 - deepseek-v3.2-maas ($0.560 / 1.68 per 1M)
 ### vertex_ai-language-models
 - gemini-2.0-flash ($0.100 / 0.400 per 1M)
@@ -1505,11 +1537,11 @@ Total models: 1416
 - kimi-k2-thinking-maas ($0.600 / 2.50 per 1M)
 ### vertex_ai-openai_models
 - gemma-4-26b-a4b-it-maas ($0.150 / 0.600 per 1M)
-- gpt-oss-120b-maas ($0.150 / 0.600 per 1M)
+- gpt-oss-120b-maas ($0.090 / 0.360 per 1M)
 - gpt-oss-20b-maas ($0.075 / 0.300 per 1M)
 ### vertex_ai-qwen_models
-- qwen3-235b-a22b-instruct-2507-maas ($0.250 / 1.00 per 1M)
-- qwen3-coder-480b-a35b-instruct-maas ($1.00 / 4.00 per 1M)
+- qwen3-235b-a22b-instruct-2507-maas ($0.220 / 0.880 per 1M)
+- qwen3-coder-480b-a35b-instruct-maas ($0.220 / 1.80 per 1M)
 - qwen3-next-80b-a3b-instruct-maas ($0.150 / 1.20 per 1M)
 - qwen3-next-80b-a3b-thinking-maas ($0.150 / 1.20 per 1M)
 ### vertex_ai-zai_models
@@ -1560,6 +1592,7 @@ Total models: 1416
 - grok-4-1-fast ($0.200 / 0.500 per 1M)
 - grok-4-1-fast-non-reasoning-latest ($0.200 / 0.500 per 1M)
 - grok-4-1-fast-reasoning-latest ($0.200 / 0.500 per 1M)
+- grok-4-6 ($2.00 / 6.00 per 1M)
 - grok-4-latest ($3.00 / 15.00 per 1M)
 - grok-4.20-0309-non-reasoning ($1.25 / 2.50 per 1M)
 - grok-4.20-0309-reasoning ($1.25 / 2.50 per 1M)

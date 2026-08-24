@@ -56,18 +56,49 @@ def fetch_upstream_litellm_costs() -> dict[str, dict[str, Any]]:
 
 def fetch_devpass_models(costs: dict[str, dict]) -> list[dict[str, Any]]:
     """Fetch models from DevPass endpoint or fallback."""
-    from autoconduck.presets.presets_fallback import FALLBACK_PRESETS
-    entries = []
-    for row in FALLBACK_PRESETS.get("llmgateway", []):
-        copy_row = dict(row)
-        copy_row["provider"] = "devpass"
-        copy_row["api_key_env"] = "DEVPASS_API_KEY"
-        entries.append(copy_row)
-    return entries
+    try:
+        from scripts.sync_devpass_presets import fetch_devpass_catalog
+        return fetch_devpass_catalog()
+    except Exception as exc:
+        print(f"Warning: could not fetch DevPass models ({exc}); using fallback.")
+        from autoconduck.presets.presets_fallback import FALLBACK_PRESETS
+        entries = []
+        for row in FALLBACK_PRESETS.get("llmgateway", []):
+            copy_row = dict(row)
+            copy_row["provider"] = "devpass"
+            copy_row["api_key_env"] = "DEVPASS_API_KEY"
+            entries.append(copy_row)
+        return entries
 
 
 def fetch_llmgateway_models(costs: dict[str, dict]) -> list[dict[str, Any]]:
     """Fetch models from LLMGateway or fallback."""
+    try:
+        req = urllib.request.Request(LLMGATEWAY_MODELS_URL, headers={"User-Agent": "autoconduck/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        entries = []
+        for model in data.get("data", []):
+            mid = model["id"]
+            if any(x in mid for x in ("embedding", "image", "video", "tts", "stt", "transcribe", "reranker", "audio")):
+                continue
+            info = costs.get(mid) or costs.get(f"llmgateway/{mid}") or {}
+            p_in = info.get("price_in", 0.0)
+            p_out = info.get("price_out", 0.0)
+            tier = "expensive" if p_out >= 20.0 else "budget" if p_out < 3.0 else "balanced"
+            entries.append({
+                "id": mid,
+                "provider": "llmgateway",
+                "tier": tier,
+                "price_in": round(p_in, 4),
+                "price_out": round(p_out, 4),
+                "api_key_env": "LLMGATEWAY_API_KEY",
+                "base_url": "https://api.llmgateway.io",
+            })
+        if entries:
+            return entries
+    except Exception as exc:
+        print(f"Warning: could not fetch LLMGateway models ({exc}); using fallback.")
     from autoconduck.presets.presets_fallback import FALLBACK_PRESETS
     return list(FALLBACK_PRESETS.get("llmgateway", []))
 
@@ -145,7 +176,7 @@ def build_provider_presets(costs: dict[str, dict[str, Any]]) -> dict[str, list[d
             "grok-2-vision-latest",
             "grok-beta",
             "grok-4.5",
-            "grok-4.6",
+            "grok-4-6",
         ],
     }
 
