@@ -1,12 +1,13 @@
 <div align="center">
 
-# AutoConduck
+# AutoConduck 0.3.0
 
-**Local, zero-overhead model router & multi-agent task orchestrator for coding assistants.**
+**Local, zero-overhead SLM model router & dynamic LangGraph task orchestrator for coding assistants.**
 
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg?style=flat&logo=python&logoColor=white)](https://python.org)
-[![Fast Path Latency](https://img.shields.io/badge/fast--path-%3C5ms-brightgreen.svg?style=flat)](https://github.com)
-[![LangGraph](https://img.shields.io/badge/orchestrator-LangGraph-blue.svg?style=flat)](https://github.com/langchain-ai/langgraph)
+[![Fast Path Latency](https://img.shields.io/badge/turn--guard-%3C2ms-brightgreen.svg?style=flat)](https://github.com)
+[![SLM Engine](https://img.shields.io/badge/SLM-Qwen%202.5%20Coder%200.5B-purple.svg?style=flat)](https://github.com)
+[![LangGraph](https://img.shields.io/badge/orchestrator-LangGraph%20Dynamic%20DAG-blue.svg?style=flat)](https://github.com/langchain-ai/langgraph)
 [![LiteLLM](https://img.shields.io/badge/proxy-LiteLLM-orange.svg?style=flat)](https://github.com/BerriAI/litellm)
 [![FastAPI](https://img.shields.io/badge/server-FastAPI-009688.svg?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat)](LICENSE)
@@ -21,13 +22,15 @@
 
 Coding agents (**Claude Code**, **OpenCode**, and **Pi**) frequently send every prompt—from a single-line typo fix or docstring lookup to a 20-file architecture migration—to a single expensive frontier model. This incurs unnecessary token spend on trivial turns while bottlenecking large multi-step changes.
 
-**AutoConduck** operates locally as a drop-in proxy and intelligent router:
+**AutoConduck 0.3.0** transforms model routing into an intelligent, autonomous SLM-driven dynamic execution engine:
 
-- **Sub-5ms Fast Path:** Routine turns (lookups, docstrings, single-line edits, tool loops) execute through a compiled zero-reflection micro-DAG without I/O or LLM latency.
-- **Dynamic Closest-Cost Model Selection:** Instead of static tiers, AutoConduck evaluates prompt complexity on the fly and matches the task to the closest model on a logarithmic cost continuum with real-time Exponential Moving Average (EMA) tracking.
-- **LangGraph Multi-Agent Orchestrator:** Complex multi-file prompts automatically escalate to an asynchronous pipeline featuring deterministic recon, file-context distillation, parallel subagent analysts, zero-LLM compaction, and a grounded executor tool loop.
-- **Budget-Driven Tuning:** An open-loop calibration engine translates monthly USD or token budgets into concrete routing parameters, dynamically adjusting model selection pressure and spend guards.
-- **Drop-in Compatibility:** Exposes standard OpenAI `/v1/chat/completions` and `/v1/models` endpoints alongside a native Anthropic `/v1/messages` translation shim.
+- **Turn Guard (0ms / <2ms):** Routine turns (active tool loops, single-file edits, command outputs) bypass heavy orchestration instantly, maintaining sub-millisecond agent responsiveness with zero LLM overhead.
+- **Embedded SLM Task Architect (Qwen 2.5 Coder 0.5B Instruct):** Local GGUF-quantized small language model generates structured, validated task plans in <100ms, determining exact DAG topology, tier assignments, and subtask dependencies.
+- **Dynamic DAG LangGraph Factory:** Compiles tailored runtime execution graphs for every complex workflow, executing parallel subtask nodes and deterministic context retrieval.
+- **LanceDB Knowledge & RAG Subsystem:** Vector store semantic search automatically retrieves relevant codebase snippets without manual file discovery.
+- **Session Lifecycle & Context Guard:** Preserves immutable prompt-caching prefixes across 40+ turns and applies intelligent compaction at the 80% context window ceiling.
+- **Real-Time Reasoning SSE Streamer:** Streams live SLM cognitive deliberations directly to client coding agents using OpenAI `reasoning_content` and Anthropic `thinking_delta` protocols.
+- **3-Tier Autonomous Model Pool:** Automatically matches tasks across `cheap_fast` (< $0.50/1M), `balanced` ($0.50–$4.00/1M), and `frontier_reasoning` (> $4.00/1M) tiers with live cost tracking and spend guard protection.
 
 ---
 
@@ -44,48 +47,50 @@ Agent Request (Claude Code / OpenCode / Pi)
                           │
                           ▼
     ┌─────────────────────────────────────────────────────────────┐
-    │              Fast Path Micro-DAG (<0.1 ms)                  │
-    │  input_sanitize ──► route_match ──► evaluate_score          │
-    │         (Aurelio Semantic Router + 10-Factor Complexity)    │
+    │                 Turn Guard (0ms / <2ms)                     │
+    │  - Active tool turn suppression (direct model execution)    │
+    │  - Stagnation & error streak detector                       │
     └─────────────────────────────┬───────────────────────────────┘
                                   │
-                   Is Task Complex (≥ 0.75)?
+                   Is Task a New Turn / Escalation?
                                   │
                  ┌────────────────┴────────────────┐
-                 ▼ (No / Simple)                   ▼ (Yes / Multi-File)
+                 ▼ (Tool Loop / Simple)            ▼ (New Turn / Complex)
       ┌──────────────────────┐        ┌─────────────────────────────┐
-      │  pricing.select_     │        │    LangGraph Orchestrator   │
-      │       closest()      │        │  ┌───────────────────────┐  │
-      │ (Closest-Cost Model) │        │  │ Recon (Files pre-read)│  │
-      └──────────┬───────────┘        │  └───────────┬───────────┘  │
-                 │                    │              ▼              │
+      │  ModelPool.select_   │        │     SLM Task Architect      │
+      │       for_tier()     │        │  (Qwen 2.5 Coder 0.5B GGUF) │
+      │  (cheap_fast /       │        │  ExecutionPlan Synthesis    │
+      │   balanced tier)     │        └──────────────┬──────────────┘
+      └──────────┬───────────┘                       │
+                 │                                   ▼
+                 │                    ┌─────────────────────────────┐
+                 │                    │     Dynamic LangGraph DAG   │
                  │                    │  ┌───────────────────────┐  │
-                 │                    │  │ Planner (Context Dist)│  │
+                 │                    │  │ RAG Node (LanceDB)    │  │
                  │                    │  └───────────┬───────────┘  │
                  │                    │              ▼              │
                  │                    │  ┌───────────────────────┐  │
-                 │                    │  │ Parallel Subagents    │  │
+                 │                    │  │ Parallel Subtasks     │  │
+                 │                    │  │ (Annotated Fan-out)   │  │
                  │                    │  └───────────┬───────────┘  │
                  │                    │              ▼              │
                  │                    │  ┌───────────────────────┐  │
-                 │                    │  │ Zero-Cost Compactor   │  │
-                 │                    │  └───────────┬───────────┘  │
-                 │                    │              ▼              │
-                 │                    │  ┌───────────────────────┐  │
-                 │                    │  │ Tool-Loop Executor    │  │
+                 │                    │  │ Synthesizer Node      │  │
                  │                    │  └───────────────────────┘  │
                  │                    └──────────────┬──────────────┘
                  │                                   │
                  └─────────────────┬─────────────────┘
                                    ▼
-                      Model Response / Stream
+                   Model Response / Reasoning SSE Stream
 ```
 
-### Three Core Pillars
+### Core Architecture Pillars
 
-1. **LiteLLM Proxy & Server:** Provides unified provider abstraction, streaming translation, token usage tracking, and drop-in endpoints (`/v1/chat/completions`, `/v1/models`, `/v1/messages`).
-2. **Deterministic Fast Path (`routing/`):** Evaluates prompt complexity across 10 single-pass regex factors with stack-trace boosts (+0.25), escalation boosts (+0.30), hysteresis clamping (≤0.50), and Aurelio Semantic Router embedding classification.
-3. **LangGraph Task DAG (`orchestrator/`):** Manages multi-stage task breakdown with zero inter-phase LLM summarization cost and strict file-claim concurrency protection.
+1. **Turn Guard (`server/turn_guard.py`):** Pure regex classifier that bypasses tool loops in <2ms, detect stagnation loops, and triggers SLM re-planning only when necessary.
+2. **SLM Task Architect (`routing/slm_planner.py`):** Embedded local Qwen 2.5 Coder 0.5B model producing validated Pydantic `ExecutionPlan` JSON structures.
+3. **Dynamic Graph Factory (`orchestrator/dynamic_factory.py`):** Dynamic LangGraph compilation compiling parallel subtask fan-outs with SQLite state checkpointing.
+4. **Knowledge Vector Store (`knowledge/vector_store.py`):** LanceDB embedded vector database for fast semantic code context retrieval.
+5. **Session Guard (`orchestrator/session_guard.py`):** Prompt-cache-friendly prefix immutability and context window ceiling protection.
 
 ---
 

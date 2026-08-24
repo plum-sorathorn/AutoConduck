@@ -70,13 +70,15 @@ def record(
     success: bool = True,
     complexity: float | None = None,
     task_value: float | None = None,
+    plan: Any = None,
+    route: str | None = None,
 ) -> None:
     try:
         prompt_tokens, completion_tokens = int(prompt_tokens), int(completion_tokens)
         pricing.record_usage(
             model, prompt_tokens, completion_tokens, cost=cost, success=success
         )
-        row = {
+        row: dict[str, Any] = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "path": path,
             "pseudo_model": pseudo_model,
@@ -88,13 +90,17 @@ def record(
             else estimate_cost(model, prompt_tokens, completion_tokens),
             "success": bool(success),
         }
-        # Outcome/cost-quality signals used by offline tuning calibration.
-        # Omitted (None) for rows recorded before the field existed or for
-        # calls where the routing complexity was not available.
         if complexity is not None:
             row["complexity"] = float(complexity)
         if task_value is not None:
             row["task_value"] = float(task_value)
+        if route is not None:
+            row["route"] = route
+        if plan is not None:
+            if hasattr(plan, "model_dump"):
+                row["plan"] = plan.model_dump()
+            elif isinstance(plan, dict):
+                row["plan"] = plan
         target = stats_path()
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as stream:
@@ -126,21 +132,34 @@ def aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
         "completion_tokens": 0,
         "total_tokens": 0,
         "cost": 0.0,
+        "estimated_frontier_cost": 0.0,
+        "estimated_savings_usd": 0.0,
+        "savings_percentage": 0.0,
     }
     models: dict[str, dict[str, Any]] = {}
     paths: dict[str, int] = {}
     pseudos: dict[str, int] = {}
+    routes: dict[str, int] = {}
+
+    # Frontier baseline: ~$5.00/1M in, $15.00/1M out
+    FRONTIER_IN_PER_M = 5.00
+    FRONTIER_OUT_PER_M = 15.00
+
     for row in records:
         p, c = (
             int(row.get("prompt_tokens", 0) or 0),
             int(row.get("completion_tokens", 0) or 0),
         )
         cost = float(row.get("cost", 0) or 0)
+        frontier_cost = (p * FRONTIER_IN_PER_M + c * FRONTIER_OUT_PER_M) / 1_000_000
+
         totals["calls"] += 1
         totals["prompt_tokens"] += p
         totals["completion_tokens"] += c
         totals["total_tokens"] += p + c
         totals["cost"] += cost
+        totals["estimated_frontier_cost"] += frontier_cost
+
         model = str(row.get("model", "unknown"))
         item = models.setdefault(
             model,
@@ -157,12 +176,24 @@ def aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
         item["completion_tokens"] += c
         item["total_tokens"] += p + c
         item["cost"] += cost
+
         paths[str(row.get("path", "unknown"))] = (
             paths.get(str(row.get("path", "unknown")), 0) + 1
         )
         pseudos[str(row.get("pseudo_model", "unknown"))] = (
             pseudos.get(str(row.get("pseudo_model", "unknown")), 0) + 1
         )
+        if "route" in row:
+            routes[str(row.get("route"))] = routes.get(str(row.get("route")), 0) + 1
+
+    savings = max(0.0, totals["estimated_frontier_cost"] - totals["cost"])
+    totals["estimated_savings_usd"] = savings
+    totals["savings_percentage"] = (
+        (savings / totals["estimated_frontier_cost"] * 100.0)
+        if totals["estimated_frontier_cost"] > 0
+        else 0.0
+    )
+
     result = {
         "totals": totals,
         "models": dict(
@@ -173,6 +204,7 @@ def aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "paths": paths,
         "pseudos": pseudos,
+        "routes": routes,
     }
     result.update(_latest_selection)
     return result

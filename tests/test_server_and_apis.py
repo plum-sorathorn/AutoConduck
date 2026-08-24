@@ -98,10 +98,10 @@ def test_completions_with_orchestrator_tool_calls(monkeypatch):
         "Plan markdown content",
         tool_calls=[{"index": 0, "id": "call_123", "type": "function", "function": {"name": "subagent", "arguments": '{"workflowScript":"..."}'}}]
     )
-    async def mock_run(*args, **kwargs):
-        return handoff
+    async def mock_slow_route(*args, **kwargs):
+        return {"content": handoff.content, "tool_calls": handoff.tool_calls}
 
-    monkeypatch.setattr("autoconduck.orchestrator.run", mock_run)
+    monkeypatch.setattr("autoconduck.resolver._do_slow_route", mock_slow_route)
     monkeypatch.setattr("autoconduck.routing.dispatcher.route", lambda *a, **kw: type("D", (), {"path": "SLOW", "model": None, "complexity": 0.85})())
     main._build()
     client = TestClient(main.app)
@@ -132,10 +132,10 @@ def test_messages_endpoint_guards_undeclared_tools(monkeypatch):
         "Refactoring plan content",
         tool_calls=[{"index": 0, "id": "call_sub", "type": "function", "function": {"name": "subagent", "arguments": '{"workflowScript":"..."}'}}]
     )
-    async def mock_run(*args, **kwargs):
-        return handoff
+    async def mock_slow_route(*args, **kwargs):
+        return {"content": handoff.content, "tool_calls": handoff.tool_calls}
 
-    monkeypatch.setattr("autoconduck.orchestrator.run", mock_run)
+    monkeypatch.setattr("autoconduck.resolver._do_slow_route", mock_slow_route)
     monkeypatch.setattr("autoconduck.routing.dispatcher.route", lambda *a, **kw: type("D", (), {"path": "SLOW", "model": None, "complexity": 0.85})())
     main._build()
     client = TestClient(main.app)

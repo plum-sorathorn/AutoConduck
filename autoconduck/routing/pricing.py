@@ -239,16 +239,37 @@ def select(pool, pseudo_model, config, usage=None):
     )
 
 
-def select_model_by_tier(tier, config):
-    value = {
-        "cheap": 0.15,
-        "budget": 0.15,
-        "mid": 0.5,
-        "balanced": 0.5,
-        "reasoning": 0.7,
-        "expensive": 0.85,
-    }.get(tier, 0.5)
-    return select_closest(pool_ids(config), value, config)
+def select_for_tier(
+    tier: str | Any,
+    config: Any = None,
+    *,
+    min_context_window: int = 0,
+    requires_tools: bool = False,
+    pseudo_model: str = "autoconduck",
+) -> str:
+    """Select a model matching the requested tier via ModelPool or select_closest."""
+    try:
+        from autoconduck.routing.model_pool import ModelPool
+        pool = ModelPool(config=config)
+        return pool.select_for_tier(
+            tier,
+            min_context_window=min_context_window,
+            requires_tools=requires_tools,
+            pseudo_model=pseudo_model,
+        )
+    except Exception:
+        tier_val = 0.5
+        t_str = str(getattr(tier, "value", tier)).lower()
+        if "cheap" in t_str or "fast" in t_str or "budget" in t_str:
+            tier_val = 0.15
+        elif "frontier" in t_str or "reason" in t_str or "expensive" in t_str:
+            tier_val = 0.85
+        return select_closest(pool_ids(config), tier_val, config, pseudo_model=pseudo_model)
+
+
+def select_model_by_tier(tier: str | Any, config: Any = None) -> str:
+    """Legacy alias for select_for_tier."""
+    return select_for_tier(tier, config)
 
 
 def pool_ids(config):

@@ -92,10 +92,18 @@ def install_routes(
         """Return True if the conversation is an active agentic tool loop.
 
         In an active tool loop, the client agent (Pi, Claude Code, OpenCode, etc.)
-        is managing its own tool execution loop. AutoConduck must relay requests
+        is managing its own tool execution loop. AutoConduck relays requests
         directly to the selected model rather than hijacking the turn with the
         multi-agent LangGraph orchestrator.
         """
+        try:
+            from autoconduck.server.turn_guard import TurnGuard
+            res = TurnGuard().classify_turn(messages)
+            if res.is_stagnant:
+                return False
+            return res.is_tool_loop
+        except Exception:
+            pass
         if not isinstance(messages, list) or not messages:
             return False
         for m in messages:
@@ -298,6 +306,11 @@ def install_routes(
         }
 
     async def completions(body: CompletionRequest, request: Request):
+        try:
+            from autoconduck.orchestrator.session_guard import SessionGuard
+            body.messages = SessionGuard().guard_context(body.messages).messages
+        except Exception:
+            pass
         body.messages = normalize_messages_for_llm(body.messages)
         cfg = get_config()
         configured_progress = bool(
@@ -376,13 +389,9 @@ def install_routes(
                                 label = labels.get(node, node)
                                 delta_text = f"[{label}] {detail}\n"
                             else:
-                                from autoconduck.progress import ProgressFormatter
-
-                                formatted = ProgressFormatter(cfg).format(event)
-                                node = getattr(event, "name", "progress")
-                                if not formatted:
-                                    continue
-                                delta_text = formatted + "\n"
+                                node = getattr(event, "name", getattr(event, "node", "progress"))
+                                detail = getattr(event, "detail", getattr(event, "step_detail", str(event)))
+                                delta_text = f"[{node}] {detail}\n"
                             if delta_text is None:
                                 continue
                             delta = {"content": delta_text}
@@ -653,6 +662,11 @@ def install_routes(
             oai_messages = normalize_messages_for_llm(
                 openai_messages_from_anthropic(body.model_dump(exclude_none=True))
             )
+            try:
+                from autoconduck.orchestrator.session_guard import SessionGuard
+                oai_messages = SessionGuard().guard_context(oai_messages).messages
+            except Exception:
+                pass
         except Exception as exc:
             return JSONResponse(
                 {

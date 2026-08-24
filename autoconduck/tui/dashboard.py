@@ -417,36 +417,36 @@ if _TEXTUAL:
             total = active.get("subtasks_total", 0)
 
             if is_active and path == "SLOW":
-                p_n = "[bold yellow]● PLANNER[/bold yellow]" if node == "planner" else ("[green]✓ PLANNER[/green]" if node in ("subagents", "compactor", "executor") else "[dim]○ PLANNER[/dim]")
-                sub_label = f"SUBAGENTS ({completed}/{total})" if total else "SUBAGENTS"
-                s_n = f"[bold yellow]● {sub_label}[/bold yellow]" if node == "subagents" else ("[green]✓ SUBAGENTS[/green]" if node in ("compactor", "executor") else "[dim]○ SUBAGENTS[/dim]")
-                c_n = "[bold yellow]● COMPACTOR[/bold yellow]" if node == "compactor" else ("[green]✓ COMPACTOR[/green]" if node == "executor" else "[dim]○ COMPACTOR[/dim]")
-                e_n = "[bold yellow]● EXECUTOR[/bold yellow]" if node == "executor" else "[dim]○ EXECUTOR[/dim]"
+                tg_n = "[green]✓ GUARD[/green]"
+                slm_n = "[bold yellow]● SLM PLAN[/bold yellow]" if node in ("init", "rag", "slm") else "[green]✓ SLM PLAN[/green]"
+                dag_label = f"DAG NODES ({completed}/{total})" if total else "DYNAMIC DAG"
+                dag_n = f"[bold yellow]● {dag_label}[/bold yellow]" if node not in ("init", "rag", "slm", "synthesizer", "idle") else ("[green]✓ DYNAMIC DAG[/green]" if node == "synthesizer" else "[dim]○ DYNAMIC DAG[/dim]")
+                syn_n = "[bold yellow]● SYNTHESIZER[/bold yellow]" if node == "synthesizer" else "[dim]○ SYNTHESIZER[/dim]"
 
                 lines = [
-                    f"Target: [bold]{model}[/bold] | Task Value V: [bold yellow]{val:.2f}[/bold yellow]",
+                    f"Target: [bold]{model}[/bold] | Active Node: [bold yellow]{node}[/bold yellow]",
                     "",
-                    f"[START] ──► {p_n} ──► {s_n} ──► {c_n} ──► {e_n} ──► [END]",
+                    f"[START] ──► {tg_n} ──► {slm_n} ──► {dag_n} ──► {syn_n} ──► [END]",
                     "",
                     f"Status: [bold cyan]{detail}[/bold cyan]",
                 ]
-                return "\n".join(_format_box_lines("[bold cyan]LangGraph SLOW Path Execution[/bold cyan]", lines, width=76))
+                return "\n".join(_format_box_lines("[bold cyan]LangGraph Dynamic DAG Execution[/bold cyan]", lines, width=76))
             elif is_active and path == "FAST":
                 lines = [
                     f"Selected Model: [bold green]{model}[/bold green] | Task Value V: [bold]{val:.2f}[/bold]",
                     "",
-                    "[START] ──────────► [⚡ FAST DIRECT DISPATCH] ──────────► [END]",
+                    "[START] ──► [Turn Guard (0ms)] ──► [⚡ FAST DIRECT DISPATCH] ──► [END]",
                     "",
                     f"Status: [bold green]{detail}[/bold green]",
                 ]
                 return "\n".join(_format_box_lines("[bold green]Direct FAST Path Execution[/bold green]", lines, width=76))
             else:
                 lines = [
-                    "Engine: [bold]AutoConduck Proxy[/bold] | Standby | Exposure: Active",
+                    "Engine: [bold]AutoConduck 0.3.0 Engine[/bold] | Standby | SLM & RAG Active",
                     "",
-                    "[START] ──► [● ROUTER READY] ──► (FAST Direct / SLOW Orchestrator)",
+                    "[START] ──► [● Turn Guard] ──► (⚡ Direct Fast Path / 🔮 Dynamic DAG Engine)",
                 ]
-                return "\n".join(_format_box_lines("[bold dim]Routing Mechanism Standby[/bold dim]", lines, width=76))
+                return "\n".join(_format_box_lines("[bold dim]SLM Orchestration Engine Standby[/bold dim]", lines, width=76))
 
         def _mascot_header(self):
             status_label = "PAUSED" if self.paused else "RUNNING"

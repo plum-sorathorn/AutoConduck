@@ -25,6 +25,14 @@ def _response_text(response: Any) -> str:
     return ""
 
 
+def complexity_of(text: str, cfg: Any = None) -> float:
+    """Estimate complexity score from text length and token density."""
+    if not text:
+        return 0.0
+    words = len(str(text).split())
+    return min(1.0, max(0.1, words / 150.0))
+
+
 def _executor_model(
     pseudo_model: str, cfg=None, task_value=0.5, compactor_summary="", subtask_count=0
 ) -> str:
@@ -32,7 +40,6 @@ def _executor_model(
         from autoconduck.routing import pricing
         from autoconduck.config import get_config
         from autoconduck.config import resolve_orchestrator_model
-        from autoconduck.routing.evaluator import complexity_of
 
         cfg = cfg or get_config()
         lo, hi = cfg.selection.phase_bands["executor"]

@@ -108,20 +108,31 @@ async def _do_router_dispatch(messages, body_model, cfg):
 
 
 async def _do_slow_route(messages, body_model, on_progress=None):
-    from .orchestrator import run
-    from .progress import ProgressFormatter, ProgressEvent
-    cfg = _get_config()
-    formatter = ProgressFormatter(cfg)
-    callback = None
-    if on_progress is not None:
-        def callback(event):
-            if isinstance(event, dict):
-                event = ProgressEvent(event.get("kind", "node"), event.get("name", event.get("node", "")), event.get("state", "running"), event.get("detail", event.get("step_detail", "")), event.get("index", 0), event.get("total", event.get("subtasks_total", 0)), event.get("elapsed_s", 0.0))
-            text = formatter.format(event)
-            if text is not None:
-                on_progress(text)
     try:
-        return await run(messages, [], pseudo_model=body_model, on_progress=callback)
+        from autoconduck.routing.slm_planner import SLMPlanner
+        from autoconduck.orchestrator.dynamic_factory import DynamicState, build_dynamic_graph
+
+        planner = SLMPlanner()
+        plan = await planner.plan(messages)
+        if on_progress is not None:
+            try:
+                on_progress(f"⚡ SLM Plan generated ({plan.suggested_tier.value}): {len(plan.subtasks)} subtasks")
+            except Exception:
+                pass
+
+        runner = build_dynamic_graph(plan)
+        initial_state = DynamicState(
+            session_id="session_resolver",
+            thread_id="thread_resolver",
+            plan=plan,
+            messages=messages,
+        )
+        res = await runner.ainvoke(initial_state)
+        final_res = getattr(res, "final_result", None) if not isinstance(res, dict) else res.get("final_result")
+        if final_res:
+            return final_res
+        synth = getattr(res, "synthesizer_output", None) if not isinstance(res, dict) else res.get("synthesizer_output")
+        return {"content": synth or "Task completed."}
     except Exception:
         return None
 

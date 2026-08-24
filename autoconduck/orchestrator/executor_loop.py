@@ -10,8 +10,9 @@ import re
 from dataclasses import dataclass, field
 
 from .helpers import _response_text
-from .complexity_helpers import STAGNATION_MARKER
 from .tools import TOOL_SCHEMAS, execute_tool, is_read_only_tool, tool_model
+
+STAGNATION_MARKER = "<loop-stagnation:true>"
 
 
 @dataclass

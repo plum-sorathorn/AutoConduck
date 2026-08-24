@@ -26,32 +26,44 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
 
 ## Non-Negotiable Architecture Invariants
 
-- **Sub-5ms Fast Path**: `routing/semantic_router.py` and `routing/evaluator.py` are strictly synchronous (zero async, zero I/O, zero LLM calls). Default fast path executes through the streamlined zero-reflection pipeline in `routing/dispatcher.py` (input_sanitize → route_match → evaluate_score → tiebreaker_resolve → model_select) with a lightweight facade in `routing/fast_graph.py`.
-- **Fast-Path File Digests**: Deterministic parallel local reads prepended bounded by `fast_path_digest_*` config — never an LLM call.
-- **Ambiguous Zone & Tiebreaker**: Tunable zone (default `0.60–0.75`). LLM tiebreaker is **disabled by default** (`tiebreaker_enabled: false`), so ambiguous turns use deterministic complexity decisions. If tiebreaker fails or is unavailable, routing falls back deterministically to SLOW when complexity >= `slow_threshold` (0.75) unless provider is degraded.
-- **Fail-Soft Degradation**: Any LangGraph, orchestrator, tool, or schema error degrades gracefully to the fast path—never surfacing a client-facing 500 error.
-- **Dynamic Closest-Cost Model Matching**: `ModelEntry.tier` is advisory/display-only. Model selection uses logarithmic cost scaling `ln(1 + cost)` with realized EMA cost blending. Orchestrator phases use `PHASE_BANDS` in `orchestrator/graph.py` (recon `[0.10, 0.45]`, planner `[0.55, 0.85]`, subagent `[0.10, 0.55]`, executor `[0.35, 0.70]`). `RoutingDecision.model` is populated on the fast path and is never None there.
+- **Sub-2ms Turn Guard**: `server/turn_guard.py` classifies active tool turns and stagnation states in <2ms with zero async/I/O/LLM overhead. Tool loop turns execute directly on active model tiers.
+- **Embedded SLM Task Architect**: Uses local Qwen 2.5 Coder 0.5B Instruct (Q4_K_M GGUF) to generate structured `ExecutionPlan` specifications under 100ms.
+- **Dynamic DAG Compilation**: `orchestrator/dynamic_factory.py` compiles on-the-fly LangGraph `StateGraph` workflows tailored to the exact subtask dependencies and RAG requirements.
+- **Fail-Soft Degradation**: Any SLM, LangGraph, tool, or checkpointer exception degrades gracefully to direct model dispatch—never surfacing a client-facing 500 error.
+- **Autonomous 3-Tier Model Matching**: Models are classified into `cheap_fast` (< $0.50/1M), `balanced` ($0.50–$4.00/1M), and `frontier_reasoning` (> $4.00/1M) tiers with logarithmic cost scaling `ln(1 + cost)` and EMA realized-cost blending.
 - **Stream Cancellation**: Honor `request.is_disconnected()` in streaming loops (`server/server_streaming.py`) for instantaneous client disconnection handling.
+- **Session Cache Prefix Immutability**: `orchestrator/session_guard.py` guarantees byte-identical prefix preservation (turns 0 & 1) across 40+ turns for maximum upstream prompt cache hits, with compaction at the 80% context window ceiling.
 - **Agent Config Isolation**: Agent configuration edits are bounded between `# BEGIN AUTOCONDUCK` and `# END AUTOCONDUCK`, with automated backups saved to `~/.autoconduck/backups/<agent>/<timestamp>.bak`.
 
 ## API Surface
 
 - Served by FastAPI in `autoconduck/server/server_streaming.py` with routes in `server/server_routes.py`:
-  - `/v1/chat/completions`: OpenAI-compatible completions intercepting the 3 pseudo-models (`autoconduck`, `autoconduck-budget`, `autoconduck-expensive`).
+  - `/v1/chat/completions`: OpenAI-compatible completions with live `delta.reasoning_content` streams.
   - `/v1/models`: OpenAI-compatible catalog listing returning the pseudo-models.
-  - `/v1/messages`: Anthropic-compatible message translation shim (`server/messages_api.py`).
-  - `/stats`: AutoConduck audit log and cost savings metrics.
+  - `/v1/messages`: Anthropic-compatible message translation shim with `thinking_delta` reasoning blocks (`server/messages_api.py`).
+  - `/stats`: AutoConduck audit log, `ExecutionPlan` records, and cost savings metrics.
   - `/healthz`: Liveness and readiness endpoint.
 
 ## Key Modules
 
 - `routing/`:
   - `dispatcher.py`: fast-path routing pipeline and model selector.
-  - `fast_graph.py`: lightweight execution facade for backwards compatibility.
-  - `semantic_router.py`: wrapper over `semantic-router` (Aurelio pillar) with fast/slow route embeddings.
-  - `evaluator.py`: single-pass regex complexity scoring across 10 factors + boosts + hysteresis clamping.
-  - `complexity.py` & `complexity_helpers.py`: complexity extractors and factor weights.
-  - `pricing.py`: `select_closest()` closest-cost matching, EMA realized-cost blending, spend guard, and degraded model exclusions.
+  - `slm_planner.py`: embedded Qwen 2.5 Coder 0.5B SLM task planner and `ExecutionPlan` generator.
+  - `model_pool.py`: 3-tier autonomous model selector and capability filtering.
+  - `pricing.py`: `select_closest()`, `select_for_tier()`, EMA realized-cost blending, spend guard, and degraded model exclusions.
+- `orchestrator/`:
+  - `dynamic_factory.py`: dynamic runtime LangGraph `StateGraph` compiler with Annotated fan-out state reducers.
+  - `session_guard.py`: prompt-cache-friendly prefix immutability and 80% ceiling context compaction.
+  - `roles.py`: `RoleConfig` and role cards.
+  - `subagents.py`: parallel subtask analysts.
+  - `executor_loop.py` & `tools.py`: tool execution loop (read, grep, glob, list, edit, write, bash).
+- `knowledge/`:
+  - `vector_store.py`: embedded LanceDB vector database for RAG code snippet retrieval.
+- `server/`:
+  - `server.py`, `server_routes.py`, `server_streaming.py`: FastAPI server and streaming lifecycle.
+  - `turn_guard.py`: sub-2ms regex tool loop classifier.
+  - `sse_streamer.py`: unified reasoning deltas streamer.
+  - `messages_api.py`, `messages_models.py`, `messages_sse.py`: Anthropic shim translation.
 - `auth/`:
   - `auth.py`: provider credentials in `~/.autoconduck/auth.yaml` with automatic config migration.
   - `providers.py`: LiteLLM model qualification and API discovery.
@@ -61,17 +73,6 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
   - `cli.py` & `cli_launch.py`: CLI dispatch and agent setup.
 - `presets/`:
   - `model_presets.py`, `presets_data.py`, `presets_ingest.py`, `presets_fallback.py`: runtime catalog data and LiteLLM ingestion.
-- `server/`:
-  - `server.py`, `server_routes.py`, `server_streaming.py`: FastAPI server and streaming lifecycle.
-  - `messages_api.py`, `messages_models.py`, `messages_sse.py`: Anthropic shim translation.
-- `orchestrator/`:
-  - `graph.py`: LangGraph workflow (`recon → recon_subagent_pool → planner → subagents → compactor → executor`).
-  - `recon.py`: deterministic target file discovery pre-planner.
-  - `planner.py`: `TaskPlan` generation and `verified_context` bullet distillation.
-  - `roles.py`: `RoleConfig` and role cards.
-  - `subagents.py`: parallel LLM text analysis.
-  - `compactor.py`: zero-LLM deterministic line deduplication and token truncation.
-  - `executor_loop.py` & `tools.py`: tool execution loop (read, grep, glob, list, edit, write, bash) with `FileClaimRegistry`.
 - `agents/`: adapters for supported coding agents (Claude Code, OpenCode, Pi, Aider, Cursor, Continue, Kilocode, Generic OpenAI).
 - `tui/`: Textual terminal UI dashboard and interactive onboarding (`tui/onboarding/`).
 

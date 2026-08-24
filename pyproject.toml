@@ -1,6 +1,6 @@
 [project]
 name = "autoconduck"
-version = "0.2.3"
+version = "0.3.0"
 description = "Local zero-overhead model router + task orchestrator for coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,8 +13,11 @@ dependencies = [
   "tiktoken>=0.6",
   "textual>=0.70",
   "litellm[proxy]>=1.40",
-  "semantic-router",
   "langgraph",
+  "langgraph-checkpoint-sqlite",
+  "llama-cpp-python>=0.3.0",
+  "outlines>=0.1.0",
+  "lancedb>=0.10",
   "json-repair",
 ]
 [project.scripts]

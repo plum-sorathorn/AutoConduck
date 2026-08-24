@@ -17,6 +17,10 @@ class ModelEntry(BaseModel):
     tier: str = "balanced"
     price_in: float = 0.0
     price_out: float = 0.0
+    cost_input: float = 0.0
+    cost_output: float = 0.0
+    context_window: int = 128000
+    supports_tools: bool = True
     enabled: bool = True
     max_usd_per_min: float | None = None
 
@@ -29,6 +33,15 @@ class SelectionConfig(BaseModel):
     planner_retry_cheaper: bool = True
     progress_verbosity: str = "verbose"
     """Selection controls; pool entries may set quality_score and max_usd_per_min."""
+
+    # 0.3.0 SLM Architecture & Dynamic DAG Tunables
+    slm_model_path: str = "models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf"
+    slm_circuit_breaker_timeout_ms: int = 100
+    cheap_fast_max_cost: float = 0.50
+    balanced_max_cost: float = 4.00
+    session_guard_compaction_ratio: float = 0.80
+    rag_max_tokens: int = 250
+    rag_db_path: str = "~/.autoconduck/rag_db"
 
     value_to_cost_gamma: float = 1.0
     pseudo_bias_budget: float = -0.20
@@ -181,6 +194,7 @@ class Config(BaseModel):
     fast_path_digest_max_total_bytes: int = 12000
     fast_path_digest_min_files: int = 2
     pseudo_model: str = "autoconduck"
+    models: dict[str, ModelEntry] = Field(default_factory=dict)
     model_list: list[dict] = Field(default_factory=list)
     routing_log: bool = True
     selected_presets: list[str] = Field(default_factory=list)
@@ -300,6 +314,9 @@ def _normalize_model_entries(config_dict):
 
 def _configured_model_sources(cfg):
     """Yield model pools in precedence order, including Pi's optional pool."""
+    if hasattr(cfg, "models") and isinstance(cfg.models, dict) and cfg.models:
+        for entry in cfg.models.values():
+            yield entry.model_dump() if isinstance(entry, ModelEntry) else entry
     yield from (getattr(cfg, "model_list", []) or [])
     yield from (getattr(cfg, "custom_models", []) or [])
     pi = getattr(cfg, "pi", None)

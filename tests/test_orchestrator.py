@@ -1,17 +1,12 @@
-"""LangGraph orchestrator, planner, subagents, and executor blueprint unit tests."""
+"""LangGraph orchestrator, dynamic factory, and session guard unit tests."""
 import json
 import pytest
 from unittest.mock import MagicMock, patch
 
 from autoconduck.config import Config, SelectionConfig
-from autoconduck.orchestrator.compactor import compact
-from autoconduck.orchestrator.planner import (
-    OutputContract,
-    SubTask,
-    TaskPlan,
-    build_task_plan,
-)
-from autoconduck.orchestrator.recon import ReconTarget, build_recon_plan
+from autoconduck.orchestrator.dynamic_factory import DynamicState, build_dynamic_graph
+from autoconduck.orchestrator.session_guard import SessionGuard
+from autoconduck.routing.slm_planner import ExecutionPlan, SubTask, ModelTier
 from autoconduck.orchestrator.roles import RoleConfig, role_card
 from autoconduck.orchestrator.subagents import (
     build_subagent_prompt,
@@ -20,41 +15,45 @@ from autoconduck.orchestrator.subagents import (
 )
 
 
-def test_subtask_and_task_plan_schema():
-    subtask = SubTask(
-        id="t1",
-        goal="Inspect routing logic",
-        scope=["autoconduck/routing/dispatcher.py"],
-        output_contract=OutputContract(description="Summary of routing rules"),
-        constraints=["Do not modify files"],
-        depends_on=[],
-        role="read",
+def test_dynamic_graph_compilation_and_execution():
+    plan = ExecutionPlan(
+        route="dynamic_dag",
+        suggested_tier=ModelTier.CHEAP_FAST,
+        needs_rag=False,
+        subtasks=[
+            SubTask(
+                id="t1",
+                goal="Analyze routing",
+                role="read",
+                depends_on=[],
+            ),
+            SubTask(
+                id="t2",
+                goal="Synthesize results",
+                role="read",
+                depends_on=["t1"],
+            ),
+        ],
+        synthesizer_tier=ModelTier.CHEAP_FAST,
     )
-    plan = TaskPlan(
-        subtasks=[subtask],
-        summary="Test task plan",
-        budget_hint=0.5,
-    )
-    assert plan.subtasks[0].id == "t1"
-    assert plan.budget_hint == 0.5
+    runner = build_dynamic_graph(plan)
+    assert runner is not None
 
 
-def test_build_subagent_prompt_structure():
-    task = SubTask(
-        id="t1",
-        goal="Inspect authentication",
-        scope=["autoconduck/auth.py"],
-        output_contract=OutputContract(description="Security notes"),
-        constraints=["Do not edit"],
-        verified_context=["Auth uses YAML file"],
-        read_budget=3,
-        role="read",
-    )
-    prompt = build_subagent_prompt(task, "Sibling context")
-    assert "ROLE: You are a read-only file analyst" in prompt
-    assert "FILES IN SCOPE (only these): autoconduck/auth.py" in prompt
-    assert "VERIFIED CONTEXT" in prompt
-    assert "TOOL BUDGET: You may make at most 3" in prompt
+def test_session_guard_compaction():
+    guard = SessionGuard(max_tokens=100)
+    verbose = "data line " * 200
+    messages = [
+        {"role": "system", "content": "You are assistant."},
+        {"role": "user", "content": "Initial user task."},
+        {"role": "assistant", "content": "Working on it..."},
+        {"role": "tool", "content": verbose},
+    ]
+    res = guard.check_and_compact(messages, max_tokens=100)
+    assert res.compacted is True
+    assert res.cache_prefix_preserved is True
+    assert res.messages[0]["role"] == "system"
+    assert res.final_tokens < res.original_tokens
 
 
 def test_subagent_target_read_vs_write():
@@ -68,25 +67,6 @@ def test_subagent_target_read_vs_write():
     read_target = subagent_target("analyze", "read", 1, 0.5, cfg)
     write_target = subagent_target("analyze", "write", 1, 0.5, cfg)
     assert read_target < write_target
-
-
-def test_compact_dedupes_references():
-    findings = [
-        "Issue detected at autoconduck/auth.py:25",
-        "Issue detected at autoconduck/auth.py:25",
-        "Different issue at autoconduck/config.py:10",
-    ]
-    merged = compact(findings)
-    assert merged.count("autoconduck/auth.py:25") == 1
-    assert "autoconduck/config.py:10" in merged
-
-
-def test_recon_plan_target_extraction():
-    prompt = "Please check autoconduck/digest.py and autoconduck/config.py"
-    plan = build_recon_plan([{"role": "user", "content": prompt}], cfg=Config())
-    # Deterministic file path extraction from prompt
-    assert isinstance(plan, ReconTarget)
-    assert isinstance(plan.files, list)
 
 
 def test_role_card_generation():

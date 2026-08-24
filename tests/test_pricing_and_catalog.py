@@ -200,3 +200,25 @@ def test_validate_phase_bands_detects_empty_bands():
     assert len(warnings) > 0
     assert "Phase band 'planner'" in warnings[0]
 
+
+def test_select_for_tier_integration():
+    from autoconduck.routing.slm_planner import ModelTier
+    cfg = Config(
+        model_list=[
+            {"id": "flash-cheap", "price_in": 0.1, "price_out": 0.2, "context_window": 128000, "supports_tools": True, "enabled": True},
+            {"id": "balanced-mid", "price_in": 1.0, "price_out": 2.5, "context_window": 128000, "supports_tools": True, "enabled": True},
+            {"id": "frontier-expert", "price_in": 5.0, "price_out": 15.0, "context_window": 200000, "supports_tools": True, "enabled": True},
+        ]
+    )
+    cheap = pricing.select_for_tier(ModelTier.CHEAP_FAST, cfg)
+    balanced = pricing.select_for_tier(ModelTier.BALANCED, cfg)
+    frontier = pricing.select_for_tier(ModelTier.FRONTIER_REASONING, cfg)
+
+    assert cheap == "flash-cheap"
+    assert balanced == "balanced-mid"
+    assert frontier == "frontier-expert"
+
+    # Context window filtering
+    filtered = pricing.select_for_tier(ModelTier.CHEAP_FAST, cfg, min_context_window=150000)
+    assert filtered == "frontier-expert"
+
