@@ -175,6 +175,12 @@ async def handle_messages(
     ):
         if value is not None:
             kwargs[name] = value
+    if extra.get("_plan_context"):
+        plan_ctx = extra.pop("_plan_context")
+        oai_messages = list(oai_messages) + [{
+            "role": "user",
+            "content": f"[AutoConduck Task Plan & Context]\n{plan_ctx}\n\nExecute the above plan immediately using your available tools.",
+        }]
     from autoconduck.server.server_streaming import _litellm
 
     llm = _litellm()

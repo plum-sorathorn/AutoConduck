@@ -177,6 +177,7 @@ async def route_target(
                 "Active tool loop detected — delegating completion directly to selected model %s",
                 model or body_model,
             )
+        plan_context = None
         if (
             path == "SLOW"
             and not in_tool_loop
@@ -206,18 +207,19 @@ async def route_target(
                         if not isinstance(result, dict)
                         else result.get("content", str(result))
                     )
-                    ans: dict[str, Any] = {"content": content}
                     if tool_calls:
-                        ans["tool_calls"] = tool_calls
-                    return None, {
-                        "__answer__": ans,
-                        "_path": path,
-                        "_pseudo": body_model,
-                        "_route": route_name,
-                        "_tier": tier,
-                        "_plan": plan,
-                        "_complexity": task_complexity,
-                    }
+                        ans: dict[str, Any] = {"content": content, "tool_calls": tool_calls}
+                        return None, {
+                            "__answer__": ans,
+                            "_path": path,
+                            "_pseudo": body_model,
+                            "_route": route_name,
+                            "_tier": tier,
+                            "_plan": plan,
+                            "_complexity": task_complexity,
+                        }
+                    else:
+                        plan_context = content
             except Exception as exc:
                 logging.getLogger("autoconduck").warning(
                     "Orchestrator execution failed: %s", exc
@@ -259,4 +261,6 @@ async def route_target(
             _tier=getattr(decision, "tier", None) if decision else None,
             _plan=getattr(decision, "plan", None) if decision else None,
         )
+        if plan_context:
+            extra["_plan_context"] = plan_context
     return target, extra

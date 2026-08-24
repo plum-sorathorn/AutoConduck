@@ -211,6 +211,17 @@ async def handle_chat_completions(
                     )
                     yield "data: [DONE]\n\n"
                 else:
+                    record(
+                        extra.get("_path", "SLOW"),
+                        extra.get("_pseudo", body.model),
+                        target or "unknown",
+                        0,
+                        0,
+                        complexity=extra.get("_complexity"),
+                        route=extra.get("_route"),
+                        tier=extra.get("_tier"),
+                        plan=extra.get("_plan"),
+                    )
                     async for chunk in relay_for(target, extra, body.messages):
                         yield chunk
             except asyncio.CancelledError:
@@ -240,7 +251,14 @@ async def handle_chat_completions(
                 yield "data: [DONE]\n\n"
                 return
             kwargs = body.model_dump(exclude_none=True)
-            kwargs["messages"] = normalize_messages_for_llm(messages)
+            msg_list = list(messages)
+            if extra and "_plan_context" in extra:
+                plan_ctx = extra.pop("_plan_context")
+                msg_list.append({
+                    "role": "user",
+                    "content": f"[AutoConduck Task Plan & Context]\n{plan_ctx}\n\nExecute the above plan immediately using your available tools.",
+                })
+            kwargs["messages"] = normalize_messages_for_llm(msg_list)
             if kwargs.get("tools"):
                 kwargs["tools"] = sanitize_tools(kwargs["tools"])
             kwargs.update(model=target, drop_params=True)
@@ -343,6 +361,23 @@ async def handle_chat_completions(
         }
 
     messages = normalize_messages_for_llm(body.messages)
+    if extra.get("_plan_context"):
+        plan_ctx = extra.pop("_plan_context")
+        messages = list(messages) + [{
+            "role": "user",
+            "content": f"[AutoConduck Task Plan & Context]\n{plan_ctx}\n\nExecute the above plan immediately using your available tools.",
+        }]
+        record(
+            extra.get("_path", "SLOW"),
+            extra.get("_pseudo", body.model),
+            target or "unknown",
+            0,
+            0,
+            complexity=extra.get("_complexity"),
+            route=extra.get("_route"),
+            tier=extra.get("_tier"),
+            plan=extra.get("_plan"),
+        )
     if extra.get("_path") == "FAST":
         from autoconduck.digest import maybe_digest_messages
 
