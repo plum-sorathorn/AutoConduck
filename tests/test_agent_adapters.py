@@ -101,14 +101,13 @@ def test_pi_adapter_patch_install_features_and_revert(tmp_path, monkeypatch):
     assert ext.exists()
     assert "autoconduck" in ext.read_text(encoding="utf-8")
 
-    # Check subagent feature installation in settings.json
+    # Check provider configuration in settings.json
     settings_file = pi_dir / "settings.json"
     assert settings_file.exists()
     settings_data = json.loads(settings_file.read_text(encoding="utf-8"))
-    assert "npm:pi-subagents" in settings_data.get("packages", [])
     assert settings_data.get("defaultProvider") == "autoconduck"
 
-    # Test install_features hook idempotent execution
+    # Test install_features hook
     installed = adapter.install_features()
     assert isinstance(installed, list)
 
@@ -116,7 +115,6 @@ def test_pi_adapter_patch_install_features_and_revert(tmp_path, monkeypatch):
     assert not ext.exists()
     data_reverted = json.loads(settings_file.read_text(encoding="utf-8"))
     assert data_reverted.get("defaultProvider") is None
-    assert "npm:pi-subagents" not in data_reverted.get("packages", [])
 
 
 def test_opencode_adapter_patch_and_revert(tmp_path, monkeypatch):
@@ -345,27 +343,10 @@ def test_onboarding_configure_selected_agents(tmp_path, monkeypatch):
     assert "pi" in configured
 
 
-def test_pi_subagent_detection_and_handoff_tool_calls(tmp_path, monkeypatch):
-    from autoconduck.orchestrator.handoff import check_subagent_support, format_execution_handoff
+def test_universal_handoff_execution_directives(tmp_path, monkeypatch):
+    from autoconduck.orchestrator.handoff import format_execution_handoff
     from autoconduck.routing.slm_planner import ExecutionPlan, SubTaskSpec
 
-    pi_dir = tmp_path / ".pi" / "agent"
-    pi_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
-
-    # 1. Without subagents installed
-    (pi_dir / "settings.json").write_text(json.dumps({"packages": []}), encoding="utf-8")
-    is_pi, has_sub = check_subagent_support(client_type="pi")
-    assert is_pi is True
-    assert has_sub is False
-
-    # 2. With node_modules/pi-subagents
-    (pi_dir / "npm" / "node_modules" / "pi-subagents").mkdir(parents=True, exist_ok=True)
-    is_pi, has_sub = check_subagent_support(client_type="pi")
-    assert is_pi is True
-    assert has_sub is True
-
-    # 3. Handoff generation with subagents tool call
     plan = ExecutionPlan(
         summary="Test multi-step plan",
         subtasks=[
@@ -379,8 +360,8 @@ def test_pi_subagent_detection_and_handoff_tool_calls(tmp_path, monkeypatch):
         compacted="",
         client_type="pi",
     )
-    assert handoff.tool_calls is not None
-    assert len(handoff.tool_calls) == 1
-    assert handoff.tool_calls[0]["function"]["name"] == "subagent"
-    assert "workflowScript" in handoff.tool_calls[0]["function"]["arguments"]
+    assert handoff.tool_calls is None
+    assert "## Implementation Plan & Verified Context" in handoff
+    assert "Found files" in handoff
+    assert "Proceed with implementation of the subtasks sequentially" in handoff
 

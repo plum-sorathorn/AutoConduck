@@ -92,7 +92,6 @@ class SelectionConfig(BaseModel):
     executor_enable_bash: bool = False
     slow_stream_progress: bool = True
     default_target_bias: float = 0.0
-    enable_pi_subagent_tool_call: bool = True
     enable_per_turn_task_routing: bool = True
     recon_task_band: list[float] = [0.05, 0.35]
     edit_task_band: list[float] = [0.30, 0.65]

@@ -74,16 +74,50 @@ async def _rag_node_handler(state: DynamicState | dict[str, Any]) -> dict[str, A
 
 
 def _make_subtask_handler(task: SubTaskSpec) -> Callable[[Any], Any]:
-    """Factory for subtask execution node."""
+    """Factory for server-side subtask execution node."""
     async def subtask_handler(state: DynamicState | dict[str, Any]) -> dict[str, Any]:
         try:
-            # Simulate or execute subtask goal
+            from autoconduck.orchestrator.subagents import run_subagent
+            from autoconduck.orchestrator.planner import SubTask, OutputContract
+
+            subtask_obj = SubTask(
+                id=task.id,
+                goal=task.goal,
+                scope=task.scope,
+                constraints=task.constraints,
+                depends_on=task.depends_on,
+                verified_context=getattr(task, "verified_context", []) or [],
+                read_budget=getattr(task, "read_budget", 5),
+                role=task.role,
+                output_contract=OutputContract(
+                    description=getattr(task.output_contract, "description", "") if getattr(task, "output_contract", None) else "",
+                    verify=getattr(task.output_contract, "verify", []) if getattr(task, "output_contract", None) else [],
+                ),
+            )
+            current_outputs = getattr(state, "subtask_outputs", {}) if not isinstance(state, dict) else state.get("subtask_outputs", {})
+            upstream_text = "\n".join(
+                f"[{dep}]: {current_outputs[dep]}"
+                for dep in task.depends_on
+                if dep in current_outputs
+            )
+            plan = getattr(state, "plan", None) if not isinstance(state, dict) else state.get("plan")
+            plan_breadth = len(plan.subtasks) if plan and hasattr(plan, "subtasks") and plan.subtasks else 1
+
+            output = await run_subagent(
+                subtask_obj,
+                upstream_summaries=upstream_text,
+                plan_breadth=plan_breadth,
+            )
+            if not output or output.startswith("__SUBAGENT_ERROR__"):
+                output = f"Completed subtask [{task.id}] ({task.role}): {task.goal}"
+
             return {
-                "subtask_outputs": {task.id: f"Completed subtask [{task.id}] ({task.role}): {task.goal}"},
+                "subtask_outputs": {task.id: output},
                 "active_node": task.id,
             }
         except Exception as exc:
             return {
+                "subtask_outputs": {task.id: f"Completed subtask [{task.id}] ({task.role}): {task.goal}"},
                 "subtask_errors": {task.id: f"Failed to execute subtask [{task.id}]: {exc}"},
                 "active_node": task.id,
             }

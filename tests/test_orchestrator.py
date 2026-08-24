@@ -270,25 +270,17 @@ def test_format_execution_handoff_with_subagents():
         summary="Refactor auth tokens",
     )
     outputs = {"t1": "auth.py:25 has get_provider_key."}
-    with patch("autoconduck.orchestrator.handoff.check_subagent_support", return_value=(True, True)):
-        res = format_execution_handoff(plan, outputs, "")
-        assert "## Implementation Plan & Verified Context" in res
-        assert "Refactor auth tokens" in res
-        assert "#### 1. `t1`: Inspect token handling" in res
-        assert "#### 2. `t2`: Update API endpoint" in res
-        assert "auth.py:25 has get_provider_key." in res
-        assert "pi-subagents" in res
-        assert res.tool_calls is not None
-        assert len(res.tool_calls) == 1
-        assert res.tool_calls[0]["function"]["name"] == "subagent"
-        args = json.loads(res.tool_calls[0]["function"]["arguments"])
-        assert "workflowScript" in args
-        assert "runs.all" in args["workflowScript"] or "runs.run" in args["workflowScript"]
-        assert "worker" in args["workflowScript"]
-        assert "pytest" in args["workflowScript"]
+    res = format_execution_handoff(plan, outputs, "")
+    assert "## Implementation Plan & Verified Context" in res
+    assert "Refactor auth tokens" in res
+    assert "#### 1. `t1`: Inspect token handling" in res
+    assert "#### 2. `t2`: Update API endpoint" in res
+    assert "auth.py:25 has get_provider_key." in res
+    assert "Proceed with implementation of the subtasks sequentially" in res
+    assert res.tool_calls is None
 
 
-def test_format_execution_handoff_linear_fallback_warning():
+def test_format_execution_handoff_linear_execution():
     from autoconduck.orchestrator.handoff import format_execution_handoff
     from autoconduck.orchestrator.planner import TaskPlan, SubTask
 
@@ -298,11 +290,12 @@ def test_format_execution_handoff_linear_fallback_warning():
         ],
         summary="Fix bug in app",
     )
-    with patch("autoconduck.orchestrator.handoff.check_subagent_support", return_value=(True, False)):
-        res = format_execution_handoff(plan, {}, "")
-        assert "Linear Execution Mode" in res
-        assert "pi-subagents" in res
-        assert "Executing subtasks linearly" in res
+    res = format_execution_handoff(plan, {}, "")
+    assert "## Implementation Plan & Verified Context" in res
+    assert "Fix bug in app" in res
+    assert "#### 1. `t1`: Fix bug" in res
+    assert "Proceed with implementation of the subtasks sequentially" in res
+    assert res.tool_calls is None
 
 
 def test_resolve_1hop_dependencies(tmp_path):
@@ -333,16 +326,3 @@ def test_resolve_analysts_for_task():
     assert "reviewer" in roles
     assert "scout" in roles
     assert "oracle" in roles
-
-
-def test_check_subagent_support_agent_filtering():
-    from autoconduck.orchestrator.handoff import check_subagent_support
-
-    # Non-pi client types must always return False, False
-    assert check_subagent_support(client_type="claude") == (False, False)
-    assert check_subagent_support(client_type="opencode") == (False, False)
-
-    # Non-pi user agents must return False, False
-    assert check_subagent_support(user_agent="OpenCode/1.0") == (False, False)
-    assert check_subagent_support(user_agent="Claude-Code/0.2.9") == (False, False)
-    assert check_subagent_support(user_agent="anthropic-sdk-typescript/0.27.0") == (False, False)

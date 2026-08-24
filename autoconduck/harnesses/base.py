@@ -53,7 +53,7 @@ class BaseAdapter(ABC):
             return None
 
     def install_features(self) -> list[str]:
-        """Check and install any agent-specific plugins/extensions/features (e.g. pi-subagents)."""
+        """Check and install any agent-specific plugins/extensions/features."""
         return []
 
     @abstractmethod
