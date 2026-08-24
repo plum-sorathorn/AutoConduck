@@ -1,6 +1,6 @@
 # Dynamic Model Selection (cost-ratio closest-match) — Redesign Spec
 
-> **Note for AutoConduck 0.3.0**: This document specifies the foundational closest-cost selection equations and logarithmic scaling. In 0.3.0, fast-path turn qualification is handled by `TurnGuard` (<2ms), task breakdown is handled by embedded `SLMPlanner` (Qwen 2.5 Coder 0.5B), and model matching is handled by `ModelPool` across 3 dynamic capability tiers (`cheap_fast`, `balanced`, `frontier_reasoning`). See `docs/design/slm-architecture.md` and `docs/design/dynamic-dag.md`.
+> **Note for AutoConduck 0.3.2**: This document specifies the foundational closest-cost selection equations and logarithmic scaling. In 0.3.2, fast-path turn qualification is handled by `TurnGuard` (<2ms), task breakdown is handled by embedded `SLMPlanner` (Qwen 2.5 Coder 0.5B), and model matching is handled by `ModelPool` via dynamic pool-relative quantile partitioning across 3 capability tiers (`cheap_fast`, `balanced`, `frontier_reasoning`) adapting seamlessly to any user-selected pool size (1 to 20+ models). See `docs/design/slm-architecture.md` and `docs/design/dynamic-dag.md`.
 
 # 1. Dynamic task-value computation
 

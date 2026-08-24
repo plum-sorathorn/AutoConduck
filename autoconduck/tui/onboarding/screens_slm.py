@@ -99,7 +99,7 @@ if _TEXTUAL:
                 integrate_slm_model(self.selected_id, target_dir=self.target_dir)
                 try:
                     self.query_one("#status").update(
-                        f"[bold green]✓ Integrated {selected['name']} from local cache.[/bold green]"
+                        f"[bold green]Integrated {selected['name']} from local cache.[/bold green]"
                     )
                 except Exception:
                     pass
@@ -110,7 +110,7 @@ if _TEXTUAL:
             self._downloading = True
             try:
                 self.query_one("#status").update(
-                    f"[bold cyan]Downloading {selected['name']} ({selected['size_mb']} MB)… please wait…[/bold cyan]"
+                    f"[bold cyan]Downloading {selected['name']} ({selected['size_mb']} MB)... please wait...[/bold cyan]"
                 )
             except Exception:
                 pass
@@ -126,7 +126,7 @@ if _TEXTUAL:
                     mb_tot = total / (1024 * 1024)
                     try:
                         self.query_one("#status").update(
-                            f"[bold cyan]Downloading {selected['name']}… {pct}% ({mb_down:.1f}/{mb_tot:.1f} MB)[/bold cyan]"
+                            f"[bold cyan]Downloading {selected['name']}... {pct}% ({mb_down:.1f}/{mb_tot:.1f} MB)[/bold cyan]"
                         )
                     except Exception:
                         pass
@@ -141,7 +141,7 @@ if _TEXTUAL:
                 integrate_slm_model(self.selected_id, target_dir=self.target_dir)
                 try:
                     self.query_one("#status").update(
-                        f"[bold green]✓ {selected['name']} installed and integrated successfully![/bold green]"
+                        f"[bold green]{selected['name']} installed and integrated successfully![/bold green]"
                     )
                 except Exception:
                     pass

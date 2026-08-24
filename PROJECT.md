@@ -1,16 +1,16 @@
-# Project: AutoConduck 0.3.0 Modernization
+# Project: AutoConduck 0.3.2 Modernization
 
 ## Architecture
-AutoConduck 0.3.0 transforms from a heuristic 10-factor regex complexity scorer and static DAG pipeline into an intelligent Dynamic SLM Orchestration Engine.
+AutoConduck 0.3.2 transforms from a heuristic 10-factor regex complexity scorer and static DAG pipeline into an intelligent Dynamic SLM Orchestration Engine.
 
 ### Data Flow & Execution Pipeline
 1. **Client Request**: `/v1/chat/completions` (OpenAI) or `/v1/messages` (Anthropic).
 2. **Turn Guard (`turn_guard.py`)**: Synchronous 0ms classifier. If active tool loop without stagnation, directly relays to active model tier (<2ms overhead). If stagnation (3+ identical tool calls or 2+ consecutive errors) or new user turn, routes to SLM Planner.
 3. **Session Guard (`session_guard.py`)**: Enforces immutable prefix contract for upstream prompt caching across 40+ turns; applies 80% context window compaction summarizing tool outputs while preserving code fences and headers.
 4. **SLM Architect (`slm_planner.py`)**: Embedded Qwen 2.5 Coder 0.5B Instruct (Q4_K_M GGUF) with Outlines BNF logit-constrained grammar generating deterministic `ExecutionPlan` JSON within <=75ms, guarded by a 100ms circuit breaker failing soft to the balanced tier.
-5. **Model Pool (`model_pool.py`)**: Dynamic auto-tiering (`cheap_fast` <$0.50/1M, `balanced` $0.50-$4.00/1M, `frontier_reasoning` >$4.00/1M) with context ceiling and tool calling filters.
+5. **Model Pool (`model_pool.py`)**: Dynamic pool-relative quantile tiering (`cheap_fast`, `balanced`, `frontier_reasoning`) adapting seamlessly to any user-selected pool size (1 to 20+ models) with context ceiling and tool calling filters.
 6. **Dynamic LangGraph Factory (`dynamic_factory.py`)**: Transient `StateGraph` compilation with parallel subtask fan-out, conditional LanceDB RAG node, terminal Synthesizer node on `frontier_reasoning`, and `SqliteSaver` session checkpointing.
-7. **Dynamic SSE Streamer (`sse_streamer.py`)**: Real-time visual DAG execution state transitions (`⏳`, `🟢`, `🔴`) emitted as `delta.reasoning_content` (OpenAI) and `thinking_delta` (Anthropic), transitioning smoothly into response markdown.
+7. **Dynamic SSE Streamer (`sse_streamer.py`)**: Real-time visual DAG execution state transitions (`[..]`, `[>>]`, `[OK]`, `[ERR]`) emitted as `delta.reasoning_content` (OpenAI) and `thinking_delta` (Anthropic), transitioning smoothly into response markdown.
 8. **Selective Knowledge / RAG (`knowledge/`)**: LanceDB embedded vector index for repository dependencies and API contracts (max 250 tokens) injected into `State["verified_context"]`.
 
 ---

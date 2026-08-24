@@ -52,12 +52,18 @@ def route(
         confidence_band = "fast"
         confidence = 1.0
         complexity = 0.2
-        tier = ModelTier.BALANCED.value
+        last_tool = (guard_res.last_tool_name or "").lower()
+        is_routine_tool = any(
+            t in last_tool
+            for t in ["read", "glob", "list", "grep", "bash", "status", "diff", "command", "file", "view", "tool"]
+        )
+        target_tier = ModelTier.CHEAP_FAST if is_routine_tool else ModelTier.BALANCED
+        tier = target_tier.value
         reason = f"tool_loop_bypass: {guard_res.last_tool_name or 'tool'}"
         model = pricing.select_for_tier(
-            ModelTier.BALANCED, config=config, pseudo_model=pseudo_model
+            target_tier, config=config, pseudo_model=pseudo_model
         ) or pricing.select_closest(
-            pricing.pool_ids(config), 0.25, config, pseudo_model=pseudo_model
+            pricing.pool_ids(config), 0.2, config, pseudo_model=pseudo_model
         ) or resolve_orchestrator_model(config)
 
     elif guard_res.target_action == TurnAction.ESCALATE_SLM:

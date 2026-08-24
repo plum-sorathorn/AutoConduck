@@ -36,8 +36,8 @@ from autoconduck._compat.lancedb_fallback import _cosine_distance
 # ==============================================================================
 
 def test_adversarial_version_and_metadata():
-    """Verify package version is 0.3.1 and matches pyproject.toml."""
-    assert autoconduck.__version__ == "0.3.1"
+    """Verify package version is 0.3.2 and matches pyproject.toml."""
+    assert autoconduck.__version__ == "0.3.2"
 
     import tomllib
     from pathlib import Path
@@ -45,7 +45,7 @@ def test_adversarial_version_and_metadata():
     with open(pyproject_path, "rb") as f:
         pyproject_data = tomllib.load(f)
 
-    assert pyproject_data["project"]["version"] == "0.3.1"
+    assert pyproject_data["project"]["version"] == "0.3.2"
     assert pyproject_data["project"]["name"] == "autoconduck"
 
 

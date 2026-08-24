@@ -147,3 +147,103 @@ def test_model_pool_invalid_tier_string_fallback(mock_catalog_config: Config):
     pool = ModelPool(mock_catalog_config)
     selected = pool.select_for_tier("unknown_tier")  # type: ignore
     assert selected in mock_catalog_config.models or isinstance(selected, str)
+
+
+def test_model_pool_balanced_multiple_models_ranking():
+    """Balanced tier selects the most appropriate balanced model closest to target."""
+    config = Config()
+    config.models = {
+        "expensive-balanced": ModelEntry(
+            id="expensive-balanced",
+            provider="openai",
+            cost_input=3.80,
+            cost_output=15.00,
+            context_window=128000,
+            supports_tools=True,
+        ),
+        "ideal-balanced": ModelEntry(
+            id="ideal-balanced",
+            provider="openai",
+            cost_input=1.25,
+            cost_output=5.00,
+            context_window=128000,
+            supports_tools=True,
+        ),
+    }
+    pool = ModelPool(config)
+    selected = pool.select_for_tier(ModelTier.BALANCED)
+    assert selected == "ideal-balanced"
+
+
+def test_model_pool_single_model_dynamic_tiering():
+    """When only 1 model is configured, all tiers map dynamically to that model."""
+    config = Config()
+    config.models = {
+        "solo-model": ModelEntry(
+            id="solo-model",
+            provider="openai",
+            cost_input=2.00,
+            cost_output=8.00,
+        )
+    }
+    pool = ModelPool(config)
+    assert pool.select_for_tier(ModelTier.CHEAP_FAST) == "solo-model"
+    assert pool.select_for_tier(ModelTier.BALANCED) == "solo-model"
+    assert pool.select_for_tier(ModelTier.FRONTIER_REASONING) == "solo-model"
+
+
+def test_model_pool_two_models_dynamic_tiering():
+    """When 2 models are configured, cheaper is cheap_fast and pricier is frontier."""
+    config = Config()
+    config.models = {
+        "expensive-one": ModelEntry(
+            id="expensive-one",
+            provider="openai",
+            cost_input=10.00,
+            cost_output=30.00,
+        ),
+        "cheap-one": ModelEntry(
+            id="cheap-one",
+            provider="openai",
+            cost_input=0.20,
+            cost_output=0.80,
+        ),
+    }
+    pool = ModelPool(config)
+    assert pool.select_for_tier(ModelTier.CHEAP_FAST) == "cheap-one"
+    assert pool.select_for_tier(ModelTier.FRONTIER_REASONING) == "expensive-one"
+
+
+def test_model_pool_three_models_dynamic_tiering():
+    """When 3 models are configured, each maps directly to cheap_fast, balanced, and frontier."""
+    config = Config()
+    config.models = {
+        "c-model": ModelEntry(id="c-model", cost_input=15.00, cost_output=60.00),
+        "a-model": ModelEntry(id="a-model", cost_input=0.10, cost_output=0.40),
+        "b-model": ModelEntry(id="b-model", cost_input=1.50, cost_output=6.00),
+    }
+    pool = ModelPool(config)
+    assert pool.select_for_tier(ModelTier.CHEAP_FAST) == "a-model"
+    assert pool.select_for_tier(ModelTier.BALANCED) == "b-model"
+    assert pool.select_for_tier(ModelTier.FRONTIER_REASONING) == "c-model"
+
+
+def test_model_pool_six_models_dynamic_tiering():
+    """When 6 models are configured, they dynamically split into 3 quantiles."""
+    config = Config()
+    config.models = {
+        "m1": ModelEntry(id="m1", cost_input=0.05, cost_output=0.10),
+        "m2": ModelEntry(id="m2", cost_input=0.15, cost_output=0.60),
+        "m3": ModelEntry(id="m3", cost_input=0.50, cost_output=2.00),
+        "m4": ModelEntry(id="m4", cost_input=1.00, cost_output=4.00),
+        "m5": ModelEntry(id="m5", cost_input=3.00, cost_output=15.00),
+        "m6": ModelEntry(id="m6", cost_input=15.00, cost_output=60.00),
+    }
+    pool = ModelPool(config)
+    cheap_choice = pool.select_for_tier(ModelTier.CHEAP_FAST)
+    balanced_choice = pool.select_for_tier(ModelTier.BALANCED)
+    frontier_choice = pool.select_for_tier(ModelTier.FRONTIER_REASONING)
+
+    assert cheap_choice in ("m1", "m2")
+    assert balanced_choice in ("m3", "m4")
+    assert frontier_choice in ("m5", "m6")

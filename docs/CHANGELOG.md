@@ -1,5 +1,12 @@
 # AutoConduck Changelog
 
+## [0.3.2] - 2026-08-24
+
+### Enhancements & Dynamic Model Tiering
+- **Dynamic Pool-Relative Model Tiering (`routing/model_pool.py`)**: Replaced fixed static price cutoffs with pool-relative dynamic quantile partitioning. Automatically tiers models across `cheap_fast`, `balanced`, and `frontier_reasoning` based on the user's active/selected models (whether 1, 2, 3, 6, or 20+ models).
+- **VCS & Git Fast-Path Intent Routing**: Explicit fast-path classification in `slm_planner.py` for git commits, diffs, status, and routine tasks, preventing runaway costs on expensive models.
+- **Emoji Removal Across Logs & TUI**: Purged all emojis from logs, TUI dashboard, onboarding screens, SSE streamers, progress formatters, and CLI outputs in favor of clean bracketed ASCII markers (`[OK]`, `[WARN]`, `[ERR]`, `[..]`, `[>>]`).
+
 ## [0.3.0] - 2026-08-24
 
 ### Major Features & Architectural Overhaul

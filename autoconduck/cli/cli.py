@@ -178,11 +178,11 @@ def cmd_reset(args):
             paths = [p for p in adapter.config_paths() if p.exists()]
             adapter.revert()
             reverted.append(
-                f"  ✓ Reverted {adapter.display_name}"
+                f"  [OK] Reverted {adapter.display_name}"
                 + (f" ({', '.join(str(p) for p in paths)})" if paths else "")
             )
         except Exception as exc:
-            print(f"  ✗ Failed {adapter.display_name}: {exc}")
+            print(f"  [FAIL] Failed {adapter.display_name}: {exc}")
     launcher.uninstall_shims()
     launcher.remove_path_entry()
     purge_home_dir(home_dir())

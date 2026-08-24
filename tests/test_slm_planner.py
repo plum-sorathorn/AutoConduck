@@ -192,3 +192,19 @@ async def test_slm_planner_latency_benchmark_under_75ms(slm_planner: SLMPlanner)
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     assert elapsed_ms < 100.0, f"Normal planning took {elapsed_ms:.1f}ms, exceeded 75ms target!"
     assert plan is not None
+
+
+@pytest.mark.asyncio
+async def test_slm_planner_routes_git_commit_and_routine_to_cheap_fast(slm_planner: SLMPlanner):
+    """Git commit, diff, and status operations route to cheap_fast tier."""
+    git_prompts = [
+        "Please check unstaged files and create a git commit with a clear commit message",
+        "create a git commit for the changes in this repo",
+        "git status and git diff",
+        "format code and run tests",
+    ]
+    for prompt in git_prompts:
+        plan = await slm_planner.plan([{"role": "user", "content": prompt}])
+        assert plan.route == "fast_direct"
+        assert plan.suggested_tier == ModelTier.CHEAP_FAST
+        assert plan.task_type in ("git_ops", "routine")

@@ -11,7 +11,7 @@ def move_cursor(cursor: int, delta: int, length: int) -> int:
 def render_agent_rows(names, detected, selected, cursor):
     return "\n".join(
         ("[reverse]" if i == cursor else "")
-        + f"{'›' if i == cursor else ' '} {'✓' if n in selected else ' '} {n:16} {detected.get(n) or 'not found'}"
+        + f"{'>' if i == cursor else ' '} {'[x]' if n in selected else '[ ]'} {n:16} {detected.get(n) or 'not found'}"
         + ("[/reverse]" if i == cursor else "")
         for i, n in enumerate(names)
     )
@@ -20,9 +20,9 @@ def render_agent_rows(names, detected, selected, cursor):
 def render_source_rows(sources, selected, cursor, models=None):
     rows = ["┌─ Model Sources ─┐"] + [
         (
-            f"[reverse]› {'✓' if i in selected else ' '} {s}[/reverse]"
+            f"[reverse]> {'[x]' if i in selected else '[ ]'} {s}[/reverse]"
             if i == cursor
-            else f"  {'✓' if i in selected else ' '} {s}"
+            else f"  {'[x]' if i in selected else '[ ]'} {s}"
         )
         for i, s in enumerate(sources)
     ]
@@ -41,9 +41,9 @@ def render_model_rows(models, enabled, cursor):
     return (
         "\n".join(
             (
-                f"[reverse]› {'✓' if m['id'] in enabled else ' '} {m['id']} ({m.get('tier', 'balanced')}){price(m)}[/reverse]"
+                f"[reverse]> {'[x]' if m['id'] in enabled else '[ ]'} {m['id']} ({m.get('tier', 'balanced')}){price(m)}[/reverse]"
                 if i == cursor
-                else f"  {'✓' if m['id'] in enabled else ' '} {m['id']} ({m.get('tier', 'balanced')}){price(m)}"
+                else f"  {'[x]' if m['id'] in enabled else '[ ]'} {m['id']} ({m.get('tier', 'balanced')}){price(m)}"
             )
             for i, m in enumerate(models)
         )
@@ -70,9 +70,9 @@ def render_provider_rows(providers, cursor):
     return (
         "\n".join(
             (
-                f"[reverse]› {'✓' if _on(p) else ' '} {_name(p)}[/reverse]"
+                f"[reverse]> {'[x]' if _on(p) else '[ ]'} {_name(p)}[/reverse]"
                 if i == cursor
-                else f"  {'✓' if _on(p) else ' '} {_name(p)}"
+                else f"  {'[x]' if _on(p) else '[ ]'} {_name(p)}"
             )
             for i, p in enumerate(providers)
         )
@@ -84,9 +84,9 @@ def render_check_rows(agents, checked, cursor):
     return (
         "\n".join(
             (
-                f"[reverse]› {'✓' if a in checked else ' '} {a}[/reverse]"
+                f"[reverse]> {'[x]' if a in checked else '[ ]'} {a}[/reverse]"
                 if i == cursor
-                else f"  {'✓' if a in checked else ' '} {a}"
+                else f"  {'[x]' if a in checked else '[ ]'} {a}"
             )
             for i, a in enumerate(agents)
         )
@@ -103,7 +103,7 @@ def render_slm_rows(models, selected_id, cursor, target_dir=None):
         installed = is_slm_model_installed(m["id"], target_dir=target_dir) if m["id"] != "none" else False
         installed_tag = " [green][Installed][/green]" if installed else ""
         size_tag = f" ({m['size_mb']} MB)" if m.get("size_mb") else ""
-        prefix = f"› {'✓' if is_sel else ' '}" if i == cursor else f"  {'✓' if is_sel else ' '}"
+        prefix = f"> {'[x]' if is_sel else '[ ]'}" if i == cursor else f"  {'[x]' if is_sel else '[ ]'}"
         label = f"{m['name']}{size_tag}{installed_tag}"
         if i == cursor:
             lines.append(f"[reverse]{prefix} {label}[/reverse]")

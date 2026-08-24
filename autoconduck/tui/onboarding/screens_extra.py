@@ -182,7 +182,7 @@ class ProviderFormScreen(Screen):
         try:
             try:
                 self.query_one("#error", Static).update(
-                    "[yellow]⏳ Saving custom provider settings...[/yellow]"
+                    "[yellow]Saving custom provider settings...[/yellow]"
                 )
             except Exception:
                 pass

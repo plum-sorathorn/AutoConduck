@@ -72,11 +72,11 @@ if _TEXTUAL:
 
                     synced = sync_all()
                     presets_data.PRESETS.update(synced)
-                    self._log_lines.append(f"[green]✓[/green] Synced {len(synced)} provider groups")
+                    self._log_lines.append(f"[green][OK][/green] Synced {len(synced)} provider groups")
                 except Exception as exc:
-                    self._log_lines.append(f"[yellow]⚠[/yellow] sync_all: {exc}")
+                    self._log_lines.append(f"[yellow][WARN][/yellow] sync_all: {exc}")
 
-                self._log_lines.append("[dim]2. Syncing DevPass models…[/dim]")
+                self._log_lines.append("[dim]2. Syncing DevPass models...[/dim]")
                 try:
                     from scripts.sync_devpass_presets import fetch_devpass_catalog
 
@@ -84,21 +84,21 @@ if _TEXTUAL:
                     if devpass_entries:
                         presets_data.PRESETS["devpass"] = devpass_entries
                         presets_data.FALLBACK_PRESETS["devpass"] = devpass_entries
-                        self._log_lines.append(f"[green]✓[/green] Synced {len(devpass_entries)} DevPass models")
+                        self._log_lines.append(f"[green][OK][/green] Synced {len(devpass_entries)} DevPass models")
                 except Exception as exc:
-                    self._log_lines.append(f"[yellow]⚠[/yellow] devpass sync: {exc}")
+                    self._log_lines.append(f"[yellow][WARN][/yellow] devpass sync: {exc}")
 
-                self._log_lines.append("[dim]3. Refreshing curated catalog snapshot…[/dim]")
+                self._log_lines.append("[dim]3. Refreshing curated catalog snapshot...[/dim]")
                 try:
                     from scripts.refresh_catalog import curated_model_catalog
 
                     model_presets._catalog_cache = None
                     cat = curated_model_catalog()
-                    self._log_lines.append(f"[green]✓[/green] Curated catalog contains {len(cat)} models")
+                    self._log_lines.append(f"[green][OK][/green] Curated catalog contains {len(cat)} models")
                 except Exception as exc:
-                    self._log_lines.append(f"[yellow]⚠[/yellow] refresh_catalog: {exc}")
+                    self._log_lines.append(f"[yellow][WARN][/yellow] refresh_catalog: {exc}")
 
-                self._status = "[bold green]✓ Catalog updated successfully with latest models![/bold green]"
+                self._status = "[bold green][OK] Catalog updated successfully with latest models![/bold green]"
             except Exception as exc:
                 self._status = f"[bold red]Sync failed: {exc}[/bold red]"
             finally:

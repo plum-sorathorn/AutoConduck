@@ -253,11 +253,11 @@ if _TEXTUAL:
             total = active.get("subtasks_total", 0)
 
             if is_active and path == "SLOW":
-                tg_n = "[green]✓ GUARD[/green]"
+                tg_n = "[green][OK] GUARD[/green]"
                 slm_n = (
                     "[bold yellow]● SLM PLAN[/bold yellow]"
                     if node in ("init", "rag", "slm")
-                    else "[green]✓ SLM PLAN[/green]"
+                    else "[green][OK] SLM PLAN[/green]"
                 )
                 dag_label = (
                     f"DAG NODES ({completed}/{total})"
@@ -268,7 +268,7 @@ if _TEXTUAL:
                     f"[bold yellow]● {dag_label}[/bold yellow]"
                     if node not in ("init", "rag", "slm", "synthesizer", "idle")
                     else (
-                        "[green]✓ DYNAMIC DAG[/green]"
+                        "[green][OK] DYNAMIC DAG[/green]"
                         if node == "synthesizer"
                         else "[dim]○ DYNAMIC DAG[/dim]"
                     )
@@ -297,7 +297,7 @@ if _TEXTUAL:
                 lines = [
                     f"Selected Model: [bold green]{model}[/bold green] | Task Value V: [bold]{val:.2f}[/bold]",
                     "",
-                    "[START] ──► [Turn Guard (0ms)] ──► [⚡ FAST DIRECT DISPATCH] ──► [END]",
+                    "[START] ──► [Turn Guard (0ms)] ──► [FAST DIRECT DISPATCH] ──► [END]",
                     "",
                     f"Status: [bold green]{detail}[/bold green]",
                 ]
@@ -312,7 +312,7 @@ if _TEXTUAL:
                 lines = [
                     "Engine: [bold]AutoConduck 0.3.0 Engine[/bold] | Standby | SLM & RAG Active",
                     "",
-                    "[START] ──► [● Turn Guard] ──► (⚡ Direct Fast Path / 🔮 Dynamic DAG Engine)",
+                    "[START] ──► [Turn Guard] ──► (Direct Fast Path / Dynamic DAG Engine)",
                 ]
                 return "\n".join(
                     _format_box_lines(

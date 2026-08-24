@@ -50,7 +50,7 @@ class ExecutionPlan(BaseModel):
     route: Literal["fast_direct", "dynamic_dag"] = "fast_direct"
     confidence: float = Field(ge=0.0, le=1.0, default=1.0)
     task_type: Literal[
-        "chat", "explain", "recon", "single_edit", "multi_edit", "debug", "refactor", "full_workflow"
+        "chat", "explain", "recon", "single_edit", "multi_edit", "debug", "refactor", "full_workflow", "git_ops", "routine"
     ] = "chat"
     suggested_tier: ModelTier = ModelTier.BALANCED
     needs_rag: bool = False
@@ -177,6 +177,60 @@ class SLMPlanner:
         )
         is_debug = any(w in text_lower for w in ["fix bug", "investigate error", "traceback", "debug", "root cause", "failure", "broken"])
         is_plan = any(w in text_lower for w in ["create a plan", "implementation plan", "breakdown", "step by step plan"])
+
+        # Check for VCS / git tasks or routine developer micro-tasks
+        git_keywords = [
+            "git commit",
+            "create a git commit",
+            "make a git commit",
+            "create a commit",
+            "make a commit",
+            "commit these changes",
+            "commit changes",
+            "commit message",
+            "write a commit message",
+            "git status",
+            "git diff",
+            "git add",
+            "git log",
+            "git push",
+            "git pull",
+            "git checkout",
+            "git branch",
+            "git merge",
+            "git reset",
+            "git stash",
+            "git revert",
+            "stage changes",
+        ]
+        is_git_task = any(kw in text_lower for kw in git_keywords)
+        routine_keywords = [
+            "format code",
+            "run lint",
+            "run tests",
+            "run pytest",
+            "check status",
+            "list files",
+            "check directory",
+            "fix typo",
+            "update readme",
+        ]
+        is_routine = is_git_task or any(kw in text_lower for kw in routine_keywords)
+
+        if is_git_task or (is_routine and not is_refactor and not is_debug and not is_plan):
+            task_type = "git_ops" if is_git_task else "routine"
+            return {
+                "route": "fast_direct",
+                "confidence": 0.99,
+                "task_type": task_type,
+                "suggested_tier": "cheap_fast",
+                "needs_rag": False,
+                "rag_queries": [],
+                "subtasks": [],
+                "synthesizer_tier": "cheap_fast",
+                "rationale": f"Direct response for {task_type} operation",
+                "fallback_used": False,
+            }
 
         if is_refactor or is_plan or (is_multi_file and len(text.split()) > 10):
             subtasks = [

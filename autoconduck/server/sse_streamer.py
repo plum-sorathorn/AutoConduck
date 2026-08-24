@@ -1,6 +1,6 @@
 """Dynamic SSE Thinking Streamer.
 
-Emits real-time visual DAG execution state transitions (`⏳`, `🟢`, `🔴`) as
+Emits real-time visual DAG execution state transitions ([..], [>>], [OK], [ERR]) as
 `delta.reasoning_content` (OpenAI) and `thinking_delta` (Anthropic), transitioning
 smoothly into markdown response tokens without stream stalls or duplicate chunks.
 """
@@ -14,10 +14,10 @@ from typing import AsyncIterator, Literal
 logger = logging.getLogger(__name__)
 
 STATUS_GLYPHS = {
-    "pending": "⏳",
-    "running": "⏳",
-    "completed": "🟢",
-    "failed": "🔴",
+    "pending": "[..]",
+    "running": "[>>]",
+    "completed": "[OK]",
+    "failed": "[ERR]",
 }
 
 
@@ -43,7 +43,7 @@ class SSEThinkingStreamer:
         detail: str = "",
     ) -> str:
         """Format an SSE frame for a node transition."""
-        glyph = STATUS_GLYPHS.get(status, "⏳")
+        glyph = STATUS_GLYPHS.get(status, "[..]")
         detail_suffix = f": {detail}" if detail else ""
         reasoning_line = f"{glyph} [{node_name}] {status}{detail_suffix}\n"
 

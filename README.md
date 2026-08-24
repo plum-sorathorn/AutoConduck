@@ -1,6 +1,6 @@
 <div align="center">
 
-# AutoConduck 0.3.0
+# AutoConduck 0.3.2
 
 **Local, zero-overhead SLM model router & dynamic LangGraph task orchestrator for coding assistants.**
 
@@ -22,7 +22,7 @@
 
 Coding agents (**Claude Code**, **OpenCode**, and **Pi**) frequently send every prompt—from a single-line typo fix or docstring lookup to a 20-file architecture migration—to a single expensive frontier model. This incurs unnecessary token spend on trivial turns while bottlenecking large multi-step changes.
 
-**AutoConduck 0.3.0** transforms model routing into an intelligent, autonomous SLM-driven dynamic execution engine:
+**AutoConduck 0.3.2** transforms model routing into an intelligent, autonomous SLM-driven dynamic execution engine:
 
 - **Turn Guard (0ms / <2ms):** Routine turns (active tool loops, single-file edits, command outputs) bypass heavy orchestration instantly, maintaining sub-millisecond agent responsiveness with zero LLM overhead.
 - **Embedded SLM Task Architect (Qwen 2.5 Coder 0.5B Instruct):** Local GGUF-quantized small language model generates structured, validated task plans in <100ms, determining exact DAG topology, tier assignments, and subtask dependencies.
@@ -30,7 +30,7 @@ Coding agents (**Claude Code**, **OpenCode**, and **Pi**) frequently send every 
 - **LanceDB Knowledge & RAG Subsystem:** Vector store semantic search automatically retrieves relevant codebase snippets without manual file discovery.
 - **Session Lifecycle & Context Guard:** Preserves immutable prompt-caching prefixes across 40+ turns and applies intelligent compaction at the 80% context window ceiling.
 - **Real-Time Reasoning SSE Streamer:** Streams live SLM cognitive deliberations directly to client coding agents using OpenAI `reasoning_content` and Anthropic `thinking_delta` protocols.
-- **3-Tier Autonomous Model Pool:** Automatically matches tasks across `cheap_fast` (< $0.50/1M), `balanced` ($0.50–$4.00/1M), and `frontier_reasoning` (> $4.00/1M) tiers with live cost tracking and spend guard protection.
+- **Dynamic Pool-Relative 3-Tier Model Matching:** Tiers models dynamically based on the user's active/selected models across `cheap_fast`, `balanced`, and `frontier_reasoning` quantiles, scaling seamlessly whether the user configures 1, 2, 3, 6, or 20+ models.
 
 ---
 

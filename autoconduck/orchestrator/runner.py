@@ -31,7 +31,7 @@ async def run_dynamic_orchestration(
                 )
                 subtasks_cnt = len(getattr(plan, "subtasks", []))
                 on_progress(
-                    f"⚡ SLM Plan generated ({tier_name}): {subtasks_cnt} subtasks"
+                    f"SLM Plan generated ({tier_name}): {subtasks_cnt} subtasks"
                 )
             except Exception:
                 pass
