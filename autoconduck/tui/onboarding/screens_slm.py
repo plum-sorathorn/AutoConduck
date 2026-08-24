@@ -51,7 +51,7 @@ if _TEXTUAL:
                 ),
                 Static(f"[dim]ℹ {desc}[/dim]", id="description", markup=True),
                 Static("", id="status", markup=True),
-                Static("[↑/↓] move · [space] select · [enter/→] confirm & continue · [←] back · [ctrl+c] quit"),
+                Static("[↑/↓] move / select · [enter/→] confirm & continue · [←] back · [ctrl+c] quit"),
             )
 
         def _update_view(self):
@@ -71,18 +71,18 @@ if _TEXTUAL:
 
             if e.key == "down":
                 self.cursor = move_cursor(self.cursor, 1, len(self.models))
+                self.selected_id = self.models[self.cursor]["id"]
                 self._update_view()
             elif e.key == "up":
                 self.cursor = move_cursor(self.cursor, -1, len(self.models))
+                self.selected_id = self.models[self.cursor]["id"]
                 self._update_view()
             elif e.key == "space":
                 self.selected_id = self.models[self.cursor]["id"]
                 self._update_view()
             elif e.key in ("enter", "right"):
-                # If cursor is on a different model and it's not selected yet, select it
-                if self.selected_id != self.models[self.cursor]["id"]:
-                    self.selected_id = self.models[self.cursor]["id"]
-                    self._update_view()
+                self.selected_id = self.models[self.cursor]["id"]
+                self._update_view()
                 self._confirm()
             elif e.key == "left":
                 if self.controller:

@@ -39,6 +39,9 @@ class DynamicState(BaseModel):
     session_id: str = "default"
     thread_id: str = "default"
     plan: Annotated[ExecutionPlan | None, _latest_val] = None
+    client_type: Annotated[str | None, _latest_val] = None
+    user_agent: Annotated[str, _latest_val] = ""
+    is_nested: Annotated[bool, _latest_val] = False
     verified_context: Annotated[list[str], operator.add] = Field(default_factory=list)
     subtask_outputs: Annotated[dict[str, str], _merge_dict] = Field(default_factory=dict)
     subtask_errors: Annotated[dict[str, str], _merge_dict] = Field(default_factory=dict)
@@ -94,6 +97,9 @@ async def _synthesizer_node_handler(state: DynamicState | dict[str, Any]) -> dic
     errors = getattr(state, "subtask_errors", {}) if not isinstance(state, dict) else state.get("subtask_errors", {})
     verified = getattr(state, "verified_context", []) if not isinstance(state, dict) else state.get("verified_context", [])
     plan = getattr(state, "plan", None) if not isinstance(state, dict) else state.get("plan")
+    client_type = getattr(state, "client_type", None) if not isinstance(state, dict) else state.get("client_type")
+    user_agent = getattr(state, "user_agent", "") if not isinstance(state, dict) else state.get("user_agent", "")
+    is_nested = getattr(state, "is_nested", False) if not isinstance(state, dict) else state.get("is_nested", False)
 
     from autoconduck.orchestrator.handoff import format_execution_handoff
     compacted = "\n".join(f"• {c}" for c in verified) if verified else ""
@@ -101,6 +107,9 @@ async def _synthesizer_node_handler(state: DynamicState | dict[str, Any]) -> dic
         plan=plan,
         subagent_outputs=outputs,
         compacted=compacted,
+        user_agent=user_agent or "",
+        client_type=client_type,
+        is_nested=is_nested,
     )
     result_text = str(handoff)
     final_dict: dict[str, Any] = {

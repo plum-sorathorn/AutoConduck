@@ -193,6 +193,7 @@ async def route_target(
                     request=request,
                     on_progress=on_progress,
                     client_type=client_type,
+                    user_agent=request.headers.get("user-agent", "") if request is not None and hasattr(request, "headers") else "",
                     is_nested=is_nested,
                     plan=plan,
                 )

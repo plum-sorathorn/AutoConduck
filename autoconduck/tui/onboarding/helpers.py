@@ -9,23 +9,31 @@ def move_cursor(cursor: int, delta: int, length: int) -> int:
 
 
 def render_agent_rows(names, detected, selected, cursor):
-    return "\n".join(
-        ("[reverse]" if i == cursor else "")
-        + f"{'>' if i == cursor else ' '} {'[x]' if n in selected else '[ ]'} {n:16} {detected.get(n) or 'not found'}"
-        + ("[/reverse]" if i == cursor else "")
-        for i, n in enumerate(names)
-    )
+    lines = []
+    for i, n in enumerate(names):
+        is_sel = n in selected
+        box = r"\[x]" if is_sel else r"\[ ]"
+        status = detected.get(n) or "not found"
+        prefix = ">" if i == cursor else " "
+        line = f"{prefix} {box} {n:16} {status}"
+        if i == cursor:
+            lines.append(f"[bold cyan]{line}[/bold cyan]")
+        else:
+            lines.append(f"  {box} {n:16} {status}")
+    return "\n".join(lines)
 
 
 def render_source_rows(sources, selected, cursor, models=None):
-    rows = ["┌─ Model Sources ─┐"] + [
-        (
-            f"[reverse]> {'[x]' if i in selected else '[ ]'} {s}[/reverse]"
-            if i == cursor
-            else f"  {'[x]' if i in selected else '[ ]'} {s}"
-        )
-        for i, s in enumerate(sources)
-    ]
+    rows = ["┌─ Model Sources ─┐"]
+    for i, s in enumerate(sources):
+        is_sel = i in selected
+        box = r"\[x]" if is_sel else r"\[ ]"
+        prefix = ">" if i == cursor else " "
+        line = f"{prefix} {box} {s}"
+        if i == cursor:
+            rows.append(f"[bold cyan]{line}[/bold cyan]")
+        else:
+            rows.append(f"  {box} {s}")
     return "\n".join(
         rows
         + ["", "Selected models for routing pool:"]
@@ -38,17 +46,19 @@ def render_model_rows(models, enabled, cursor):
     def price(m):
         return f" · in ${format_price(m.get('price_in', 0))} · out ${format_price(m.get('price_out', 0))} /1M"
 
-    return (
-        "\n".join(
-            (
-                f"[reverse]> {'[x]' if m['id'] in enabled else '[ ]'} {m['id']} ({m.get('tier', 'balanced')}){price(m)}[/reverse]"
-                if i == cursor
-                else f"  {'[x]' if m['id'] in enabled else '[ ]'} {m['id']} ({m.get('tier', 'balanced')}){price(m)}"
-            )
-            for i, m in enumerate(models)
-        )
-        or "No models available for this provider."
-    )
+    lines = []
+    for i, m in enumerate(models):
+        is_sel = m["id"] in enabled
+        box = r"\[x]" if is_sel else r"\[ ]"
+        tier = m.get("tier", "balanced")
+        p = price(m)
+        label = f"{m['id']} ({tier}){p}"
+        prefix = ">" if i == cursor else " "
+        if i == cursor:
+            lines.append(f"[bold cyan]{prefix} {box} {label}[/bold cyan]")
+        else:
+            lines.append(f"  {box} {label}")
+    return "\n".join(lines) or "No models available for this provider."
 
 
 def format_price(value) -> str:
@@ -67,31 +77,30 @@ def render_provider_rows(providers, cursor):
     def _on(p):
         return bool(p.get("enabled", True)) if isinstance(p, dict) else True
 
-    return (
-        "\n".join(
-            (
-                f"[reverse]> {'[x]' if _on(p) else '[ ]'} {_name(p)}[/reverse]"
-                if i == cursor
-                else f"  {'[x]' if _on(p) else '[ ]'} {_name(p)}"
-            )
-            for i, p in enumerate(providers)
-        )
-        or "No custom providers. Press n to add one."
-    )
+    lines = []
+    for i, p in enumerate(providers):
+        is_sel = _on(p)
+        box = r"\[x]" if is_sel else r"\[ ]"
+        name = _name(p)
+        prefix = ">" if i == cursor else " "
+        if i == cursor:
+            lines.append(f"[bold cyan]{prefix} {box} {name}[/bold cyan]")
+        else:
+            lines.append(f"  {box} {name}")
+    return "\n".join(lines) or "No custom providers. Press n to add one."
 
 
 def render_check_rows(agents, checked, cursor):
-    return (
-        "\n".join(
-            (
-                f"[reverse]> {'[x]' if a in checked else '[ ]'} {a}[/reverse]"
-                if i == cursor
-                else f"  {'[x]' if a in checked else '[ ]'} {a}"
-            )
-            for i, a in enumerate(agents)
-        )
-        or "No eligible agents selected."
-    )
+    lines = []
+    for i, a in enumerate(agents):
+        is_sel = a in checked
+        box = r"\[x]" if is_sel else r"\[ ]"
+        prefix = ">" if i == cursor else " "
+        if i == cursor:
+            lines.append(f"[bold cyan]{prefix} {box} {a}[/bold cyan]")
+        else:
+            lines.append(f"  {box} {a}")
+    return "\n".join(lines) or "No eligible agents selected."
 
 
 def render_slm_rows(models, selected_id, cursor, target_dir=None):
@@ -99,16 +108,21 @@ def render_slm_rows(models, selected_id, cursor, target_dir=None):
 
     lines = []
     for i, m in enumerate(models):
-        is_sel = m["id"] == selected_id or m["key"] == selected_id
-        installed = is_slm_model_installed(m["id"], target_dir=target_dir) if m["id"] != "none" else False
-        installed_tag = " [green][Installed][/green]" if installed else ""
+        is_sel = m["id"] == selected_id or m.get("key") == selected_id
+        installed = (
+            is_slm_model_installed(m["id"], target_dir=target_dir)
+            if m["id"] != "none"
+            else False
+        )
+        radio = "(*)" if is_sel else "( )"
+        installed_tag = " [green](Installed)[/green]" if installed else ""
         size_tag = f" ({m['size_mb']} MB)" if m.get("size_mb") else ""
-        prefix = f"> {'[x]' if is_sel else '[ ]'}" if i == cursor else f"  {'[x]' if is_sel else '[ ]'}"
-        label = f"{m['name']}{size_tag}{installed_tag}"
+        prefix = ">" if i == cursor else " "
+        label = f"{m['name']}{size_tag}"
         if i == cursor:
-            lines.append(f"[reverse]{prefix} {label}[/reverse]")
+            lines.append(f"[bold cyan]{prefix} {radio} {label}[/bold cyan]{installed_tag}")
         else:
-            lines.append(f"{prefix} {label}")
+            lines.append(f"  {radio} {label}{installed_tag}")
     return "\n".join(lines)
 
 

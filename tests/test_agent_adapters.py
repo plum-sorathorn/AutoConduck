@@ -343,3 +343,44 @@ def test_onboarding_configure_selected_agents(tmp_path, monkeypatch):
     configured = configure_selected_agents(["claude_code", "pi"])
     assert "claude_code" in configured
     assert "pi" in configured
+
+
+def test_pi_subagent_detection_and_handoff_tool_calls(tmp_path, monkeypatch):
+    from autoconduck.orchestrator.handoff import check_subagent_support, format_execution_handoff
+    from autoconduck.routing.slm_planner import ExecutionPlan, SubTaskSpec
+
+    pi_dir = tmp_path / ".pi" / "agent"
+    pi_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
+
+    # 1. Without subagents installed
+    (pi_dir / "settings.json").write_text(json.dumps({"packages": []}), encoding="utf-8")
+    is_pi, has_sub = check_subagent_support(client_type="pi")
+    assert is_pi is True
+    assert has_sub is False
+
+    # 2. With node_modules/pi-subagents
+    (pi_dir / "npm" / "node_modules" / "pi-subagents").mkdir(parents=True, exist_ok=True)
+    is_pi, has_sub = check_subagent_support(client_type="pi")
+    assert is_pi is True
+    assert has_sub is True
+
+    # 3. Handoff generation with subagents tool call
+    plan = ExecutionPlan(
+        summary="Test multi-step plan",
+        subtasks=[
+            SubTaskSpec(id="recon", goal="Scan repo", role="recon", scope=[], constraints=[]),
+            SubTaskSpec(id="edit", goal="Apply patch", role="edit", scope=[], constraints=[], depends_on=["recon"]),
+        ],
+    )
+    handoff = format_execution_handoff(
+        plan=plan,
+        subagent_outputs={"recon": "Found files"},
+        compacted="",
+        client_type="pi",
+    )
+    assert handoff.tool_calls is not None
+    assert len(handoff.tool_calls) == 1
+    assert handoff.tool_calls[0]["function"]["name"] == "subagent"
+    assert "workflowScript" in handoff.tool_calls[0]["function"]["arguments"]
+

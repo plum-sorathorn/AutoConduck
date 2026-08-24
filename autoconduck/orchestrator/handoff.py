@@ -30,7 +30,7 @@ def check_subagent_support(user_agent: str = "", client_type: str | None = None,
     # Allow subagent tool call unless explicitly disabled via config
     if cfg is not None:
         sel = getattr(cfg, "selection", None)
-        if getattr(sel, "enable_pi_subagent_tool_call", None) is False:
+        if getattr(sel, "enable_pi_subagent_tool_call", True) is False:
             return True, False
 
     try:
@@ -50,6 +50,10 @@ def check_subagent_support(user_agent: str = "", client_type: str | None = None,
         if not has_sub:
             ext_dir = agent_dir / "extensions"
             if ext_dir.is_dir() and any("subagent" in f.name.lower() for f in ext_dir.iterdir()):
+                has_sub = True
+        if not has_sub:
+            npm_modules = agent_dir / "npm" / "node_modules"
+            if npm_modules.is_dir() and (npm_modules / "pi-subagents").is_dir():
                 has_sub = True
         return True, has_sub
     except Exception:
@@ -240,25 +244,27 @@ def format_execution_handoff(
         sections.append("### Subtask Breakdown")
         for i, st in enumerate(subtasks, 1):
             findings = subagent_outputs.get(st.id, "").strip()
-            scope_str = ", ".join(f"`{s}`" for s in st.scope) if st.scope else "General workspace"
-            deps_str = ", ".join(f"`{d}`" for d in st.depends_on) if st.depends_on else "None (independent)"
-            verify_cmds = (
-                ", ".join(f"`{v}`" for v in st.output_contract.verify)
-                if hasattr(st, "output_contract") and st.output_contract and getattr(st.output_contract, "verify", None)
-                else ""
-            )
+            scope = getattr(st, "scope", []) or []
+            scope_str = ", ".join(f"`{s}`" for s in scope) if scope else "General workspace"
+            deps = getattr(st, "depends_on", []) or []
+            deps_str = ", ".join(f"`{d}`" for d in deps) if deps else "None (independent)"
+            contract = getattr(st, "output_contract", None)
+            verify_list = getattr(contract, "verify", None) if contract and not isinstance(contract, str) else None
+            verify_cmds = ", ".join(f"`{v}`" for v in verify_list) if verify_list else ""
 
             st_block = [f"#### {i}. `{st.id}`: {st.goal}"]
             st_block.append(f"- **Scope**: {scope_str}")
             st_block.append(f"- **Dependencies**: {deps_str}")
             if verify_cmds:
                 st_block.append(f"- **Verification**: {verify_cmds}")
-            if st.constraints:
-                st_block.append(f"- **Constraints**: {'; '.join(st.constraints)}")
+            constraints = getattr(st, "constraints", []) or []
+            if constraints:
+                st_block.append(f"- **Constraints**: {'; '.join(constraints)}")
+            verified_ctx = getattr(st, "verified_context", None)
             if findings:
                 st_block.append(f"- **Analyst Findings & Key Symbols**:\n  {findings}")
-            elif st.verified_context:
-                st_block.append(f"- **Verified Context**:\n  " + "\n  ".join(f"• {c}" for c in st.verified_context))
+            elif verified_ctx:
+                st_block.append(f"- **Verified Context**:\n  " + "\n  ".join(f"• {c}" for c in verified_ctx))
             sections.append("\n".join(st_block))
 
     if compacted and not subtasks:

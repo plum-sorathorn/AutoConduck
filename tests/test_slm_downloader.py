@@ -68,7 +68,7 @@ def test_render_slm_rows(tmp_path):
         cursor=0,
         target_dir=tmp_path,
     )
-    assert "> [x] Qwen 2.5 Coder 0.5B Instruct (Recommended)" in rendered
+    assert "(*) Qwen 2.5 Coder 0.5B Instruct (Recommended)" in rendered
     assert "Qwen 2.5 Coder 1.5B Instruct" in rendered
     assert "LFM 2.5 1.2B Instruct" in rendered
     assert "Skip / Built-in Heuristic Fallback" in rendered
@@ -83,7 +83,7 @@ def test_render_slm_rows(tmp_path):
         cursor=0,
         target_dir=tmp_path,
     )
-    assert "[Installed]" in rendered_installed
+    assert "(Installed)" in rendered_installed
 
 
 def test_integrate_slm_model(tmp_path):
