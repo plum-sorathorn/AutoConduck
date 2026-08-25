@@ -121,6 +121,59 @@ class SLMPlanner:
             fallback_used=True,
         )
 
+    def create_escalation_plan(self, messages: list[dict[str, Any]], reason: str = "") -> ExecutionPlan:
+        """Create an intelligent escalation recovery plan that uncaps max_cost and mandates reasoning."""
+        last_tool = "tool"
+        for m in reversed(messages):
+            if isinstance(m, dict) and m.get("role") in ("tool", "function"):
+                last_tool = str(m.get("name") or "tool")
+                break
+
+        subtasks = [
+            SubTaskSpec(
+                id="diagnose_failure",
+                goal=f"Analyze error traceback and stagnation root-cause on {last_tool}",
+                role="recon",
+                depends_on=[],
+            ),
+            SubTaskSpec(
+                id="remediate_loop",
+                goal="Formulate precise code modification or alternative tool action to break failure loop",
+                role="edit",
+                depends_on=["diagnose_failure"],
+            ),
+            SubTaskSpec(
+                id="verify_recovery",
+                goal="Verify resolution without repeating the previous error state",
+                role="verify",
+                depends_on=["remediate_loop"],
+            ),
+        ]
+        return ExecutionPlan(
+            route="dynamic_dag",
+            confidence=0.95,
+            task_type="debug",
+            suggested_sla=CapabilitySLA(
+                min_context=32000,
+                requires_reasoning=True,
+                requires_tools=True,
+                min_capability_score=0.45,
+                max_cost=float("inf"),
+            ),
+            synthesizer_sla=CapabilitySLA(
+                requires_reasoning=True,
+                requires_tools=True,
+                min_capability_score=0.45,
+                max_cost=float("inf"),
+                min_output_tokens=8192,
+            ),
+            needs_rag=False,
+            rag_queries=[],
+            subtasks=subtasks,
+            rationale=reason or "Stagnation escalation recovery plan",
+            fallback_used=False,
+        )
+
     def _raw_infer(self, messages: list[dict[str, Any]], config: Any = None) -> str | dict[str, Any]:
         """Perform SLM inference or structured generation."""
         text = self._extract_user_text(messages)

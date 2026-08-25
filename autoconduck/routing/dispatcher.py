@@ -72,11 +72,9 @@ def route(
         tier = "capability_sla"
         reason = f"stagnation_escalation: {guard_res.stagnation_reason}"
         planner = SLMPlanner()
-        plan = planner._create_fallback_plan(
+        plan = planner.create_escalation_plan(
             messages, reason=f"stagnation_escalation: {guard_res.stagnation_reason}"
         )
-        plan.route = "dynamic_dag"
-        plan.suggested_sla = CapabilitySLA(requires_reasoning=True, requires_tools=True, min_capability_score=0.45)
         model = pricing.select_for_sla(plan.suggested_sla, config=config, pseudo_model=pseudo_model) or resolve_orchestrator_model(config)
 
     else:
