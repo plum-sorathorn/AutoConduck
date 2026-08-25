@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from autoconduck.config.resolver import resolve_orchestrator_model
-from autoconduck.routing.model_pool import ModelPool, CapabilitySLA
+from autoconduck.routing.model_pool import ModelPool, CapabilitySLA, SelectionInfo
 
 logger = logging.getLogger(__name__)
 
@@ -45,3 +45,11 @@ def select_for_sla(
         pool = ModelPool(config)
         return pool.select_by_sla(sla, pseudo_model)
     return resolve_orchestrator_model(config)
+
+
+def select_for_sla_detailed(
+    sla: CapabilitySLA, config: Any = None, pseudo_model: str = "autoconduck"
+) -> SelectionInfo:
+    if config:
+        return ModelPool(config).select_by_sla_detailed(sla, pseudo_model)
+    return SelectionInfo(model=resolve_orchestrator_model(config))

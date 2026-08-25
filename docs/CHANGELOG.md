@@ -1,5 +1,17 @@
 # AutoConduck Changelog
 
+## [0.3.5] - 2026-08-25
+
+### Model Selection Overhaul
+- **Turn Guard false-positive fix (`server/turn_guard.py`)**: Removed the "complexity drift" escalation (>10 distinct files / >30 tool turns) that misclassified healthy multi-file tool loops as stagnant, causing runaway replanning and Dynamic-DAG recompilation (the grok-4.6 cost incident). Healthy tool loops now stay on DIRECT_ACTIVE_TIER; only 3+ identical calls or 2+ consecutive errors escalate.
+- **Capability-vector scoring (`routing/model_pool.py`)**: Replaced the 1D `capability_score` gate with a 4-dim `capability_vector` (reasoning, tool_reliability, code_quality, latency_class) scored by `capability_fit()` (min-with-bonus), weighted per SLM `task_type` via `TASK_TYPE_WEIGHTS`. Selection is now "fit-gate then cheapest"; legacy scalar entries fall back compatibly.
+- **Confidence-tightened floor (`routing/dispatcher.py:_select_planned`)**: Low SLM `plan.confidence` raises the capability floor (`min(base + 0.15*(1-conf), 0.6)`).
+- **Opt-in per-selection price cap (`CapabilitySLA.max_price_usd_per_mtok`, config `selection.path_price_cap_usd_per_mtok`)**: Reframed the earlier "USD/min" ceiling into an honest per-1M-token price cap, DISABLED by default ({}). Not a spend meter; falls back to cheapest available with `fallback_reason="price_cap_emptied_pool"`.
+- **Explainability (`SelectionInfo`/`RoutingDecision` → `/stats`)**: candidates_considered, candidates_excluded_by, binding_constraint, capability_fit_applied, binding_capability_dim, spend_cap_engaged, fallback_reason.
+
+### Notes
+- Version bumps now via `python scripts/bump_version.py --patch`.
+
 ## [0.3.4] - 2026-08-25
 
 ### Fixes & Reliability Enhancements

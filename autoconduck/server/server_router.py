@@ -157,6 +157,12 @@ async def route_target(
                     "tier": tier,
                     "model": model or body_model,
                     "time": time.time(),
+                    "candidates_considered": getattr(decision, "candidates_considered", 0),
+                    "candidates_excluded_by": getattr(decision, "candidates_excluded_by", None),
+                    "binding_constraint": getattr(decision, "binding_constraint", None),
+                    "min_capability_score_applied": getattr(decision, "min_capability_score_applied", 0.0),
+                    "spend_cap_engaged": getattr(decision, "spend_cap_engaged", False),
+                    "fallback_reason": getattr(decision, "fallback_reason", None),
                 }
             )
         logging.getLogger("autoconduck").info(

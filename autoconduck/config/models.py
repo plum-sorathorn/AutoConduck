@@ -24,6 +24,7 @@ class ModelEntry(BaseModel):
     enabled: bool = True
     max_usd_per_min: float | None = None
     capability_score: float = 0.0
+    capability_vector: dict[str, float] | None = None
 
 
 class SelectionConfig(BaseModel):
@@ -66,6 +67,12 @@ class SelectionConfig(BaseModel):
     spend_guard_enabled: bool = True
     spend_guard_max_usd_per_min: float = 0.20
     spend_guard_window_s: int = 300
+    path_price_cap_usd_per_mtok: dict[str, float] = Field(
+        default_factory=dict
+    )
+    confidence_floor_k: float = 0.15
+    confidence_floor_max: float = 0.6
+    max_pool_size: int = 200
     tiebreaker_enabled: bool = False
     tiebreaker_min_complexity: float = 0.45
     budget_tiebreaker_min_complexity: float = 0.65
