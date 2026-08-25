@@ -30,6 +30,10 @@ def is_degraded(model_id: str) -> bool:
     """Placeholder for health checking degraded models."""
     return False
 
+def record_error(model_id: str) -> None:
+    """Placeholder for recording a model failure."""
+    pass
+
 
 def select_for_sla(
     sla: CapabilitySLA,

@@ -164,6 +164,9 @@ def _run_supervisor(
 
     log_path = home_dir() / "run" / "server.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    pidfile = config.run_dir() / "server.pid"
+    pidfile.parent.mkdir(parents=True, exist_ok=True)
+    pidfile.write_text(str(os.getpid()))
     stopping = False
     child = None
     job = _create_kill_on_close_job()
@@ -263,6 +266,10 @@ def _run_supervisor(
     finally:
         restore_handlers()
         try:
+            pidfile.unlink()
+        except OSError:
+            pass
+        try:
             child_path.unlink()
         except OSError:
             pass
@@ -273,11 +280,16 @@ def _run_supervisor(
                 pass
 
 
-def _check_port_available(port: int) -> None:
-    from autoconduck.launcher import find_process_on_port, kill_process, prompt_kill_port
+def _check_port_available(port: int, host: str = "127.0.0.1") -> None:
+    from autoconduck.launcher import (
+        find_process_on_port, kill_process, prompt_kill_port,
+        get_parent_pid, wait_for_port_free, is_port_bindable, _pid_alive,
+    )
 
     pid = find_process_on_port(port)
     if pid is None:
+        if not is_port_bindable(port, host):
+            wait_for_port_free(port, host, timeout=1.0)
         return
     if os.environ.get("AUTOCONDUCK_SUPERVISED") == "1":
         print(
@@ -285,9 +297,14 @@ def _check_port_available(port: int) -> None:
             file=sys.stderr,
         )
         raise SystemExit(1)
-    if prompt_kill_port(port, pid) and kill_process(pid):
-        print(f"Killed process {pid} using port {port}", file=sys.stderr)
-        return
+    if prompt_kill_port(port, pid):
+        ppid = get_parent_pid(pid)
+        if ppid is not None and ppid > 0 and _pid_alive(ppid):
+            kill_process(ppid)
+        if kill_process(pid):
+            print(f"Killed process {pid} using port {port}", file=sys.stderr)
+            wait_for_port_free(port, host, timeout=3.0)
+            return
     print(f"Port {port} is in use by PID {pid}; kill it and retry", file=sys.stderr)
     raise SystemExit(1)
 

@@ -99,10 +99,11 @@ def shim_script(agent_id, real_bin):
     elif agent_id == "opencode":
         bash_env, _ = _opencode_env_blocks(cfg.port, pseudo)
         lines.append(bash_env)
-    lines.append('"$PY" -m autoconduck ensure --port "$PORT" || true')
+    lines.append('SHIM_ID="$$"')
+    lines.append('"$PY" -m autoconduck ensure --port "$PORT" --client-id "$SHIM_ID" || true')
     lines.append('"$REAL_BIN" "$@"')
     lines.append("rc=$?")
-    lines.append('"$PY" -m autoconduck release --port "$PORT" || true')
+    lines.append('"$PY" -m autoconduck release --port "$PORT" --client-id "$SHIM_ID" || true')
     lines.append("exit $rc")
     return "\n".join(lines) + "\n"
 
@@ -131,10 +132,11 @@ def shim_script_win(agent_id, real_bin):
     elif agent_id == "opencode":
         _, cmd_env = _opencode_env_blocks(cfg.port, pseudo)
         lines.append(cmd_env)
-    lines.append('"%PY%" -m autoconduck ensure --port %PORT%')
+    lines.append('set "SHIM_ID=%RANDOM%%RANDOM%%RANDOM%"')
+    lines.append('"%PY%" -m autoconduck ensure --port %PORT% --client-id %SHIM_ID%')
     lines.append('"%REAL_BIN%" %*')
     lines.append("set RC=%ERRORLEVEL%")
-    lines.append('"%PY%" -m autoconduck release --port %PORT%')
+    lines.append('"%PY%" -m autoconduck release --port %PORT% --client-id %SHIM_ID%')
     lines.append("exit /b %RC%")
     return "\n".join(lines) + "\n"
 

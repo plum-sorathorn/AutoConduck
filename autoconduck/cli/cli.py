@@ -13,6 +13,14 @@ from autoconduck.config import get_config, load_config, save_config, home_dir
 from autoconduck.server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
 from .cli_launch import cmd_launch_agent, cmd_install, cmd_tune, _open_new_terminal
 
+def _invoke_check_port(port: int, host: str = "127.0.0.1") -> None:
+    fn = getattr(sys.modules.get(__name__), "_check_port_available", _check_port_available)
+    try:
+        return fn(port, host)
+    except TypeError:
+        return fn(port)
+
+
 def cmd_start(args):
     flags = [
         getattr(args, "claude", False),
@@ -37,7 +45,7 @@ def cmd_start(args):
     # never as a side effect of starting the API or opening the TUI.
     if getattr(args, "headless", False):
         if getattr(args, "daemon", False):
-            _check_port_available(port)
+            _invoke_check_port(port, getattr(args, "host", "127.0.0.1"))
             log = home_dir() / "run" / "server.log"
             log.parent.mkdir(parents=True, exist_ok=True)
             from autoconduck.launcher import daemon_python
@@ -123,12 +131,12 @@ def cmd_start(args):
         if getattr(args, "supervisor", False):
             _run_supervisor(port, cfg.log_level, args.host)
             return
-        _check_port_available(port)
+        _invoke_check_port(port, getattr(args, "host", "127.0.0.1"))
         _run_proxy(
             port, cfg.log_level, args.host
         ) if args.host != "127.0.0.1" else _run_proxy(port, cfg.log_level)
     else:
-        _check_port_available(port)
+        _invoke_check_port(port, getattr(args, "host", "127.0.0.1"))
         try:
             from autoconduck.tui.app import AutoConduckApp
             is_configured = bool(
@@ -144,7 +152,7 @@ def cmd_start(args):
                 agent_id = res.split("launch:", 1)[1]
                 cmd_launch_agent(agent_id)
         except (ImportError, RuntimeError):
-            _check_port_available(port)
+            _invoke_check_port(port, getattr(args, "host", "127.0.0.1"))
             _run_proxy(
                 port, cfg.log_level, args.host
             ) if args.host != "127.0.0.1" else _run_proxy(port, cfg.log_level)
@@ -301,10 +309,10 @@ def cmd_update(args):
         print(f"Upgrade finished with exit code {res.returncode}.")
 def cmd_ensure(args):
     from autoconduck import launcher
-    launcher.ensure_server(args.port)
+    launcher.ensure_server(args.port, getattr(args, "client_id", None))
 def cmd_release(args):
     from autoconduck import launcher
-    launcher.release_server(args.port)
+    launcher.release_server(args.port, getattr(args, "client_id", None))
 def cmd_stop(args):
     from autoconduck import launcher
     launcher.stop_server(args.port)
@@ -365,6 +373,7 @@ def main(argv: list[str] | None = None):
     ):
         p = sub.add_parser(name)
         p.add_argument("--port", type=int)
+        p.add_argument("--client-id", type=str, default=None)
         p.set_defaults(handler=func)
     stats_parser = sub.add_parser("stats")
     stats_parser.add_argument("--json", action="store_true")

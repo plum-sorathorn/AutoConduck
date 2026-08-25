@@ -35,8 +35,8 @@ def _run_supervisor(
     return _impl._run_supervisor(port, log_level, host, child_cmd)
 
 
-def _check_port_available(port: int) -> bool:
-    return _impl._check_port_available(port)
+def _check_port_available(port: int, host: str = "127.0.0.1") -> Any:
+    return _impl._check_port_available(port, host)
 
 
 def _find_free_port(start: int, tries: int = 11) -> int:
