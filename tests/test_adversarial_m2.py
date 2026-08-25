@@ -38,8 +38,8 @@ from autoconduck.orchestrator.session_guard import (
     _count_tokens_text,
 )
 from autoconduck.knowledge.vector_store import KnowledgeVectorStore
-from autoconduck.knowledge.models import CodeChunk, QueryResult
-from autoconduck.routing.slm_planner import ExecutionPlan, SubTaskSpec, ModelTier
+from autoconduck.routing.slm_planner import ExecutionPlan, SubTaskSpec
+from autoconduck.routing.model_pool import CapabilitySLA
 from autoconduck.orchestrator.dynamic_factory import (
     DynamicState,
     build_dynamic_graph,
@@ -527,14 +527,14 @@ async def test_dynamic_factory_rag_node_state_budget_invariance():
         route="dynamic_dag",
         confidence=0.95,
         task_type="refactor",
-        suggested_tier=ModelTier.BALANCED,
+        suggested_sla=CapabilitySLA(min_context=32000, requires_tools=True),
         needs_rag=True,
         rag_queries=["API contracts", "pricing calculation", "session guard invariants"],
         subtasks=[
             SubTaskSpec(id="recon_task", goal="Inspect contracts", role="recon"),
             SubTaskSpec(id="edit_task", goal="Refactor implementation", role="edit", depends_on=["recon_task"]),
         ],
-        synthesizer_tier=ModelTier.FRONTIER_REASONING,
+        synthesizer_sla=CapabilitySLA(requires_reasoning=True),
         rationale="Multi-phase refactor requiring repository context",
     )
 

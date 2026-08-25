@@ -1,8 +1,8 @@
 """Unified updater for all model presets and the catalog documentation."""
+
 from __future__ import annotations
 
 import json
-import re
 import socket
 import sys
 import urllib.request
@@ -35,7 +35,9 @@ ENV_KEYS = {
 def fetch_upstream_litellm_costs() -> dict[str, dict[str, Any]]:
     """Fetch the latest upstream LiteLLM model database."""
     try:
-        req = urllib.request.Request(UPSTREAM_LITELLM_URL, headers={"User-Agent": "autoconduck/1.0"})
+        req = urllib.request.Request(
+            UPSTREAM_LITELLM_URL, headers={"User-Agent": "autoconduck/1.0"}
+        )
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             out = {}
@@ -43,14 +45,18 @@ def fetch_upstream_litellm_costs() -> dict[str, dict[str, Any]]:
                 if isinstance(v, dict) and "input_cost_per_token" in v:
                     out[k] = {
                         "price_in": float(v.get("input_cost_per_token", 0)) * 1_000_000,
-                        "price_out": float(v.get("output_cost_per_token", 0)) * 1_000_000,
+                        "price_out": float(v.get("output_cost_per_token", 0))
+                        * 1_000_000,
                         "provider": v.get("litellm_provider", "openai"),
                         "mode": v.get("mode", "chat"),
                     }
             return out
     except Exception as exc:
-        print(f"Warning: could not fetch upstream LiteLLM database ({exc}); using installed package.")
+        print(
+            f"Warning: could not fetch upstream LiteLLM database ({exc}); using installed package."
+        )
         from autoconduck.model_presets import _ingest_litellm_costs
+
         return _ingest_litellm_costs()
 
 
@@ -58,10 +64,12 @@ def fetch_devpass_models(costs: dict[str, dict]) -> list[dict[str, Any]]:
     """Fetch models from DevPass endpoint or fallback."""
     try:
         from scripts.sync_devpass_presets import fetch_devpass_catalog
+
         return fetch_devpass_catalog()
     except Exception as exc:
         print(f"Warning: could not fetch DevPass models ({exc}); using fallback.")
         from autoconduck.presets.presets_fallback import FALLBACK_PRESETS
+
         entries = []
         for row in FALLBACK_PRESETS.get("llmgateway", []):
             copy_row = dict(row)
@@ -74,36 +82,68 @@ def fetch_devpass_models(costs: dict[str, dict]) -> list[dict[str, Any]]:
 def fetch_llmgateway_models(costs: dict[str, dict]) -> list[dict[str, Any]]:
     """Fetch models from LLMGateway or fallback."""
     try:
-        req = urllib.request.Request(LLMGATEWAY_MODELS_URL, headers={"User-Agent": "autoconduck/1.0"})
+        req = urllib.request.Request(
+            LLMGATEWAY_MODELS_URL, headers={"User-Agent": "autoconduck/1.0"}
+        )
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         entries = []
+        from autoconduck.model_presets import normalize_model_id_for_provider
+
         for model in data.get("data", []):
-            mid = model["id"]
-            if any(x in mid for x in ("embedding", "image", "video", "tts", "stt", "transcribe", "reranker", "audio")):
+            mid = normalize_model_id_for_provider(model["id"], "llmgateway")
+            if any(
+                x in mid
+                for x in (
+                    "embedding",
+                    "image",
+                    "video",
+                    "tts",
+                    "stt",
+                    "transcribe",
+                    "reranker",
+                    "audio",
+                )
+            ):
                 continue
-            info = costs.get(mid) or costs.get(f"llmgateway/{mid}") or {}
+            info = (
+                costs.get(mid)
+                or costs.get(f"llmgateway/{mid}")
+                or costs.get(model["id"])
+                or {}
+            )
             p_in = info.get("price_in", 0.0)
             p_out = info.get("price_out", 0.0)
-            tier = "expensive" if p_out >= 20.0 else "budget" if p_out < 3.0 else "balanced"
-            entries.append({
-                "id": mid,
-                "provider": "llmgateway",
-                "tier": tier,
-                "price_in": round(p_in, 4),
-                "price_out": round(p_out, 4),
-                "api_key_env": "LLMGATEWAY_API_KEY",
-                "base_url": "https://api.llmgateway.io",
-            })
+            tier = (
+                "expensive"
+                if p_out >= 20.0
+                else "budget"
+                if p_out < 3.0
+                else "balanced"
+            )
+            entries.append(
+                {
+                    "id": mid,
+                    "provider": "llmgateway",
+                    "tier": tier,
+                    "price_in": round(p_in, 4),
+                    "price_out": round(p_out, 4),
+                    "api_key_env": "LLMGATEWAY_API_KEY",
+                    "base_url": "https://api.llmgateway.io",
+                }
+            )
         if entries:
             return entries
     except Exception as exc:
         print(f"Warning: could not fetch LLMGateway models ({exc}); using fallback.")
     from autoconduck.presets.presets_fallback import FALLBACK_PRESETS
+
     return list(FALLBACK_PRESETS.get("llmgateway", []))
 
 
-def build_provider_presets(costs: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+def build_provider_presets(
+    costs: dict[str, dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
     """Curate top models for standard providers directly from the upstream registry."""
     # Preferred curated model shortlist per provider
     provider_curations = {
@@ -187,15 +227,25 @@ def build_provider_presets(costs: dict[str, dict[str, Any]]) -> dict[str, list[d
             info = costs.get(mid) or costs.get(f"{provider}/{mid}") or {}
             p_in = info.get("price_in", 0.0)
             p_out = info.get("price_out", 0.0)
-            tier = "expensive" if p_out >= 20.0 else "budget" if p_out < 3.0 else "balanced"
-            rows.append({
-                "id": mid,
-                "provider": provider,
-                "tier": tier,
-                "price_in": round(p_in, 4),
-                "price_out": round(p_out, 4),
-                "api_key_env": ENV_KEYS.get(provider, f"{provider.upper()}_API_KEY"),
-            })
+            tier = (
+                "expensive"
+                if p_out >= 20.0
+                else "budget"
+                if p_out < 3.0
+                else "balanced"
+            )
+            rows.append(
+                {
+                    "id": mid,
+                    "provider": provider,
+                    "tier": tier,
+                    "price_in": round(p_in, 4),
+                    "price_out": round(p_out, 4),
+                    "api_key_env": ENV_KEYS.get(
+                        provider, f"{provider.upper()}_API_KEY"
+                    ),
+                }
+            )
         presets[provider] = rows
 
     return presets
@@ -206,7 +256,9 @@ def sync_all():
     costs = fetch_upstream_litellm_costs()
     print(f"   Fetched pricing for {len(costs)} models.")
 
-    print("2. Building curated presets for Anthropic, OpenAI, Google, Mistral, DeepSeek...")
+    print(
+        "2. Building curated presets for Anthropic, OpenAI, Google, Mistral, DeepSeek..."
+    )
     presets = build_provider_presets(costs)
 
     print("3. Fetching DevPass models from https://devpass.llmgateway.io/models...")

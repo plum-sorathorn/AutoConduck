@@ -12,15 +12,6 @@ AGENT_ALIASES: dict[str, str] = {
     "opencode": "opencode",
     "open-code": "opencode",
     "pi": "pi",
-    "aider": "aider",
-    "cursor": "cursor",
-    "continue": "continue_dev",
-    "continue_dev": "continue_dev",
-    "continue-dev": "continue_dev",
-    "kilocode": "kilocode",
-    "kilo-code": "kilocode",
-    "openai": "generic_openai",
-    "generic_openai": "generic_openai",
 }
 
 
@@ -309,10 +300,6 @@ def cmd_launch_agent(agent_id: str, port: int | None = None, new_terminal: bool 
         env["OPENAI_BASE_URL"] = f"http://127.0.0.1:{port}/v1"
         env["OPENAI_API_KEY"] = "autoconduck-local"
         env["OPENCODE_MODEL"] = f"autoconduck/{pseudo}"
-    elif agent_id == "aider":
-        env["OPENAI_API_BASE"] = f"http://127.0.0.1:{port}/v1"
-        env["OPENAI_API_KEY"] = "autoconduck-local"
-        env["AIDER_MODEL"] = f"openai/{pseudo}"
     elif agent_id == "pi":
         env["AI_AGENT"] = "pi"
         env["PI_CODING_AGENT"] = "true"

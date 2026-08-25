@@ -3,7 +3,8 @@ from typing import Literal, Any
 import os
 from urllib.parse import urlsplit
 from . import pricing
-from autoconduck.routing.slm_planner import SLMPlanner, ExecutionPlan, ModelTier
+from autoconduck.routing.model_pool import CapabilitySLA
+from autoconduck.routing.slm_planner import SLMPlanner, ExecutionPlan, SubTaskSpec
 from autoconduck.server.turn_guard import TurnGuard, TurnAction, TurnClassificationResult
 
 
@@ -57,14 +58,10 @@ def route(
             t in last_tool
             for t in ["read", "glob", "list", "grep", "bash", "status", "diff", "command", "file", "view", "tool"]
         )
-        target_tier = ModelTier.CHEAP_FAST if is_routine_tool else ModelTier.BALANCED
-        tier = target_tier.value
         reason = f"tool_loop_bypass: {guard_res.last_tool_name or 'tool'}"
-        model = pricing.select_for_tier(
-            target_tier, config=config, pseudo_model=pseudo_model
-        ) or pricing.select_closest(
-            pricing.pool_ids(config), 0.2, config, pseudo_model=pseudo_model
-        ) or resolve_orchestrator_model(config)
+        sla = CapabilitySLA(min_context=16000, requires_tools=True, max_cost=1.0 if is_routine_tool else 3.0)
+        model = pricing.select_for_sla(sla, config=config, pseudo_model=pseudo_model) or resolve_orchestrator_model(config)
+        tier = "capability_sla"
 
     elif guard_res.target_action == TurnAction.ESCALATE_SLM:
         path = "slow"
@@ -72,19 +69,15 @@ def route(
         confidence_band = "slow"
         confidence = 0.95
         complexity = 0.85
-        tier = ModelTier.FRONTIER_REASONING.value
+        tier = "capability_sla"
         reason = f"stagnation_escalation: {guard_res.stagnation_reason}"
         planner = SLMPlanner()
         plan = planner._create_fallback_plan(
             messages, reason=f"stagnation_escalation: {guard_res.stagnation_reason}"
         )
         plan.route = "dynamic_dag"
-        plan.suggested_tier = ModelTier.FRONTIER_REASONING
-        model = pricing.select_for_tier(
-            ModelTier.FRONTIER_REASONING, config=config, pseudo_model=pseudo_model
-        ) or pricing.select_closest(
-            pricing.pool_ids(config), 0.85, config, pseudo_model=pseudo_model
-        ) or resolve_orchestrator_model(config)
+        plan.suggested_sla = CapabilitySLA(requires_reasoning=True, requires_tools=True)
+        model = pricing.select_for_sla(plan.suggested_sla, config=config, pseudo_model=pseudo_model) or resolve_orchestrator_model(config)
 
     else:
         # Step 2: Embedded SLM Task Architect (<100ms circuit breaker)
@@ -97,43 +90,21 @@ def route(
             confidence_band = "slow"
             confidence = plan.confidence
             complexity = 0.85 if plan.task_type in ("refactor", "full_workflow") else 0.75
-            tier = (
-                plan.synthesizer_tier.value
-                if hasattr(plan.synthesizer_tier, "value")
-                else str(plan.synthesizer_tier)
-            )
+            tier = "capability_sla"
             reason = plan.rationale or f"dynamic_dag_{plan.task_type}"
-            model = pricing.select_for_tier(
-                plan.synthesizer_tier, config=config, pseudo_model=pseudo_model
-            ) or pricing.select_closest(
-                pricing.pool_ids(config), 0.85, config, pseudo_model=pseudo_model
+            model = pricing.select_for_sla(
+                plan.synthesizer_sla, config=config, pseudo_model=pseudo_model
             ) or resolve_orchestrator_model(config)
         else:
             path = "fast"
             route_name = "fast_direct"
             confidence_band = "fast"
             confidence = plan.confidence
-            complexity = (
-                0.1
-                if plan.suggested_tier == ModelTier.CHEAP_FAST
-                else (0.2 if plan.suggested_tier == ModelTier.BALANCED else 0.5)
-            )
-            tier = (
-                plan.suggested_tier.value
-                if hasattr(plan.suggested_tier, "value")
-                else str(plan.suggested_tier)
-            )
+            complexity = 0.2
+            tier = "capability_sla"
             reason = plan.rationale or f"fast_direct_{plan.task_type}"
-            selection = getattr(config, "selection", config)
-            max_fast_cost = float(getattr(selection, "fast_path_max_scaled_cost", 0.50))
-            model = pricing.select_for_tier(
-                plan.suggested_tier, config=config, pseudo_model=pseudo_model
-            ) or pricing.select_closest(
-                pricing.pool_ids(config),
-                min(max_fast_cost, complexity),
-                config,
-                pseudo_model=pseudo_model,
-                max_scaled_cost=max_fast_cost,
+            model = pricing.select_for_sla(
+                plan.suggested_sla, config=config, pseudo_model=pseudo_model
             ) or resolve_orchestrator_model(config)
 
     if model:
@@ -141,7 +112,7 @@ def route(
             from ..stats import record_selection
             record_selection(
                 complexity,
-                pricing.target_scaled_cost(complexity, pseudo_model, config),
+                0.5,
                 model,
                 config,
             )
@@ -162,30 +133,20 @@ def route(
 
 
 def pick_fast_model(body_model: str = "autoconduck", cfg: Any = None) -> str:
-    """Pick an economical fast model within the fast path budget ceiling."""
+    """Pick an economical fast model within the capability SLA."""
     if cfg is None:
         from ..config import get_config
         cfg = get_config()
     try:
         from ..config import resolve_orchestrator_model
-        selection = getattr(cfg, "selection", cfg)
-        max_fast_cost = getattr(selection, "fast_path_max_scaled_cost", 0.50)
-        try:
-            max_fast_cost = float(max_fast_cost)
-        except (TypeError, ValueError):
-            max_fast_cost = 0.50
         return (
-            pricing.select_closest(
-                pricing.pool_ids(cfg),
-                0.15,
-                cfg,
+            pricing.select_for_sla(
+                CapabilitySLA(min_context=16000, requires_tools=True, max_cost=1.0),
+                config=cfg,
                 pseudo_model=body_model,
-                max_scaled_cost=max_fast_cost,
             )
             or resolve_orchestrator_model(cfg)
         )
     except Exception:
         from ..config import resolve_orchestrator_model
         return resolve_orchestrator_model(cfg)
-
-

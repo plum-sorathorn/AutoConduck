@@ -6,14 +6,12 @@ from fastapi.testclient import TestClient
 from autoconduck import main, server_streaming
 from autoconduck.config import Config
 from autoconduck.jsonutil import parse_json_text
-from autoconduck.messages_api import (
-    AnthropicSSETranslator,
-    anthropic_response_text,
-    count_tokens,
+from autoconduck.server.messages_api import (
     openai_messages_from_anthropic,
     openai_tool_choice_from_anthropic,
     openai_tools_from_anthropic,
 )
+from autoconduck.server.messages_sse import AnthropicSSETranslator, anthropic_response_text, count_tokens
 
 
 @pytest.fixture

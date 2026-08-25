@@ -6,15 +6,17 @@ OpenAI-style streaming chunks into Anthropic SSE events. Nothing here touches
 the network or imports fastapi/litellm, so it stays importable and testable
 in isolation.
 """
+
 from __future__ import annotations
 
 import json
-import os
-import uuid
 from typing import Any
+
 from autoconduck.config import normalize_api_base, qualify_model, resolve_api_key
+from autoconduck.presets import normalize_model_id_for_provider
 
 from .messages_models import PSEUDO_MODELS
+from .messages_sse import AnthropicSSETranslator, anthropic_response_text, count_tokens
 
 STOP_REASON_MAP: dict[Any, Any] = {
     "stop": "end_turn",
@@ -78,13 +80,17 @@ def openai_messages_from_anthropic(body: dict) -> list[dict]:
         if isinstance(content, str):
             entry: dict[str, Any] = {"role": role, "content": content}
             if role == "assistant":
-                entry["reasoning_content"] = msg.get("reasoning_content") or msg.get("thinking") or ""
+                entry["reasoning_content"] = (
+                    msg.get("reasoning_content") or msg.get("thinking") or ""
+                )
             messages.append(entry)
             continue
         if not isinstance(content, list):
             entry = {"role": role, "content": ""}
             if role == "assistant":
-                entry["reasoning_content"] = msg.get("reasoning_content") or msg.get("thinking") or ""
+                entry["reasoning_content"] = (
+                    msg.get("reasoning_content") or msg.get("thinking") or ""
+                )
             messages.append(entry)
             continue
 
@@ -140,7 +146,11 @@ def openai_messages_from_anthropic(body: dict) -> list[dict]:
                 content_parts.append({"type": "image_url", "image_url": {"url": url}})
             # Unknown block types are silently skipped.
 
-        thinking_str = "".join(thinking_parts) if thinking_parts else (msg.get("reasoning_content") or msg.get("thinking") or "")
+        thinking_str = (
+            "".join(thinking_parts)
+            if thinking_parts
+            else (msg.get("reasoning_content") or msg.get("thinking") or "")
+        )
         if tool_calls:
             entry = {
                 "role": role,
@@ -212,7 +222,6 @@ def openai_tools_from_anthropic(tools: Any) -> list[dict]:
     return sanitize_tools(result)
 
 
-
 def openai_tool_choice_from_anthropic(choice: Any) -> Any:
     """Translate Anthropic tool_choice values accepted by OpenAI APIs."""
     if choice == "any":
@@ -249,10 +258,16 @@ def custom_entry(cfg, model_id: str) -> dict | None:
         params = entry.get("litellm_params")
         if not candidate and isinstance(params, dict):
             candidate = params.get("model") or params.get("model_name")
-        return bool(candidate) and str(candidate).removeprefix("openai/") == str(model_id).removeprefix("openai/")
+        return bool(candidate) and str(candidate).removeprefix("openai/") == str(
+            model_id
+        ).removeprefix("openai/")
 
     for entry in _configured_model_sources(cfg):
-        if isinstance(entry, dict) and entry.get("enabled", True) is not False and matches(entry):
+        if (
+            isinstance(entry, dict)
+            and entry.get("enabled", True) is not False
+            and matches(entry)
+        ):
             return entry
     return None
 
@@ -292,6 +307,12 @@ def litellm_params_for(model_id: str, cfg) -> dict:
         or entry.get("id")
         or model_id
     )
+    # Normalise the model ID for gateway providers (devpass / llmgateway).
+    # This catches both the entry-id path and the fallback-to-model_id path.
+    raw_model_normalized = normalize_model_id_for_provider(
+        str(raw_model), str(provider or "")
+    )
+
     if "/" in str(raw_model):
         qual_model = str(raw_model)
     elif provider:
@@ -304,11 +325,11 @@ def litellm_params_for(model_id: str, cfg) -> dict:
         except Exception:
             pass
         if is_known_provider:
-            qual_model = f"{provider}/{model_id}"
+            qual_model = f"{provider}/{raw_model_normalized}"
         else:
-            qual_model = str(model_id)
+            qual_model = raw_model_normalized
     else:
-        qual_model = str(model_id)
+        qual_model = raw_model_normalized
 
     qual_model = qualify_model(qual_model)
 
@@ -325,10 +346,7 @@ def litellm_params_for(model_id: str, cfg) -> dict:
 
 def messages_litellm_kwargs(model_id: str, extra: dict | None = None) -> dict:
     from autoconduck.config import qualify_model
+
     kwargs = dict(extra or {})
     kwargs["model"] = qualify_model(model_id)
     return kwargs
-
-
-
-from .messages_sse import AnthropicSSETranslator, anthropic_response_text, count_tokens

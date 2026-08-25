@@ -16,7 +16,8 @@ from typing import Any
 import pytest
 
 from autoconduck.server.turn_guard import TurnAction, TurnClassificationResult, TurnGuard
-from autoconduck.routing.slm_planner import ExecutionPlan, ModelTier, SLMPlanner, SubTaskSpec
+from autoconduck.routing.slm_planner import ExecutionPlan, SLMPlanner, SubTaskSpec
+from autoconduck.routing.model_pool import CapabilitySLA
 from autoconduck.orchestrator.dynamic_factory import DynamicState, build_dynamic_graph
 from autoconduck._compat.sqlite_checkpointer import get_sqlite_checkpointer
 
@@ -256,8 +257,8 @@ class TestSLMPlannerAdversarial:
             json.dumps({"confidence": 0.9, "task_type": "chat"}),
             # 4. Invalid enum for route
             json.dumps({"route": "invalid_route_type", "task_type": "chat"}),
-            # 5. Invalid enum for suggested_tier
-            json.dumps({"route": "fast_direct", "suggested_tier": "mega_tier"}),
+            # 5. Invalid type for suggested_sla
+            json.dumps({"route": "fast_direct", "suggested_sla": "not_a_valid_sla_object"}),
             # 6. Invalid subtask role
             json.dumps({
                 "route": "dynamic_dag",
@@ -280,7 +281,7 @@ class TestSLMPlannerAdversarial:
 
             assert isinstance(plan, ExecutionPlan), f"Failed on invalid output case {idx}"
             assert plan.fallback_used is True
-            assert plan.suggested_tier == ModelTier.BALANCED
+            assert plan.suggested_sla.requires_tools is True
             assert plan.route == "fast_direct"
 
     @pytest.mark.asyncio
@@ -375,7 +376,7 @@ class TestDynamicLangGraphFactoryAdversarial:
         plan = ExecutionPlan(
             route="dynamic_dag",
             subtasks=subtasks,
-            synthesizer_tier=ModelTier.FRONTIER_REASONING,
+            synthesizer_sla=CapabilitySLA(requires_reasoning=True),
         )
         runner = build_dynamic_graph(plan)
         assert runner is not None

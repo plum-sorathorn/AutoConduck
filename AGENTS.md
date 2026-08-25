@@ -26,11 +26,11 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
 
 ## Non-Negotiable Architecture Invariants
 
-- **Sub-2ms Turn Guard**: `server/turn_guard.py` classifies active tool turns and stagnation states in <2ms with zero async/I/O/LLM overhead. Tool loop turns execute directly on active model tiers.
+- **Sub-2ms Turn Guard**: `server/turn_guard.py` classifies active tool turns and stagnation states in <2ms with zero async/I/O/LLM overhead. Tool loop turns execute directly on capable models matching the required tool SLA.
 - **Embedded SLM Task Architect**: Uses local Qwen 2.5 Coder 0.5B Instruct (Q4_K_M GGUF) to generate structured `ExecutionPlan` specifications under 100ms.
 - **Dynamic DAG Compilation**: `orchestrator/dynamic_factory.py` compiles on-the-fly LangGraph `StateGraph` workflows tailored to the exact subtask dependencies and RAG requirements.
 - **Fail-Soft Degradation**: Any SLM, LangGraph, tool, or checkpointer exception degrades gracefully to direct model dispatch—never surfacing a client-facing 500 error.
-- **Dynamic Pool-Relative 3-Tier Model Matching**: `routing/model_pool.py` tiers models dynamically relative to the user's active/selected model pool (`cheap_fast`, `balanced`, and `frontier_reasoning`) with logarithmic cost scaling `ln(1 + cost)` and EMA realized-cost blending, adapting seamlessly across any pool size (1, 2, 3, 6, or 20+ models) without fixed static price thresholds.
+- **Dynamic SLA-Based Capability Matching**: `routing/model_pool.py` executes a zero-overhead "Query Optimizer" selection matrix. Instead of static tiers and pricing buckets, the SLM Architect generates strict Service Level Agreements (SLAs: `min_context`, `requires_tools`, `requires_reasoning`, `max_cost`) for every subtask. The proxy evaluates all models in the active pool and seamlessly routes to the absolute cheapest model that technically meets the multidimensional SLA requirements—guaranteeing peak cost-efficiency per-turn without arbitrary boundaries.
 - **Stream Cancellation**: Honor `request.is_disconnected()` in streaming loops (`server/server_streaming.py`) for instantaneous client disconnection handling.
 - **Session Cache Prefix Immutability**: `orchestrator/session_guard.py` guarantees byte-identical prefix preservation (turns 0 & 1) across 40+ turns for maximum upstream prompt cache hits, with compaction at the 80% context window ceiling.
 - **Agent Config Isolation**: Agent configuration edits are bounded between `# BEGIN AUTOCONDUCK` and `# END AUTOCONDUCK`, with automated backups saved to `~/.autoconduck/backups/<agent>/<timestamp>.bak`.
@@ -49,8 +49,8 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
 - `routing/`:
   - `dispatcher.py`: fast-path routing pipeline and model selector.
   - `slm_planner.py`: embedded Qwen 2.5 Coder 0.5B SLM task planner and `ExecutionPlan` generator.
-  - `model_pool.py`: 3-tier autonomous model selector and capability filtering.
-  - `pricing.py`: `select_closest()`, `select_for_tier()`, EMA realized-cost blending, spend guard, and degraded model exclusions.
+  - `model_pool.py`: CapabilitySLA data model and dynamic Query Optimizer for filtering and selecting models by multidimensional SLA constraints.
+  - `pricing.py`: `select_for_sla()` wrapper, spend guards, and health/degraded model exclusions.
 - `orchestrator/`:
   - `dynamic_factory.py`: dynamic runtime LangGraph `StateGraph` compiler with Annotated fan-out state reducers.
   - `session_guard.py`: prompt-cache-friendly prefix immutability and 80% ceiling context compaction.
@@ -73,7 +73,7 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
   - `cli.py` & `cli_launch.py`: CLI dispatch and agent setup.
 - `presets/`:
   - `model_presets.py`, `presets_data.py`, `presets_ingest.py`, `presets_fallback.py`: runtime catalog data and LiteLLM ingestion.
-- `harnesses/`: adapters for supported coding agent harnesses (Claude Code, OpenCode, Pi, Aider, Cursor, Continue, Kilocode, Generic OpenAI).
+- `harnesses/`: adapters for supported coding agent harnesses (Claude Code, OpenCode, Pi).
 - `tui/`: Textual terminal UI dashboard and interactive onboarding (`tui/onboarding/`).
 
 ## Development Guidelines & Gotchas

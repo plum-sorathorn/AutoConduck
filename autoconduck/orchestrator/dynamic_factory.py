@@ -12,7 +12,7 @@ import operator
 from typing import Annotated, Any, Callable, Sequence
 from pydantic import BaseModel, Field, ConfigDict
 
-from autoconduck.routing.slm_planner import ExecutionPlan, SubTaskSpec, ModelTier
+from autoconduck.routing.slm_planner import ExecutionPlan, SubTaskSpec
 
 logger = logging.getLogger(__name__)
 

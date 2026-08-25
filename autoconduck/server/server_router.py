@@ -111,10 +111,6 @@ async def route_target(
                 client_type = "opencode"
             elif "claude" in ua:
                 client_type = "claude"
-            elif "aider" in ua:
-                client_type = "aider"
-            elif "cursor" in ua:
-                client_type = "cursor"
     is_nested = request_depth >= 1
     decision = None
     if body_model in PSEUDO_MODELS:

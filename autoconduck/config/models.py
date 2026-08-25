@@ -21,6 +21,7 @@ class ModelEntry(BaseModel):
     cost_output: float = 0.0
     context_window: int = 128000
     supports_tools: bool = True
+    is_reasoning: bool = False
     enabled: bool = True
     max_usd_per_min: float | None = None
 

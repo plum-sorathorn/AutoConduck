@@ -17,7 +17,8 @@ import pytest
 
 try:
     from autoconduck.orchestrator.dynamic_factory import DynamicState, build_dynamic_graph
-    from autoconduck.routing.slm_planner import ExecutionPlan, ModelTier, SubTaskSpec
+    from autoconduck.routing.slm_planner import ExecutionPlan, SubTaskSpec
+    from autoconduck.routing.model_pool import CapabilitySLA
     from autoconduck._compat.sqlite_checkpointer import get_sqlite_checkpointer
 except ImportError:
     pytest.skip("autoconduck.orchestrator.dynamic_factory not yet implemented in this milestone", allow_module_level=True)
@@ -38,7 +39,7 @@ async def test_dynamic_factory_compiles_linear_dag():
             SubTaskSpec(id="recon", goal="Scan repo", role="recon", depends_on=[]),
             SubTaskSpec(id="edit", goal="Apply fix", role="edit", depends_on=["recon"]),
         ],
-        synthesizer_tier=ModelTier.FRONTIER_REASONING,
+        synthesizer_sla=CapabilitySLA(requires_reasoning=True),
     )
     graph = build_dynamic_graph(plan)
     assert graph is not None
@@ -91,7 +92,7 @@ async def test_dynamic_factory_synthesizer_terminal_node():
         subtasks=[
             SubTaskSpec(id="t1", goal="Subtask 1", role="read"),
         ],
-        synthesizer_tier=ModelTier.FRONTIER_REASONING,
+        synthesizer_sla=CapabilitySLA(requires_reasoning=True),
     )
     graph = build_dynamic_graph(plan)
     assert graph is not None

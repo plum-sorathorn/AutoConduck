@@ -175,11 +175,14 @@ def resolve_orchestrator_model(cfg: Any = None) -> str:
 
 
 def select_model_by_tier(tier: str, cfg: Any = None) -> str:
-    """Select a configured model by tier."""
+    """Select a configured model by tier or capability."""
     try:
-        from autoconduck.routing.pricing import select_for_tier
+        from autoconduck.routing.pricing import select_for_sla
+        from autoconduck.routing.model_pool import CapabilitySLA
 
-        return select_for_tier(tier, config=cfg) or resolve_orchestrator_model(cfg)
+        requires_reasoning = "frontier" in tier.lower() or "reasoning" in tier.lower()
+        sla = CapabilitySLA(requires_reasoning=requires_reasoning, requires_tools=True)
+        return select_for_sla(sla, config=cfg) or resolve_orchestrator_model(cfg)
     except Exception:
         return resolve_orchestrator_model(cfg)
 

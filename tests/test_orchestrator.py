@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 from autoconduck.config import Config, SelectionConfig
 from autoconduck.orchestrator.dynamic_factory import DynamicState, build_dynamic_graph
 from autoconduck.orchestrator.session_guard import SessionGuard
-from autoconduck.routing.slm_planner import ExecutionPlan, SubTask, ModelTier
+from autoconduck.routing.slm_planner import ExecutionPlan, SubTask
+from autoconduck.routing.model_pool import CapabilitySLA
 from autoconduck.orchestrator.roles import RoleConfig, role_card
 from autoconduck.orchestrator.subagents import (
     build_subagent_prompt,
@@ -18,7 +19,7 @@ from autoconduck.orchestrator.subagents import (
 def test_dynamic_graph_compilation_and_execution():
     plan = ExecutionPlan(
         route="dynamic_dag",
-        suggested_tier=ModelTier.CHEAP_FAST,
+        suggested_sla=CapabilitySLA(requires_tools=True),
         needs_rag=False,
         subtasks=[
             SubTask(
@@ -34,7 +35,7 @@ def test_dynamic_graph_compilation_and_execution():
                 depends_on=["t1"],
             ),
         ],
-        synthesizer_tier=ModelTier.CHEAP_FAST,
+        synthesizer_sla=CapabilitySLA(requires_reasoning=True),
     )
     runner = build_dynamic_graph(plan)
     assert runner is not None

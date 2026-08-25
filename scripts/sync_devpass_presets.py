@@ -1,19 +1,27 @@
-import json
-from pathlib import Path
 import re
 import sys
 import urllib.request
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from autoconduck.model_presets import _ingest_litellm_costs, clean_model_id
+from autoconduck.model_presets import (
+    _ingest_litellm_costs,
+    clean_model_id,
+    normalize_model_id_for_provider,
+)
+
 
 def fetch_devpass_catalog() -> list[dict]:
     all_models = {}
     page = 1
     while True:
-        url = f"https://devpass.llmgateway.io/models?page={page}" if page > 1 else "https://devpass.llmgateway.io/models"
+        url = (
+            f"https://devpass.llmgateway.io/models?page={page}"
+            if page > 1
+            else "https://devpass.llmgateway.io/models"
+        )
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "autoconduck/1.0"})
             with urllib.request.urlopen(req, timeout=15) as resp:
@@ -40,7 +48,10 @@ def fetch_devpass_catalog() -> list[dict]:
                 }
                 page_models += 1
 
-        if f'href="/models?page={page + 1}"' not in text and f'href=\\"/models?page={page + 1}\\"' not in text:
+        if (
+            f'href="/models?page={page + 1}"' not in text
+            and f'href=\\"/models?page={page + 1}\\"' not in text
+        ):
             break
         page += 1
         if page > 25:
@@ -52,27 +63,53 @@ def fetch_devpass_catalog() -> list[dict]:
     devpass_entries = []
     for mid, info in sorted(all_models.items()):
         # Filter out non-chat / media / embedding models
-        if any(x in mid for x in ("embedding", "image", "video", "tts", "stt", "transcribe", "reranker", "audio")):
+        if any(
+            x in mid
+            for x in (
+                "embedding",
+                "image",
+                "video",
+                "tts",
+                "stt",
+                "transcribe",
+                "reranker",
+                "audio",
+            )
+        ):
             continue
-        prices = by_clean.get(clean_model_id(mid), {})
+        api_id = normalize_model_id_for_provider(mid, "devpass")
+        prices = by_clean.get(clean_model_id(api_id), {}) or by_clean.get(
+            clean_model_id(mid), {}
+        )
         p_in = prices.get("price_in", 0.0)
         p_out = prices.get("price_out", 0.0)
-        tier = "expensive" if info["premium"] or p_out >= 20.0 else "budget" if p_out < 3.0 else "balanced"
-        devpass_entries.append({
-            "id": mid,
-            "provider": "devpass",
-            "tier": tier,
-            "price_in": p_in,
-            "price_out": p_out,
-            "api_key_env": "DEVPASS_API_KEY",
-            "base_url": "https://api.llmgateway.io",
-        })
+        tier = (
+            "expensive"
+            if info["premium"] or p_out >= 20.0
+            else "budget"
+            if p_out < 3.0
+            else "balanced"
+        )
+        devpass_entries.append(
+            {
+                "id": api_id,
+                "provider": "devpass",
+                "tier": tier,
+                "price_in": p_in,
+                "price_out": p_out,
+                "api_key_env": "DEVPASS_API_KEY",
+                "base_url": "https://api.llmgateway.io",
+            }
+        )
 
     return devpass_entries
 
+
 if __name__ == "__main__":
     entries = fetch_devpass_catalog()
-    print(f"Successfully synced {len(entries)} DevPass models from https://devpass.llmgateway.io/models")
+    print(
+        f"Successfully synced {len(entries)} DevPass models from https://devpass.llmgateway.io/models"
+    )
     print("Sample models:")
     for e in entries[:10]:
         print(" ", e)

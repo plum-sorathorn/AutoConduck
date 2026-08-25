@@ -77,14 +77,16 @@ class TurnGuard:
 
 ### 2. SLM Architect (`slm_planner.py`)
 ```python
-from enum import Enum
+from dataclasses import dataclass
 from pydantic import BaseModel, Field
 from typing import Literal
 
-class ModelTier(str, Enum):
-    CHEAP_FAST = "cheap_fast"
-    BALANCED = "balanced"
-    FRONTIER_REASONING = "frontier_reasoning"
+@dataclass
+class CapabilitySLA:
+    min_context: int = 0
+    requires_tools: bool = False
+    requires_reasoning: bool = False
+    max_cost: float = float('inf')
 
 class SubTaskSpec(BaseModel):
     id: str
@@ -100,11 +102,11 @@ class ExecutionPlan(BaseModel):
     route: Literal["fast_direct", "dynamic_dag"]
     confidence: float = Field(ge=0.0, le=1.0, default=1.0)
     task_type: Literal["chat", "explain", "recon", "single_edit", "multi_edit", "debug", "refactor", "full_workflow"] = "chat"
-    suggested_tier: ModelTier = ModelTier.BALANCED
+    suggested_sla: CapabilitySLA = Field(default_factory=CapabilitySLA)
     needs_rag: bool = False
     rag_queries: list[str] = Field(default_factory=list)
     subtasks: list[SubTaskSpec] = Field(default_factory=list)
-    synthesizer_tier: ModelTier = ModelTier.FRONTIER_REASONING
+    synthesizer_sla: CapabilitySLA = Field(default_factory=lambda: CapabilitySLA(requires_reasoning=True))
     rationale: str = ""
     fallback_used: bool = False
 
@@ -157,10 +159,10 @@ class SessionGuard:
     def guard_context(self, messages: list[dict[str, Any]], context_window: int) -> SessionGuardResult: ...
 ```
 
-### 6. Autonomous Model Pool (`model_pool.py`)
+### 6. Dynamic Capability Model Pool (`model_pool.py`)
 ```python
 class ModelPool:
-    def select_for_tier(self, tier: ModelTier, min_context_window: int = 0, requires_tools: bool = False, pseudo_model: str = "autoconduck") -> str: ...
+    def select_by_sla(self, sla: CapabilitySLA, pseudo_model: str = "autoconduck") -> str: ...
 ```
 
 ---
@@ -214,7 +216,7 @@ autoconduck/
 │   ├── vector_store.py             # LanceDB vector store wrapper
 │   ├── extractor.py                # AST & manifest extractor
 │   └── models.py                   # RAG data models
-├── harnesses/                      # 8 Agent harness adapters (Claude, OpenCode, Pi, Aider, etc.)
+├── harnesses/                      # 3 Agent harness adapters (Claude, OpenCode, Pi)
 ├── auth/                           # Provider credentials & auth
 ├── launcher/                       # Daemon launcher & binary PATH shims
 ├── cli/                            # CLI commands

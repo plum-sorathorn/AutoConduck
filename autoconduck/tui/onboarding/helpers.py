@@ -50,9 +50,8 @@ def render_model_rows(models, enabled, cursor):
     for i, m in enumerate(models):
         is_sel = m["id"] in enabled
         box = r"\[x]" if is_sel else r"\[ ]"
-        tier = m.get("tier", "balanced")
         p = price(m)
-        label = f"{m['id']} ({tier}){p}"
+        label = f"{m['id']}{p}"
         prefix = ">" if i == cursor else " "
         if i == cursor:
             lines.append(f"[bold cyan]{prefix} {box} {label}[/bold cyan]")

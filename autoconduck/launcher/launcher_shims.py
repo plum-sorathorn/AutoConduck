@@ -77,36 +77,6 @@ def _opencode_env_blocks(port: int, pseudo: str = "autoconduck") -> tuple[str, s
     return bash, cmd
 
 
-def _aider_env_blocks(port: int, pseudo: str = "autoconduck") -> tuple[str, str]:
-    """Return environment variables for Aider."""
-    bash = (
-        'export OPENAI_API_BASE="http://127.0.0.1:${PORT}/v1"\n'
-        'export OPENAI_API_KEY="autoconduck-local"\n'
-        f'export AIDER_MODEL="openai/{pseudo}"'
-    )
-    cmd = (
-        'set "OPENAI_API_BASE=http://127.0.0.1:%PORT%/v1"\n'
-        'set "OPENAI_API_KEY=autoconduck-local"\n'
-        f'set "AIDER_MODEL=openai/{pseudo}"'
-    )
-    return bash, cmd
-
-
-def _generic_env_blocks(port: int, pseudo: str = "autoconduck") -> tuple[str, str]:
-    """Return default OpenAI proxy environment variables."""
-    bash = (
-        'export OPENAI_BASE_URL="http://127.0.0.1:${PORT}/v1"\n'
-        'export OPENAI_API_BASE="http://127.0.0.1:${PORT}/v1"\n'
-        'export OPENAI_API_KEY="autoconduck-local"'
-    )
-    cmd = (
-        'set "OPENAI_BASE_URL=http://127.0.0.1:%PORT%/v1"\n'
-        'set "OPENAI_API_BASE=http://127.0.0.1:%PORT%/v1"\n'
-        'set "OPENAI_API_KEY=autoconduck-local"'
-    )
-    return bash, cmd
-
-
 def shim_script(agent_id, real_bin):
     import shlex
 
@@ -128,12 +98,6 @@ def shim_script(agent_id, real_bin):
         lines.append(bash_env)
     elif agent_id == "opencode":
         bash_env, _ = _opencode_env_blocks(cfg.port, pseudo)
-        lines.append(bash_env)
-    elif agent_id == "aider":
-        bash_env, _ = _aider_env_blocks(cfg.port, pseudo)
-        lines.append(bash_env)
-    else:
-        bash_env, _ = _generic_env_blocks(cfg.port, pseudo)
         lines.append(bash_env)
     lines.append('"$PY" -m autoconduck ensure --port "$PORT" || true')
     lines.append('"$REAL_BIN" "$@"')
@@ -166,12 +130,6 @@ def shim_script_win(agent_id, real_bin):
         lines.append(cmd_env)
     elif agent_id == "opencode":
         _, cmd_env = _opencode_env_blocks(cfg.port, pseudo)
-        lines.append(cmd_env)
-    elif agent_id == "aider":
-        _, cmd_env = _aider_env_blocks(cfg.port, pseudo)
-        lines.append(cmd_env)
-    else:
-        _, cmd_env = _generic_env_blocks(cfg.port, pseudo)
         lines.append(cmd_env)
     lines.append('"%PY%" -m autoconduck ensure --port %PORT%')
     lines.append('"%REAL_BIN%" %*')

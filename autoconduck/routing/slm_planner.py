@@ -2,7 +2,7 @@
 
 Embedded Qwen 2.5 Coder 0.5B Instruct / Outlines constrained generation producing
 strictly validated ExecutionPlan JSON objects. Enforces a 100ms circuit breaker timeout
-with graceful fail-soft fallback to the balanced tier.
+with graceful fail-soft fallback.
 """
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import json
 import logging
 import re
 import time
-from enum import Enum
 from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
@@ -22,14 +21,9 @@ from autoconduck._compat import (
     is_onnx_available,
     is_outlines_available,
 )
+from autoconduck.routing.model_pool import CapabilitySLA
 
 logger = logging.getLogger(__name__)
-
-
-class ModelTier(str, Enum):
-    CHEAP_FAST = "cheap_fast"
-    BALANCED = "balanced"
-    FRONTIER_REASONING = "frontier_reasoning"
 
 
 class SubTaskSpec(BaseModel):
@@ -52,11 +46,11 @@ class ExecutionPlan(BaseModel):
     task_type: Literal[
         "chat", "explain", "recon", "single_edit", "multi_edit", "debug", "refactor", "full_workflow", "git_ops", "routine"
     ] = "chat"
-    suggested_tier: ModelTier = ModelTier.BALANCED
+    suggested_sla: CapabilitySLA = Field(default_factory=CapabilitySLA)
     needs_rag: bool = False
     rag_queries: list[str] = Field(default_factory=list)
     subtasks: list[SubTaskSpec] = Field(default_factory=list)
-    synthesizer_tier: ModelTier = ModelTier.FRONTIER_REASONING
+    synthesizer_sla: CapabilitySLA = Field(default_factory=lambda: CapabilitySLA(requires_reasoning=True))
     rationale: str = ""
     fallback_used: bool = False
 
@@ -113,13 +107,13 @@ class SLMPlanner:
         return " ".join(texts).strip()
 
     def _create_fallback_plan(self, messages: list[dict[str, Any]], reason: str = "") -> ExecutionPlan:
-        """Create a safe fallback execution plan defaulting to balanced tier."""
+        """Create a safe fallback execution plan."""
         return ExecutionPlan(
             route="fast_direct",
             confidence=0.5,
             task_type="chat",
-            suggested_tier=ModelTier.BALANCED,
-            synthesizer_tier=ModelTier.BALANCED,
+            suggested_sla=CapabilitySLA(min_context=16000, requires_tools=True),
+            synthesizer_sla=CapabilitySLA(requires_reasoning=True),
             needs_rag=False,
             rag_queries=[],
             subtasks=[],
@@ -135,11 +129,11 @@ class SLMPlanner:
                 "route": "fast_direct",
                 "confidence": 1.0,
                 "task_type": "chat",
-                "suggested_tier": "cheap_fast",
+                "suggested_sla": CapabilitySLA(min_context=8000, max_cost=1.0),
                 "needs_rag": False,
                 "rag_queries": [],
                 "subtasks": [],
-                "synthesizer_tier": "balanced",
+                "synthesizer_sla": CapabilitySLA(),
                 "rationale": "Empty or system-only messages",
                 "fallback_used": False,
             }
@@ -227,11 +221,11 @@ class SLMPlanner:
                 "route": "fast_direct",
                 "confidence": 0.99,
                 "task_type": task_type,
-                "suggested_tier": "cheap_fast",
+                "suggested_sla": CapabilitySLA(min_context=16000, requires_tools=True, max_cost=1.0),
                 "needs_rag": False,
                 "rag_queries": [],
                 "subtasks": [],
-                "synthesizer_tier": "cheap_fast",
+                "synthesizer_sla": CapabilitySLA(requires_tools=True, max_cost=1.0),
                 "rationale": f"Direct response for {task_type} operation",
                 "fallback_used": False,
             }
@@ -268,11 +262,11 @@ class SLMPlanner:
                 "route": "dynamic_dag",
                 "confidence": 0.95,
                 "task_type": task_type,
-                "suggested_tier": "balanced",
+                "suggested_sla": CapabilitySLA(min_context=32000, requires_tools=True),
                 "needs_rag": needs_rag,
                 "rag_queries": rag_queries,
                 "subtasks": [t.model_dump() for t in subtasks],
-                "synthesizer_tier": "frontier_reasoning",
+                "synthesizer_sla": CapabilitySLA(requires_reasoning=True, requires_tools=True),
                 "rationale": "Multi-step architectural workflow requires dynamic orchestration DAG",
                 "fallback_used": False,
             }
@@ -280,17 +274,21 @@ class SLMPlanner:
         # Check explain / simple chat
         is_explain = any(text_lower.startswith(w) for w in ["explain", "what is", "how does", "why is", "tell me"])
         task_type = "explain" if is_explain else ("debug" if is_debug else "chat")
-        tier = "cheap_fast" if len(text.split()) < 15 and not needs_rag and not is_debug else "balanced"
+        sla = (
+            CapabilitySLA(min_context=8000, max_cost=1.0)
+            if len(text.split()) < 15 and not needs_rag and not is_debug
+            else CapabilitySLA(min_context=32000, requires_tools=True)
+        )
 
         return {
             "route": "fast_direct",
             "confidence": 0.98,
             "task_type": task_type,
-            "suggested_tier": tier,
+            "suggested_sla": sla,
             "needs_rag": needs_rag,
             "rag_queries": rag_queries,
             "subtasks": [],
-            "synthesizer_tier": "balanced",
+            "synthesizer_sla": CapabilitySLA(requires_reasoning=is_debug),
             "rationale": f"Direct response for {task_type} query",
             "fallback_used": False,
         }
@@ -342,7 +340,6 @@ class SLMPlanner:
                 try:
                     data = json.loads(res)
                 except Exception:
-                    # Raw string was not valid JSON
                     return self._create_fallback_plan(messages, reason="Unparseable non-JSON output")
             elif isinstance(res, dict):
                 data = res
