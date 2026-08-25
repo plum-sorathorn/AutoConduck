@@ -74,6 +74,31 @@ def test_turn_guard_active_tool_loop_bypasses_to_active_tier(turn_guard: TurnGua
     assert result.error_streak == 0
 
 
+def test_turn_guard_healthy_loop_across_many_files_stays_active(turn_guard: TurnGuard):
+    """Productive tool loops touching many files do not trigger stagnation."""
+    messages = [{"role": "user", "content": "Refactor these files"}]
+    for index in range(11):
+        tool_name = "read" if index % 2 == 0 else "edit"
+        call_id = f"call_{index}"
+        path = f"src/file_{index}.py"
+        messages.extend([
+            {
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": tool_name, "arguments": json.dumps({"path": path})},
+                }],
+            },
+            {"role": "tool", "tool_call_id": call_id, "name": tool_name, "content": "success"},
+        ])
+
+    result = turn_guard.classify_turn(messages)
+    assert result.is_tool_loop is True
+    assert result.is_stagnant is False
+    assert result.target_action == TurnAction.DIRECT_ACTIVE_TIER
+
+
 def test_turn_guard_stagnation_three_identical_calls_escalates(turn_guard: TurnGuard):
     """3 consecutive identical tool calls trigger stagnation escalation to SLM."""
     call_spec = {

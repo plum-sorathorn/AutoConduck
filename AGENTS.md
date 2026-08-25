@@ -6,7 +6,7 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
 
 ## OVERVIEW
 
-Project: **AutoConduck** (`0.3.4` in `pyproject.toml`)
+Project: **AutoConduck** (`0.3.5` in `pyproject.toml`)
 Stack: Python >= 3.11 · FastAPI + uvicorn · LiteLLM · LangGraph (+ SQLite checkpointer) · Textual TUI · Pydantic v2 · LanceDB · ONNX Runtime · Outlines · httpx · tiktoken · PyYAML. End-user install is npm (`npm install -g autoconduck`); Python is the runtime.
 
 Related context files (do not treat as source of truth over this contract): `README.md`, `PROJECT.md`, `docs/design/`.
