@@ -63,7 +63,7 @@ def set_provider_key(provider: str, value: str) -> None:
     save_auth(mapping)
 
 
-def migrate_from_config(cfg: Any) -> int:
+def migrate_from_config(cfg: Any, path: str | Path | None = None) -> int:
     """Move literal model keys to auth.yaml, preserving env references."""
     try:
         entries = [*getattr(cfg, "model_list", []), *getattr(cfg, "custom_models", [])]
@@ -83,14 +83,15 @@ def migrate_from_config(cfg: Any) -> int:
         if mapping:
             save_auth(mapping)
         if changed:
-            source = home_dir() / "config.yaml"
-            if source.exists():
+            from autoconduck.config import config_path, save_config
+
+            target = config_path(path)
+            if target.exists():
                 backup = backups_dir("config")
                 backup.mkdir(parents=True, exist_ok=True)
                 stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-                shutil.copy2(source, backup / f"{stamp}.bak")
-            from autoconduck.config import save_config
-            save_config(cfg)
+                shutil.copy2(target, backup / f"{stamp}.bak")
+            save_config(cfg, path=target)
         return len(literals)
     except Exception as exc:
         log.warning("Unable to migrate API keys to auth file: %s", exc)

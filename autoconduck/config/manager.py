@@ -116,7 +116,7 @@ def load_config(
     ):
         from autoconduck.auth.auth import migrate_from_config
 
-        migrate_from_config(config)
+        migrate_from_config(config, path=p)
     for entry in _configured_model_sources(config):
         if (
             isinstance(entry, dict)
@@ -214,13 +214,27 @@ def get_config() -> Config:
         return _config
 
 
-def save_config(cfg: Config, path: str | Path | None = None) -> None:
+def save_config(cfg: Config, path: str | Path | None = None, force_empty: bool = False) -> None:
     """Save configuration to disk with atomic replacement, backup, and lock."""
     global _config, _config_digest, _config_path
     with _config_lock:
         p = config_path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         if p.exists() and p.stat().st_size > 0:
+            if not _has_configured_models(cfg) and not force_empty:
+                try:
+                    existing_raw = p.read_text(encoding="utf-8")
+                    existing_parsed = yaml.safe_load(existing_raw)
+                    if isinstance(existing_parsed, dict):
+                        existing_cfg = Config(**existing_parsed)
+                        if _has_configured_models(existing_cfg):
+                            logging.getLogger("autoconduck").warning(
+                                "Refusing to overwrite valid config containing models with an empty model list at %s",
+                                p,
+                            )
+                            return
+                except Exception:
+                    pass
             backup_config(p)
 
         data = cfg.model_dump()
