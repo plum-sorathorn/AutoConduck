@@ -51,21 +51,36 @@ class DynamicState(BaseModel):
     is_fallback: Annotated[bool, _latest_val] = False
 
 
-async def _rag_node_handler(state: DynamicState | dict[str, Any]) -> dict[str, Any]:
+async def _rag_node_handler(state: DynamicState | dict[str, Any], on_progress: Any = None) -> dict[str, Any]:
     """Extract context snippets from LanceDB vector store."""
     plan = getattr(state, "plan", None) if not isinstance(state, dict) else state.get("plan")
     new_snippets: list[str] = []
 
     if plan and getattr(plan, "needs_rag", False):
         queries = getattr(plan, "rag_queries", []) or ["codebase dependencies"]
+        if on_progress:
+            try:
+                on_progress({"node": "rag", "state": "running", "step_detail": f"Querying vector store ({len(queries)} queries)"})
+            except Exception:
+                pass
         try:
             from autoconduck.knowledge.vector_store import KnowledgeVectorStore
             store = KnowledgeVectorStore()
             for q in queries:
                 snippets = store.get_context_snippets(q, max_tokens=125)
                 new_snippets.extend(snippets)
+            if on_progress:
+                try:
+                    on_progress({"node": "rag", "state": "completed", "step_detail": f"Retrieved {len(new_snippets)} context snippets"})
+                except Exception:
+                    pass
         except Exception as exc:
             logger.warning("RAG node extraction warning: %s", exc)
+            if on_progress:
+                try:
+                    on_progress({"node": "rag", "state": "failed", "step_detail": f"RAG extraction warning: {exc}"})
+                except Exception:
+                    pass
 
     return {
         "verified_context": new_snippets,
@@ -73,9 +88,15 @@ async def _rag_node_handler(state: DynamicState | dict[str, Any]) -> dict[str, A
     }
 
 
-def _make_subtask_handler(task: SubTaskSpec) -> Callable[[Any], Any]:
+def _make_subtask_handler(task: SubTaskSpec, on_progress: Any = None) -> Callable[[Any], Any]:
     """Factory for server-side subtask execution node."""
     async def subtask_handler(state: DynamicState | dict[str, Any]) -> dict[str, Any]:
+        if on_progress:
+            try:
+                on_progress({"node": task.id, "state": "running", "step_detail": f"Subagent [{task.role}]: {task.goal}"})
+            except Exception:
+                pass
+        logger.info("Subagent [%s] (role=%s) starting: %s", task.id, task.role, task.goal)
         try:
             from autoconduck.orchestrator.subagents import run_subagent
             from autoconduck.orchestrator.planner import SubTask, OutputContract
@@ -111,11 +132,24 @@ def _make_subtask_handler(task: SubTaskSpec) -> Callable[[Any], Any]:
             if not output or output.startswith("__SUBAGENT_ERROR__"):
                 output = f"Completed subtask [{task.id}] ({task.role}): {task.goal}"
 
+            if on_progress:
+                try:
+                    on_progress({"node": task.id, "state": "completed", "step_detail": f"Completed subtask [{task.id}] ({task.role})"})
+                except Exception:
+                    pass
+            logger.info("Subagent [%s] completed", task.id)
+
             return {
                 "subtask_outputs": {task.id: output},
                 "active_node": task.id,
             }
         except Exception as exc:
+            if on_progress:
+                try:
+                    on_progress({"node": task.id, "state": "failed", "step_detail": f"Subagent [{task.id}] error: {exc}"})
+                except Exception:
+                    pass
+            logger.warning("Subagent [%s] failed: %s", task.id, exc)
             return {
                 "subtask_outputs": {task.id: f"Completed subtask [{task.id}] ({task.role}): {task.goal}"},
                 "subtask_errors": {task.id: f"Failed to execute subtask [{task.id}]: {exc}"},
@@ -125,7 +159,7 @@ def _make_subtask_handler(task: SubTaskSpec) -> Callable[[Any], Any]:
     return subtask_handler
 
 
-async def _synthesizer_node_handler(state: DynamicState | dict[str, Any]) -> dict[str, Any]:
+async def _synthesizer_node_handler(state: DynamicState | dict[str, Any], on_progress: Any = None) -> dict[str, Any]:
     """Terminal node aggregating subtask outputs and producing actionable execution handoff."""
     outputs = getattr(state, "subtask_outputs", {}) if not isinstance(state, dict) else state.get("subtask_outputs", {})
     errors = getattr(state, "subtask_errors", {}) if not isinstance(state, dict) else state.get("subtask_errors", {})
@@ -134,6 +168,12 @@ async def _synthesizer_node_handler(state: DynamicState | dict[str, Any]) -> dic
     client_type = getattr(state, "client_type", None) if not isinstance(state, dict) else state.get("client_type")
     user_agent = getattr(state, "user_agent", "") if not isinstance(state, dict) else state.get("user_agent", "")
     is_nested = getattr(state, "is_nested", False) if not isinstance(state, dict) else state.get("is_nested", False)
+
+    if on_progress:
+        try:
+            on_progress({"node": "synthesizer", "state": "running", "step_detail": f"Synthesizing handoff across {len(outputs)} subagent outputs"})
+        except Exception:
+            pass
 
     from autoconduck.orchestrator.handoff import format_execution_handoff
     compacted = "\n".join(f"• {c}" for c in verified) if verified else ""
@@ -153,6 +193,13 @@ async def _synthesizer_node_handler(state: DynamicState | dict[str, Any]) -> dic
     }
     if getattr(handoff, "tool_calls", None):
         final_dict["tool_calls"] = handoff.tool_calls
+
+    if on_progress:
+        try:
+            on_progress({"node": "synthesizer", "state": "completed", "step_detail": "Execution plan & handoff ready"})
+        except Exception:
+            pass
+    logger.info("DAG Synthesizer finished: plan synthesized")
 
     return {
         "synthesizer_output": result_text,
@@ -186,7 +233,7 @@ class DynamicGraphRunner:
             yield input_state
 
 
-def build_dynamic_graph(plan: ExecutionPlan, checkpointer: Any = None) -> Any:
+def build_dynamic_graph(plan: ExecutionPlan, checkpointer: Any = None, on_progress: Any = None) -> Any:
     """Compile a dynamic LangGraph StateGraph DAG for the given ExecutionPlan."""
     try:
         from langgraph.graph import StateGraph, START, END
@@ -196,7 +243,10 @@ def build_dynamic_graph(plan: ExecutionPlan, checkpointer: Any = None) -> Any:
         # 1. RAG Node (conditional)
         root_source = START
         if plan.needs_rag:
-            builder.add_node("rag", _rag_node_handler)
+            async def _rag_wrapper(st: Any) -> Any:
+                return await _rag_node_handler(st, on_progress=on_progress)
+
+            builder.add_node("rag", _rag_wrapper)
             builder.add_edge(START, "rag")
             root_source = "rag"
 
@@ -205,7 +255,7 @@ def build_dynamic_graph(plan: ExecutionPlan, checkpointer: Any = None) -> Any:
         for task in plan.subtasks:
             node_name = task.id
             subtask_ids.add(node_name)
-            builder.add_node(node_name, _make_subtask_handler(task))
+            builder.add_node(node_name, _make_subtask_handler(task, on_progress=on_progress))
 
         for task in plan.subtasks:
             node_name = task.id
@@ -217,7 +267,10 @@ def build_dynamic_graph(plan: ExecutionPlan, checkpointer: Any = None) -> Any:
                 builder.add_edge(root_source, node_name)
 
         # 3. Synthesizer Terminal Node
-        builder.add_node("synthesizer", _synthesizer_node_handler)
+        async def _synthesizer_wrapper(st: Any) -> Any:
+            return await _synthesizer_node_handler(st, on_progress=on_progress)
+
+        builder.add_node("synthesizer", _synthesizer_wrapper)
 
         all_deps = {d for t in plan.subtasks for d in t.depends_on if d in subtask_ids}
         leaf_subtasks = [t.id for t in plan.subtasks if t.id not in all_deps]

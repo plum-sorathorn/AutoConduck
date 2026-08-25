@@ -282,31 +282,44 @@ def _run_supervisor(
 
 def _check_port_available(port: int, host: str = "127.0.0.1") -> None:
     from autoconduck.launcher import (
-        find_process_on_port, kill_process, prompt_kill_port,
-        get_parent_pid, wait_for_port_free, is_port_bindable, _pid_alive,
+        find_process_on_port, prompt_kill_port, wait_for_port_free,
+        is_port_bindable, stop_server,
     )
 
-    pid = find_process_on_port(port)
-    if pid is None:
+    # When running under the internal supervisor, do not kill anything —
+    # the supervisor orchestrates restarts externally.
+    if os.environ.get("AUTOCONDUCK_SUPERVISED") == "1":
+        pid = find_process_on_port(port)
+        if pid is not None:
+            print(
+                f"Port {port} is still in use by PID {pid}; supervised child will not kill it",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        # No process found; just give the OS a moment to release the socket.
         if not is_port_bindable(port, host):
             wait_for_port_free(port, host, timeout=1.0)
         return
-    if os.environ.get("AUTOCONDUCK_SUPERVISED") == "1":
-        print(
-            f"Port {port} is still in use by PID {pid}; supervised child will not kill it",
-            file=sys.stderr,
-        )
+
+    pid = find_process_on_port(port)
+    if pid is None:
+        # Nothing found — give the kernel a brief moment to release resources.
+        if not is_port_bindable(port, host):
+            wait_for_port_free(port, host, timeout=1.0)
+        return
+
+    # Ask the user before tearing down the existing listener.
+    if not prompt_kill_port(port, pid):
         raise SystemExit(1)
-    if prompt_kill_port(port, pid):
-        ppid = get_parent_pid(pid)
-        if ppid is not None and ppid > 0 and _pid_alive(ppid):
-            kill_process(ppid)
-        if kill_process(pid):
-            print(f"Killed process {pid} using port {port}", file=sys.stderr)
-            wait_for_port_free(port, host, timeout=3.0)
-            return
-    print(f"Port {port} is in use by PID {pid}; kill it and retry", file=sys.stderr)
-    raise SystemExit(1)
+
+    # Use the proven stop_server routine (port-scan + kill + 5 s wait).
+    stop_server(port)
+
+    # Verify the port is truly free before the caller binds.
+    if not wait_for_port_free(port, host, timeout=5.0):
+        raise SystemExit(
+            f"Port {port} still unavailable after kill; aborting"
+        )
 
 
 def _litellm():

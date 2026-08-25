@@ -37,25 +37,115 @@ def _is_tool_error_content(content: Any, is_error_flag: bool | None = None) -> b
     """Check if tool execution output signifies an error."""
     if is_error_flag is True:
         return True
+    if is_error_flag is False:
+        return False
+    if content is None:
+        return False
+    if isinstance(content, dict):
+        if content.get("is_error") is True or content.get("isError") is True:
+            return True
+        if content.get("is_error") is False or content.get("isError") is False:
+            return False
+        status = str(content.get("status", "")).lower()
+        if status in ("error", "failed", "failure"):
+            return True
+        if status in ("ok", "success", "succeeded"):
+            return False
+        exit_code = content.get("exit_code") if "exit_code" in content else content.get("exitCode")
+        if exit_code is not None and isinstance(exit_code, (int, float)) and exit_code != 0:
+            return True
+        if content.get("error"):
+            return True
+        return False
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "tool_result":
+                if item.get("is_error") is True:
+                    return True
+                if item.get("is_error") is False:
+                    continue
+            if _is_tool_error_content(item):
+                return True
+        return False
     if not isinstance(content, str):
         return False
-    lower = content.lower()
-    error_markers = [
+
+    text = content.strip()
+    if not text:
+        return False
+
+    # Check if the text is JSON-serialized dict
+    if (text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]")):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, (dict, list)):
+                return _is_tool_error_content(parsed)
+        except Exception:
+            pass
+
+    lower = text.lower()
+    first_line = lower.split("\n", 1)[0].strip()
+
+    # Direct tool/shell error prefixes on the first line or trimmed output
+    error_prefixes = (
         "error:",
         "error :",
-        "failed with exit code",
-        "failed tests",
-        "modulenotfounderror",
+        "fatal:",
+        "fatal :",
+        "failed:",
+        "failure:",
+        "[error]",
+        "[fatal]",
+        "[failed]",
+        "traceback (most recent call last):",
         "command not found",
-        "traceback (most recent call last)",
-        "syntaxerror",
-        "filenotfounderror",
-        "permissionerror",
-        "failed",
-    ]
-    if lower.startswith("error") or lower.startswith("failed"):
+        "command failed",
+        "failed with exit code",
+        "process exited with code",
+        "failed tests",
+        "failed (",
+        "permission denied",
+        "no such file or directory",
+        "cannot find the path specified",
+        "is not recognized as an internal or external command",
+        "modulenotfounderror:",
+        "syntaxerror:",
+        "filenotfounderror:",
+        "permissionerror:",
+        "runtimeerror:",
+        "typeerror:",
+        "valueerror:",
+        "nameerror:",
+        "importerror:",
+        "attributeerror:",
+        "indexerror:",
+        "keyerror:",
+        "zerodivisionerror:",
+        "connectionerror:",
+        "timeouterror:",
+    )
+    if any(first_line.startswith(p) for p in error_prefixes):
         return True
-    return any(marker in lower for marker in error_markers)
+
+    lines = [l.strip() for l in lower.splitlines() if l.strip()]
+
+    # Unhandled Python traceback anywhere in terminal output
+    if "traceback (most recent call last):" in lower:
+        if any(l.startswith("traceback (most recent call last):") for l in lines):
+            return True
+
+    # Standalone error lines in test / tool runners (e.g. pytest FAILED summary lines)
+    for l in lines:
+        if (
+            l.startswith("failed ")
+            or l.startswith("failed:")
+            or l.startswith("failed tests")
+            or l.startswith("error: ")
+            or l.startswith("fatal: ")
+        ):
+            return True
+
+    return False
 
 
 class TurnGuard:
@@ -100,8 +190,8 @@ class TurnGuard:
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     is_tool_resp = True
-                    is_err = block.get("is_error", False)
-                    last_tool_is_error = is_err or _is_tool_error_content(block.get("content"))
+                    is_err = block.get("is_error")
+                    last_tool_is_error = _is_tool_error_content(block.get("content"), is_error_flag=is_err)
                     break
 
         if not is_tool_resp:
@@ -157,8 +247,8 @@ class TurnGuard:
             if m_role == "user" and isinstance(m_content, list):
                 for b in m_content:
                     if isinstance(b, dict) and b.get("type") == "tool_result":
-                        is_err = b.get("is_error", False) or _is_tool_error_content(b.get("content"))
-                        tool_results.append(is_err)
+                        is_err = b.get("is_error")
+                        tool_results.append(_is_tool_error_content(b.get("content"), is_error_flag=is_err))
 
         # Calculate error streak (consecutive errors at the end)
         error_streak = 0

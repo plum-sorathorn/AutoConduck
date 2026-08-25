@@ -87,6 +87,12 @@ async def handle_chat_completions(
                         "compactor": "compactor",
                         "executor": "executor",
                     }
+                    status_glyphs = {
+                        "pending": "[..]",
+                        "running": "[>>]",
+                        "completed": "[OK]",
+                        "failed": "[ERR]",
+                    }
                     created = int(time.time())
                     sent_role = False
                     while True:
@@ -102,16 +108,19 @@ async def handle_chat_completions(
                             continue
                         delta_text = None
                         if isinstance(event, str):
-                            delta_text, node = (
+                            delta_text = (
                                 event if event.endswith("\n") else f"{event}\n"
-                            ), "progress"
+                            )
+                            node = "progress"
                         elif isinstance(event, dict):
                             if event.get("kind") == "route":
                                 continue
                             node = event.get("node", "progress")
+                            state = event.get("state", "running")
                             detail = event.get("step_detail") or node
+                            glyph = status_glyphs.get(state, "[>>]")
                             label = labels.get(node, node)
-                            delta_text = f"[{label}] {detail}\n"
+                            delta_text = f"{glyph} [{label}] {detail}\n"
                         else:
                             node = getattr(
                                 event, "name", getattr(event, "node", "progress")

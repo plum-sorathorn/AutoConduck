@@ -163,12 +163,11 @@ def cmd_launch_agent(agent_id: str, port: int | None = None, new_terminal: bool 
         new_terminal if new_terminal is not None else bool(getattr(cfg, "launch_in_new_terminal", False))
     )
 
-    # Reuse a healthy manual daemon; otherwise preserve the existing fresh-start behavior.
+    # Reuse a healthy manual daemon; otherwise trust the port check below
+    # to find-and-kill whatever is listening on the port.
     reused = launcher.server_alive(port)
     if reused:
         launcher._write_claim(False)
-    else:
-        launcher.kill_existing_on_port(port)
 
     log = home_dir() / "run" / "server.log"
     log.parent.mkdir(parents=True, exist_ok=True)

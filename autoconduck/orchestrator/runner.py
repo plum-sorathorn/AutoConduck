@@ -26,17 +26,16 @@ async def run_dynamic_orchestration(
 
         if on_progress is not None:
             try:
-                tier_name = getattr(
-                    plan.suggested_tier, "value", str(plan.suggested_tier)
-                )
                 subtasks_cnt = len(getattr(plan, "subtasks", []))
+                subtask_names = ", ".join(t.id for t in plan.subtasks)
+                sub_detail = f": {subtask_names}" if subtask_names else ""
                 on_progress(
-                    f"SLM Plan generated ({tier_name}): {subtasks_cnt} subtasks"
+                    {"node": "slm_plan", "state": "completed", "step_detail": f"Generated DAG plan ({subtasks_cnt} subtasks{sub_detail})"}
                 )
             except Exception:
                 pass
 
-        runner = build_dynamic_graph(plan)
+        runner = build_dynamic_graph(plan, on_progress=on_progress)
         initial_state = DynamicState(
             session_id=kwargs.get("session_id", "session_orchestrator"),
             thread_id=kwargs.get("thread_id", "thread_orchestrator"),

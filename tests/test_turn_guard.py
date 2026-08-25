@@ -249,3 +249,67 @@ def test_turn_guard_system_prompt_only(turn_guard: TurnGuard):
     result = turn_guard.classify_turn(messages)
     assert not result.is_tool_loop
     assert result.target_action == TurnAction.SLM_PLAN
+
+
+def test_turn_guard_code_file_read_no_false_positive_error(turn_guard: TurnGuard):
+    """Reading code files with exception handlers and error keywords does not count as error."""
+    code_content_1 = '''
+    """Dashboard helper."""
+    def run():
+        try:
+            do_something()
+        except FileNotFoundError:
+            raise RuntimeError("Textual error: failed to initialize")
+    '''
+    code_content_2 = '''
+    """Tuning module."""
+    def show():
+        self.query_one("#message", Static).update(f"[red]Error: {exc}[/red]")
+        logger.error("Failed to connect")
+    '''
+    messages = [
+        {"role": "user", "content": "Analyze dashboard and tune modules"},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "read", "arguments": '{"path": "dashboard.py"}'}},
+                {"id": "c2", "type": "function", "function": {"name": "read", "arguments": '{"path": "tune.py"}'}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "c1", "name": "read", "content": code_content_1},
+        {"role": "tool", "tool_call_id": "c2", "name": "read", "content": code_content_2},
+    ]
+    result = turn_guard.classify_turn(messages)
+    assert result.is_tool_loop is True
+    assert result.is_stagnant is False
+    assert result.error_streak == 0
+    assert result.target_action == TurnAction.DIRECT_ACTIVE_TIER
+
+
+def test_turn_guard_anthropic_explicit_is_error_false_overrides_content(turn_guard: TurnGuard):
+    """Explicit is_error: false in Anthropic tool_result takes precedence."""
+    messages = [
+        {"role": "user", "content": "Check logs"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "tu_log", "name": "read_file", "input": {"path": "error.log"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tu_log",
+                    "content": "Error: something failed with exit code 1",
+                    "is_error": False,
+                }
+            ],
+        },
+    ]
+    result = turn_guard.classify_turn(messages)
+    assert result.is_tool_loop is True
+    assert result.is_stagnant is False
+    assert result.error_streak == 0
+    assert result.target_action == TurnAction.DIRECT_ACTIVE_TIER
