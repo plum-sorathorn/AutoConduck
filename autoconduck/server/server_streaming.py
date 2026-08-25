@@ -150,10 +150,31 @@ def _run_proxy(port: int, log_level: str = "info", host: str = "127.0.0.1"):
             )
 
         server.startup = _patched_startup
+        # On Windows, uvicorn adds SIGBREAK (signal 21 / Ctrl+Break) to its
+        # HANDLED_SIGNALS list.  When a sibling console-group process (e.g. OMP)
+        # exits or is interrupted, Windows broadcasts CTRL_BREAK_EVENT to every
+        # process sharing the same console session — including a foreground
+        # `conduck start --headless` invocation.  Uvicorn catches it, sets
+        # should_exit, and then re-raises it, which terminates the server with
+        # no warning or crash report.
+        #
+        # Fix: in headless mode ignore SIGBREAK so that only an explicit
+        # SIGTERM / SIGINT (i.e. a deliberate "conduck stop" or Ctrl+C in *this*
+        # terminal) can shut the server down.  We restore the previous handler
+        # after server.run() returns so the process behaves normally again.
+        _prev_sigbreak = None
+        if sys.platform == "win32" and hasattr(signal, "SIGBREAK"):
+            _prev_sigbreak = signal.signal(signal.SIGBREAK, signal.SIG_IGN)
         try:
             server.run()
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
+        finally:
+            if _prev_sigbreak is not None and hasattr(signal, "SIGBREAK"):
+                try:
+                    signal.signal(signal.SIGBREAK, _prev_sigbreak)
+                except Exception:
+                    pass
     except Exception as exc:
         logger.exception("AutoConduck proxy crashed")
         _write_crash_report(exc)

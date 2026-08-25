@@ -41,7 +41,7 @@ SLM_MODELS_CATALOG: list[dict[str, Any]] = [
         "size_mb": 740,
         "format": "onnx",
         "recommended": False,
-        "url": "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-ONNX/resolve/main/model_q4.onnx",
+        "url": "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-ONNX/resolve/main/onnx/model_q4.onnx",
         "description": "Liquid AI hybrid architecture for agentic workflows & tool planning (ONNX)",
     },
     {
