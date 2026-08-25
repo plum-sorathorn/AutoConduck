@@ -363,11 +363,5 @@ class SqliteSaverFallback(BaseCheckpointSaver):
 
 
 def get_sqlite_checkpointer(conn_string: str = ":memory:") -> Any:
-    """Return a native SqliteSaver if available, otherwise return SqliteSaverFallback."""
-    if is_sqlite_checkpointer_available() and _NativeSqliteSaver is not None:
-        try:
-            return _NativeSqliteSaver.from_conn_string(conn_string)
-        except Exception as exc:
-            logger.warning("Failed to initialize native SqliteSaver (%s). Using fallback.", exc)
-            return SqliteSaverFallback.from_conn_string(conn_string)
+    """Return a unified SqliteSaver compatible with sync and async LangGraph runners."""
     return SqliteSaverFallback.from_conn_string(conn_string)

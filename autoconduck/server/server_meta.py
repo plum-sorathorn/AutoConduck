@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import autoconduck.config as config_module
 from autoconduck.stats import aggregate, load_records
 

@@ -1,4 +1,8 @@
+from __future__ import annotations
+
 import os
+from typing import Any
+
 import httpx
 from pydantic import BaseModel, Field
 from autoconduck.config import normalize_api_base, resolve_api_key

@@ -33,7 +33,13 @@ def wheel_path() -> Path:
 def build_wheel() -> Path:
     dist = ROOT / "npm-packaging" / "dist"
     dist.mkdir(parents=True, exist_ok=True)
-    subprocess.check_call([sys.executable, "-m", "pip", "wheel", "--no-deps", "--no-build-isolation", "-w", str(dist), "."], cwd=ROOT)
+    try:
+        subprocess.check_call(["uv", "build", "--wheel", "--out-dir", str(dist)], cwd=ROOT)
+    except Exception:
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "wheel", "--no-deps", "--no-build-isolation", "-w", str(dist), "."], cwd=ROOT)
+        except Exception:
+            subprocess.check_call([sys.executable, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(dist), "."], cwd=ROOT)
     return wheel_path()
 
 def build_one(platform: str, wheel: Path, check: bool = False) -> None:
