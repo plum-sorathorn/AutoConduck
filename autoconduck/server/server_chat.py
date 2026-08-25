@@ -11,6 +11,7 @@ from typing import Any
 import autoconduck.config as config_module
 from autoconduck.server.server_models import CompletionRequest
 from autoconduck.stats import record
+from autoconduck.server.sse_streamer import render_progress_event
 
 
 async def handle_chat_completions(
@@ -79,20 +80,6 @@ async def handle_chat_completions(
                 is_slow = str(first_path).upper() == "SLOW"
                 target, extra = (await task) if not is_slow else (None, None)
                 if is_slow:
-                    labels = {
-                        "recon": "recon",
-                        "recon_subagent_pool": "reading files",
-                        "planner": "planner",
-                        "subagent_pool": "subagents",
-                        "compactor": "compactor",
-                        "executor": "executor",
-                    }
-                    status_glyphs = {
-                        "pending": "[..]",
-                        "running": "[>>]",
-                        "completed": "[OK]",
-                        "failed": "[ERR]",
-                    }
                     created = int(time.time())
                     sent_role = False
                     while True:
@@ -116,11 +103,7 @@ async def handle_chat_completions(
                             if event.get("kind") == "route":
                                 continue
                             node = event.get("node", "progress")
-                            state = event.get("state", "running")
-                            detail = event.get("step_detail") or node
-                            glyph = status_glyphs.get(state, "[>>]")
-                            label = labels.get(node, node)
-                            delta_text = f"{glyph} [{label}] {detail}\n"
+                            delta_text = render_progress_event(event)
                         else:
                             node = getattr(
                                 event, "name", getattr(event, "node", "progress")

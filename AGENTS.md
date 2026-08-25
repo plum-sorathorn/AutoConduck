@@ -33,7 +33,7 @@ npm-packaging/        # per-platform wheel build (`build.py`)
 docs/design/          # routing / architecture specs
 ```
 
-Package-root utilities: `main.py` (entry), `stats.py`, `digest.py`, `jsonutil.py`, `progress.py`, `update.py`, `model_presets.py` (re-export/compat).
+Package-root utilities: `main.py` (entry), `stats.py`, `digest.py`, `jsonutil.py`, `update.py`, `model_presets.py` (re-export/compat).
 
 ## COMMANDS
 
@@ -79,6 +79,7 @@ Console entrypoints: `autoconduck = autoconduck.main:main` and `conduck = autoco
 - **Dynamic DAG Compilation**: `orchestrator/dynamic_factory.py` compiles on-the-fly LangGraph `StateGraph` workflows tailored to the exact subtask dependencies and RAG requirements.
 - **Fail-Soft Degradation**: Any SLM, LangGraph, tool, or checkpointer exception degrades gracefully to direct model dispatch—never surfacing a client-facing 500 error. Optional native deps (llama.cpp, Outlines, LanceDB, ONNX, LangGraph SQLite saver) are wrapped in `autoconduck/_compat/` so missing binaries still boot.
 - **Dynamic SLA-Based Capability Matching**: `routing/model_pool.py` executes a zero-overhead "Query Optimizer" selection matrix. Instead of static tiers and pricing buckets, the SLM Architect generates strict Service Level Agreements (SLAs: `min_context`, `requires_tools`, `requires_reasoning`, `max_cost`) for every subtask. The proxy evaluates all models in the active pool and seamlessly routes to the absolute cheapest model that technically meets the multidimensional SLA requirements—guaranteeing peak cost-efficiency per-turn without arbitrary boundaries.
+- **Thinking Progress Streaming**: `server/sse_streamer.py` renders SLM/orchestrator progress through `render_progress_event()`, used by both the OpenAI `server_chat.progress_stream` and Anthropic `server_messages` paths, gated by `selection.slow_stream_progress` / `AUTOCONDUCK_STREAM_PROGRESS`.
 - **Stream Cancellation**: Honor `request.is_disconnected()` in streaming loops (`server/server_streaming.py`) for instantaneous client disconnection handling.
 - **Session Cache Prefix Immutability**: `orchestrator/session_guard.py` guarantees byte-identical prefix preservation (turns 0 & 1) across 40+ turns for maximum upstream prompt cache hits, with compaction at the 80% context window ceiling.
 - **Agent Config Isolation**: Agent configuration edits are bounded between `# BEGIN AUTOCONDUCK` and `# END AUTOCONDUCK`, with automated backups saved to `~/.autoconduck/backups/<agent>/<timestamp>.bak`.
@@ -89,6 +90,7 @@ Console entrypoints: `autoconduck = autoconduck.main:main` and `conduck = autoco
   - `/v1/chat/completions`: OpenAI-compatible completions with live `delta.reasoning_content` streams.
   - `/v1/models`: OpenAI-compatible catalog listing returning the pseudo-models.
   - `/v1/messages`: Anthropic-compatible message translation shim with `thinking_delta` reasoning blocks (`server/messages_api.py`).
+  - `/v1/messages/count_tokens`: Anthropic-compatible token counting endpoint.
   - `/stats`: AutoConduck audit log, `ExecutionPlan` records, and cost savings metrics.
   - `/healthz`: Liveness and readiness endpoint.
 

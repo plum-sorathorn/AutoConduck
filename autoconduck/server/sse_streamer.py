@@ -20,6 +20,31 @@ STATUS_GLYPHS = {
     "failed": "[ERR]",
 }
 
+PROGRESS_LABELS = {
+    "recon": "recon",
+    "recon_subagent_pool": "reading files",
+    "planner": "planner",
+    "subagent_pool": "subagents",
+    "compactor": "compactor",
+    "executor": "executor",
+    "synthesizer": "synthesizer",
+    "rag": "rag",
+    "slm_plan": "slm_plan",
+}
+
+
+def render_progress_event(event: dict[str, object]) -> str:
+    """Render one orchestration progress event as compact plain ASCII."""
+    node = str(event.get("node", "progress"))
+    state = str(event.get("state", "running"))
+    detail = str(event.get("step_detail") or node)
+    label = PROGRESS_LABELS.get(node, node)
+    if node in {"slm_plan", "subagent_pool"} or (node == "rag" and state == "running"):
+        lines = detail.splitlines() or [detail]
+        return "\n".join([f"+-- [{label}]", *[f"| {line}" for line in lines], "'--"]) + "\n"
+    glyph = STATUS_GLYPHS.get(state, "[..]")
+    return f"{glyph} [{label}] {detail}\n"
+
 
 class SSEThinkingStreamer:
     """Streams thinking DAG node state transitions and synthesizer tokens via SSE."""

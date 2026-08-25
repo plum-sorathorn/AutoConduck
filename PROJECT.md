@@ -1,15 +1,17 @@
 # Project: AutoConduck 0.3.4 Modernization
 
+> Historical migration plan from the 0.3.0 modernization effort; later implementation details may supersede entries below.
+
 ## Architecture
-AutoConduck 0.3.4 transforms from a heuristic 10-factor regex complexity scorer and static DAG pipeline into an intelligent Dynamic SLM Orchestration Engine.
+AutoConduck 0.3.4 uses an embedded SLM and dynamic LangGraph orchestration; its fallback complexity signal is a simple word-count heuristic.
 
 ### Data Flow & Execution Pipeline
 1. **Client Request**: `/v1/chat/completions` (OpenAI) or `/v1/messages` (Anthropic).
-2. **Turn Guard (`turn_guard.py`)**: Synchronous 0ms classifier. If active tool loop without stagnation, directly relays to active model tier (<2ms overhead). If stagnation (3+ identical tool calls or 2+ consecutive errors) or new user turn, routes to SLM Planner.
+2. **Turn Guard (`turn_guard.py`)**: Synchronous 0ms classifier. If active tool loop without stagnation, directly relays to the active model (<2ms overhead). If stagnation (3+ identical tool calls or 2+ consecutive errors) or new user turn, routes to SLM Planner.
 3. **Session Guard (`session_guard.py`)**: Enforces immutable prefix contract for upstream prompt caching across 40+ turns; applies 80% context window compaction summarizing tool outputs while preserving code fences and headers.
-4. **SLM Architect (`slm_planner.py`)**: Embedded Qwen 2.5 Coder 0.5B Instruct (Q4_K_M GGUF) with Outlines BNF logit-constrained grammar generating deterministic `ExecutionPlan` JSON within <=75ms, guarded by a 100ms circuit breaker failing soft to the balanced tier.
-5. **Model Pool (`model_pool.py`)**: Dynamic pool-relative quantile tiering (`cheap_fast`, `balanced`, `frontier_reasoning`) adapting seamlessly to any user-selected pool size (1 to 20+ models) with context ceiling and tool calling filters.
-6. **Dynamic LangGraph Factory (`dynamic_factory.py`)**: Transient `StateGraph` compilation with parallel subtask fan-out, conditional LanceDB RAG node, terminal Synthesizer node on `frontier_reasoning`, and `SqliteSaver` session checkpointing.
+4. **SLM Architect (`slm_planner.py`)**: Embedded Qwen 2.5 Coder 0.5B Instruct (Q4_K_M GGUF) with Outlines BNF logit-constrained grammar generating deterministic `ExecutionPlan` JSON within <=75ms, guarded by a 100ms circuit breaker failing soft to SLA-based direct dispatch.
+5. **Model Pool (`model_pool.py`)**: SLA-based selection via `select_by_sla`, filtering models by context, tools, reasoning, and cost rather than using hard-coded selection tiers.
+6. **Dynamic LangGraph Factory (`dynamic_factory.py`)**: Transient `StateGraph` compilation with parallel subtask fan-out, conditional LanceDB RAG node, terminal Synthesizer node, and `SqliteSaver` session checkpointing.
 7. **Dynamic SSE Streamer (`sse_streamer.py`)**: Real-time visual DAG execution state transitions (`[..]`, `[>>]`, `[OK]`, `[ERR]`) emitted as `delta.reasoning_content` (OpenAI) and `thinking_delta` (Anthropic), transitioning smoothly into response markdown.
 8. **Selective Knowledge / RAG (`knowledge/`)**: LanceDB embedded vector index for repository dependencies and API contracts (max 250 tokens) injected into `State["verified_context"]`.
 
@@ -27,14 +29,14 @@ AutoConduck 0.3.4 transforms from a heuristic 10-factor regex complexity scorer 
 | F7 | Dynamic SSE Streamer (`sse_streamer.py`) | DAG visual state transitions (`⏳`, `🟢`, `🔴`) as `delta.reasoning_content` and `thinking_delta` | M2 | ORIGINAL_REQUEST §R2 |
 | F8 | Selective Knowledge / RAG (`knowledge/`) | LanceDB vector store + max 250 token context in `State["verified_context"]` | M2 | ORIGINAL_REQUEST §R2 |
 | F9 | Session Guard (`session_guard.py`) | Immutable prefix prompt caching + 80% context compaction preserving code fences | M2 | ORIGINAL_REQUEST §R2 |
-| F10 | Autonomous Model Pool (`model_pool.py`) | 3-tier auto-tiering (`cheap_fast`, `balanced`, `frontier_reasoning`) + context/tool filters | M2 | ORIGINAL_REQUEST §R2 |
+| F10 | Autonomous Model Pool (`model_pool.py`) | CapabilitySLA filtering and cheapest-qualified model selection | M2 | ORIGINAL_REQUEST §R2 |
 | F11 | Server & Dispatcher Integration Wiring | Wire Turn Guard, SLM Planner, Dynamic Factory, SSE Streamer, Session Guard into `server_routes.py` and `dispatcher.py` | M2 | ORIGINAL_REQUEST §R2 |
-| F12 | Retained Systems Migration | Adapt `pricing.py` (`select_for_tier`), `stats.py` (`ExecutionPlan` logging), `config.py`, `resolver.py`, `tui/app.py`, `tuning.py`, `digest.py`, `__init__.py` | M3 | ORIGINAL_REQUEST §R3 |
+| F12 | Retained Systems Migration | Adapt `pricing.py` (`select_for_sla`), `stats.py` (`ExecutionPlan` logging), config package, resolver, TUI, digest, and package exports | M3 | ORIGINAL_REQUEST §R3 |
 | F13 | Obsolete Test Deletion | Delete `test_routing_fast_path.py`, `test_complexity_and_tuning.py`, `test_empirical_tuning.py` | M3 | ORIGINAL_REQUEST §R3 |
 | F14 | Comprehensive Unit & Integration Test Suites | Implement 7 new test suites (`test_turn_guard.py`, `test_slm_planner.py`, `test_dynamic_factory.py`, `test_sse_streamer.py`, `test_rag_node.py`, `test_session_guard.py`, `test_model_pool.py`) and rewrite 4 suites | M3 | ORIGINAL_REQUEST §R3 |
 | F15 | Documentation Updates | Update `README.md`, `AGENTS.md`, `docs/design/dynamic-model-selection.md`, `docs/design/tuning.md`, `docs/CHANGELOG.md` | M4 | ORIGINAL_REQUEST §R4 |
 | F16 | New Design Documentation | Create `slm-architecture.md`, `dynamic-dag.md`, `session-management.md`, `rag-subsystem.md`, `migration/0.2-to-0.3.md` | M4 | ORIGINAL_REQUEST §R4 |
-| F17 | Stale Codebase Cleanup | Delete 11 stale files (`complexity.py`, `evaluator.py`, `semantic_router.py`, `fast_graph.py`, `graph.py`, `compactor.py`, `recon.py`, `progress.py`, `_compat/`, etc.) | M4 | ORIGINAL_REQUEST §R4 |
+| F17 | Stale Codebase Cleanup | Remove obsolete routing, orchestration, and progress modules while retaining required compatibility shims | M4 | ORIGINAL_REQUEST §R4 |
 | F18 | Knowledge Graph Rebuild & Final 0.3.0 Release | Run `graphify update .`, verify 100% test pass rate, bump version to final 0.3.0 | M4 | ORIGINAL_REQUEST §R4 |
 
 ---
@@ -171,11 +173,9 @@ class ModelPool:
 ```
 autoconduck/
 ├── __init__.py                     # Package version & top-level exports
-├── config.py                       # SelectionConfig & app configuration
+├── config/                         # Config model, manager, paths, and resolver
 ├── stats.py                        # ExecutionPlan logging & metrics
-├── tuning.py                       # Tuning & budget estimation
 ├── digest.py                       # Fast-path deterministic context reader
-├── resolver.py                     # Route resolver
 ├── jsonutil.py                     # Safe JSON extraction
 ├── main.py                         # CLI & supervisor daemon entrypoints
 ├── update.py                       # Update check
@@ -188,9 +188,9 @@ autoconduck/
 ├── routing/
 │   ├── __init__.py
 │   ├── dispatcher.py               # Dispatcher routing pipeline
-│   ├── pricing.py                  # Cost calculation & select_for_tier
+│   ├── pricing.py                  # Cost calculation & select_for_sla
 │   ├── slm_planner.py              # Qwen 2.5 Coder 0.5B Instruct + Outlines BNF grammar
-│   └── model_pool.py               # 3-tier autonomous model pool
+│   └── model_pool.py               # CapabilitySLA model pool
 ├── orchestrator/
 │   ├── __init__.py
 │   ├── dynamic_factory.py          # Dynamic LangGraph DAG compiler

@@ -134,7 +134,11 @@ def _make_subtask_handler(task: SubTaskSpec, on_progress: Any = None) -> Callabl
 
             if on_progress:
                 try:
-                    on_progress({"node": task.id, "state": "completed", "step_detail": f"Completed subtask [{task.id}] ({task.role})"})
+                    on_progress({
+                        "node": task.id,
+                        "state": "completed",
+                        "step_detail": f"Subagent [{task.id}] ({task.role}) done: {task.goal}",
+                    })
                 except Exception:
                     pass
             logger.info("Subagent [%s] completed", task.id)

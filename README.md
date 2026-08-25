@@ -12,7 +12,7 @@
 [![FastAPI](https://img.shields.io/badge/server-FastAPI-009688.svg?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat)](LICENSE)
 
-[Why AutoConduck?](#why-autoconduck) • [Architecture](#architecture) • [Quick Start](#quick-start) • [Supported Agents](#supported-agents) • [How It Works](#how-it-works-internally) • [Budget Tuning](#budget-driven-tuning) • [TUI Dashboard](#interactive-tui-dashboard) • [Configuration](#configuration-reference) • [Development](#development)
+[Why AutoConduck?](#why-autoconduck) • [Architecture](#architecture) • [Quick Start](#quick-start) • [Supported Agents](#supported-agents) • [How It Works](#how-it-works-internally) • [TUI Dashboard](#interactive-tui-dashboard) • [Configuration](#configuration-reference) • [Development](#development)
 
 </div>
 
@@ -25,12 +25,12 @@ Coding agents (**Claude Code**, **OpenCode**, and **Pi**) frequently send every 
 **AutoConduck 0.3.4** transforms model routing into an intelligent, autonomous SLM-driven dynamic execution engine:
 
 - **Turn Guard (0ms / <2ms):** Routine turns (active tool loops, single-file edits, command outputs) bypass heavy orchestration instantly, maintaining sub-millisecond agent responsiveness with zero LLM overhead.
-- **Embedded SLM Task Architect (Qwen 2.5 Coder 0.5B Instruct):** Local GGUF-quantized small language model generates structured, validated task plans in <100ms, determining exact DAG topology, tier assignments, and subtask dependencies.
+- **Embedded SLM Task Architect (Qwen 2.5 Coder 0.5B Instruct):** Local GGUF-quantized small language model generates structured, validated task plans in <100ms, determining exact DAG topology, SLA requirements, and subtask dependencies.
 - **Dynamic DAG LangGraph Factory:** Compiles tailored runtime execution graphs for every complex workflow, executing parallel subtask nodes and deterministic context retrieval.
 - **LanceDB Knowledge & RAG Subsystem:** Vector store semantic search automatically retrieves relevant codebase snippets without manual file discovery.
 - **Session Lifecycle & Context Guard:** Preserves immutable prompt-caching prefixes across 40+ turns and applies intelligent compaction at the 80% context window ceiling.
 - **Real-Time Reasoning SSE Streamer:** Streams live SLM cognitive deliberations directly to client coding agents using OpenAI `reasoning_content` and Anthropic `thinking_delta` protocols.
-- **Dynamic Pool-Relative 3-Tier Model Matching:** Tiers models dynamically based on the user's active/selected models across `cheap_fast`, `balanced`, and `frontier_reasoning` quantiles, scaling seamlessly whether the user configures 1, 2, 3, 6, or 20+ models.
+- **Dynamic SLA-Based Model Matching:** The SLM assigns each subtask a `CapabilitySLA` (`min_context`, `requires_tools`, `requires_reasoning`, `max_cost`), and the Query Optimizer selects the absolute cheapest active model that meets it.
 
 ---
 
@@ -58,9 +58,9 @@ Agent Request (Claude Code / OpenCode / Pi)
                  ▼ (Tool Loop / Simple)            ▼ (New Turn / Complex)
       ┌──────────────────────┐        ┌─────────────────────────────┐
       │  ModelPool.select_   │        │     SLM Task Architect      │
-      │       for_tier()     │        │  (Qwen 2.5 Coder 0.5B GGUF) │
-      │  (cheap_fast /       │        │  ExecutionPlan Synthesis    │
-      │   balanced tier)     │        └──────────────┬──────────────┘
+     │       by_sla()       │        │  (Qwen 2.5 Coder 0.5B GGUF) │
+     │  (CapabilitySLA /    │        │  ExecutionPlan Synthesis    │
+     │   Query Optimizer)   │        └──────────────┬──────────────┘
       └──────────┬───────────┘                       │
                  │                                   ▼
                  │                    ┌─────────────────────────────┐
@@ -86,7 +86,7 @@ Agent Request (Claude Code / OpenCode / Pi)
 
 ### Core Architecture Pillars
 
-1. **Turn Guard (`server/turn_guard.py`):** Pure regex classifier that bypasses tool loops in <2ms, detect stagnation loops, and triggers SLM re-planning only when necessary.
+1. **Turn Guard (`server/turn_guard.py`):** Pure regex classifier that bypasses tool loops in <2ms, detects stagnation loops, and triggers SLM re-planning only when necessary; selection uses `CapabilitySLA` requirements with `ModelPool.select_by_sla()`.
 2. **SLM Task Architect (`routing/slm_planner.py`):** Embedded local Qwen 2.5 Coder 0.5B model producing validated Pydantic `ExecutionPlan` JSON structures.
 3. **Dynamic Graph Factory (`orchestrator/dynamic_factory.py`):** Dynamic LangGraph compilation compiling parallel subtask fan-outs with SQLite state checkpointing.
 4. **Knowledge Vector Store (`knowledge/vector_store.py`):** LanceDB embedded vector database for fast semantic code context retrieval.
@@ -193,36 +193,21 @@ pi --api-base http://127.0.0.1:11434/v1 --model autoconduck
 
 AutoConduck presents three virtual models to coding agents:
 
-| Pseudo-Model | Target Bias | Escalation Threshold | Best For |
+| Pseudo-Model | Target Bias | Selection Behavior | Best For |
 | :--- | :---: | :---: | :--- |
-| **`autoconduck`** | Neutral (`0.00`) | Standard (`0.60–0.75`) | Everyday software engineering & mixed workflows |
-| **`autoconduck-budget`** | Cost-saving (`-0.20`) | Higher (`× 1.15`) | Repetitive tasks, small edits, cost minimization |
-| **`autoconduck-expensive`** | Quality-first (`+0.20`) | Lower (`× 0.85`) | Architecture refactors, deep reasoning, greenfield code |
+| **`autoconduck`** | Neutral (`0.00`) | Standard SLA-based selection | Everyday software engineering & mixed workflows |
+| **`autoconduck-budget`** | Cost-saving (`-0.20`) | Biases SLA-qualified selection toward lower cost | Repetitive tasks, small edits, cost minimization |
+| **`autoconduck-expensive`** | Quality-first (`+0.20`) | Biases SLA-qualified selection toward higher capability | Architecture refactors, deep reasoning, greenfield code |
 
 ---
 
 ## How It Works Internally
 
-### 1. 10-Factor Complexity Scoring (`routing/complexity.py`)
+### 1. SLM Planning and SLA Selection (`routing/slm_planner.py`)
 
-Prompts are scored deterministically in microseconds using normalized factors:
+The embedded SLM generates an `ExecutionPlan` with per-subtask `CapabilitySLA` requirements. `ModelPool.select_by_sla()` and `pricing.select_for_sla()` filter active models by context, tools, reasoning, and cost, then choose the cheapest qualifying model. The fallback complexity signal is the simple word-count heuristic `orchestrator/helpers.py:complexity_of`.
 
-```text
-complexity = min(1.0, sum(w_i * factor_i))
-```
-
-- **Length (0.08):** Soft log-scale token estimate.
-- **Structural (0.12):** Bullet lists, numbered steps, code fences, Markdown headers.
-- **Scope Breadth (0.12):** Mentioned files, paths, and CamelCase identifier count.
-- **Code Density (0.05):** Inline backticks, CLI flags, and environment variables.
-- **Abstraction Level (0.12):** Ratio of architectural concepts vs concrete syntax.
-- **Uncertainty & Diagnostics (0.08):** Debugging and root-cause keywords.
-- **Cross-Domain (0.12):** Multi-disciplinary language balance.
-- **Task Novelty (0.08):** Greenfield creation vs in-place modification.
-- **Imperative Strength (0.15):** Graded action verb intensity.
-- **Multi-Step Markers (0.08):** Sequential transition tokens (*then*, *next*, *finally*).
-
-### 2. Closest-Cost Model Matching (`routing/pricing.py`)
+### 2. Cost and Health Controls (`routing/pricing.py`)
 
 Models are mapped to a continuous logarithmic cost space:
 
@@ -235,15 +220,9 @@ AutoConduck matches the task value directly against candidate models:
 - **Degraded Provider Exclusion:** Automatically routes around providers with >20% error rates over a 300s sliding window.
 - **Spend Guard:** Bounded hourly/minute spend protection prevents runaway loops.
 
-### 3. LangGraph Multi-Phase Pipeline (`orchestrator/`)
+### 3. Dynamic LangGraph Pipeline (`orchestrator/`)
 
-For complex requests (Complexity >= 0.75), AutoConduck executes an asynchronous DAG:
-
-1. **Recon (`recon.py`):** Pre-reads up to 5 target files deterministically without LLM cost.
-2. **Planner (`planner.py`):** Creates a structured `TaskPlan` and extracts up to 8 concise (<=15 words) `verified_context` bullet points per file.
-3. **Parallel Subagents (`subagents.py`):** Evaluates independent dependency waves concurrently via `asyncio.gather`. Subagents only receive verified context and verbatim sibling outputs—no redundant file reads.
-4. **Zero-Cost Compactor (`compactor.py`):** Deterministically deduplicates lines, preserves `file:line` citations, and truncates analyst reports to ~1k tokens at zero token cost.
-5. **Tool-Loop Executor (`executor_loop.py`):** Executes bounded function-calling tools (`read`, `grep`, `glob`, `list`, `edit`, `write`, and optional `bash`) guarded by a `FileClaimRegistry` to prevent overlapping edits.
+The SLM plan is compiled by `dynamic_factory.py` and `runner.py` into a dynamic LangGraph DAG with an optional LanceDB RAG node, parallel subtask fan-out via `subagents.py`, and a terminal Synthesizer node. Progress and reasoning are emitted to the harness through the SSE stream.
 
 ---
 
@@ -273,11 +252,12 @@ From the main menu, navigate directly to all major screens:
 | `Enter` | Open / toggle selection |
 | `d` | Open detailed routing & latency drill-down |
 | `m` / `e` | Edit model sources & catalog |
-| `t` | Open budget tuning screen |
+| `u` | Check for updates |
 | `s` | Open settings screen |
 | `a` | Open launch agent picker |
 | `p` | Pause / resume proxy routing |
 | `?` | Toggle keymap help |
+| `/` | Filter dashboard items |
 | `Ctrl+C` | Quit current screen / exit AutoConduck |
 
 ---

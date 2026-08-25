@@ -27,15 +27,32 @@ async def run_dynamic_orchestration(
         if on_progress is not None:
             try:
                 subtasks_cnt = len(getattr(plan, "subtasks", []))
-                subtask_names = ", ".join(t.id for t in plan.subtasks)
-                sub_detail = f": {subtask_names}" if subtask_names else ""
+                confidence = getattr(plan, "confidence", None)
+                confidence_text = f"{float(confidence) * 100:.0f}%" if confidence is not None and float(confidence) <= 1 else f"{confidence}%" if confidence is not None else "n/a"
+                lines = [
+                    "SLM PLAN",
+                    f"route: {getattr(plan, 'route', 'dynamic_dag')}",
+                    f"task_type: {getattr(plan, 'task_type', 'unknown')}",
+                    f"confidence: {confidence_text}",
+                    f"subtasks: {subtasks_cnt}",
+                ]
+                for task in plan.subtasks:
+                    goal = " ".join(str(task.goal).split())
+                    if len(goal) > 70:
+                        goal = goal[:67].rstrip() + "..."
+                    lines.append(f"- {task.role} [{task.id}]: {goal}")
                 on_progress(
-                    {"node": "slm_plan", "state": "completed", "step_detail": f"Generated DAG plan ({subtasks_cnt} subtasks{sub_detail})"}
+                    {"node": "slm_plan", "state": "completed", "step_detail": "\n".join(lines)}
                 )
             except Exception:
                 pass
 
         runner = build_dynamic_graph(plan, on_progress=on_progress)
+        if on_progress is not None and plan.subtasks:
+            try:
+                on_progress({"node": "subagent_pool", "state": "running", "step_detail": f"Deploying {len(plan.subtasks)} subagents in parallel"})
+            except Exception:
+                pass
         initial_state = DynamicState(
             session_id=kwargs.get("session_id", "session_orchestrator"),
             thread_id=kwargs.get("thread_id", "thread_orchestrator"),

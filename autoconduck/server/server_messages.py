@@ -8,6 +8,7 @@ from typing import Any
 
 import autoconduck.config as config_module
 from autoconduck.server.server_models import MessagesRequest
+from autoconduck.server.sse_streamer import render_progress_event
 
 
 async def handle_messages(
@@ -28,6 +29,25 @@ async def handle_messages(
     JSONResponse: Any,
 ) -> Any:
     """Translate Anthropic /v1/messages request to OpenAI format with thinking deltas."""
+    progress_q = None
+    progress_enabled = False
+    if body.stream:
+        import os
+        cfg = config_module.get_config()
+        env_progress = os.environ.get("AUTOCONDUCK_STREAM_PROGRESS")
+        configured = bool(getattr(getattr(cfg, "selection", None), "slow_stream_progress", True))
+        progress_enabled = configured if env_progress is None else env_progress.strip().lower() not in {"0", "false", "no"}
+        if progress_enabled:
+            import asyncio
+            progress_q = asyncio.Queue()
+
+    def on_progress(event: Any) -> None:
+        if progress_q is not None:
+            try:
+                progress_q.put_nowait(event)
+            except Exception:
+                pass
+
     try:
         oai_messages = normalize_messages_for_llm(
             openai_messages_from_anthropic(body.model_dump(exclude_none=True))
@@ -48,7 +68,7 @@ async def handle_messages(
         )
     try:
         target, extra = await route_target_fn(
-            body.model, oai_messages, request, client_type="claude"
+            body.model, oai_messages, request, client_type="claude", on_progress=on_progress if progress_enabled else None
         )
     except Exception as exc:
         return JSONResponse(
@@ -85,6 +105,11 @@ async def handle_messages(
                 )
                 for ev in translator._ensure_message_start():
                     yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
+                if progress_q is not None:
+                    while not progress_q.empty():
+                        event = progress_q.get_nowait()
+                        if isinstance(event, dict):
+                            yield "event: content_block_delta\ndata: " + json.dumps({"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": render_progress_event(event)}}) + "\n\n"
                 delta: dict[str, Any] = {"role": "assistant", "content": content}
                 if tool_calls:
                     delta["tool_calls"] = tool_calls
