@@ -2,15 +2,19 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from .helpers import move_cursor, render_slm_rows
+from .slm_progress import download_progress
 from autoconduck.routing.slm_downloader import (
     SLM_MODELS_CATALOG,
     download_slm_model,
     integrate_slm_model,
     is_slm_model_installed,
 )
+
+logger = logging.getLogger(__name__)
 
 try:
     from textual.app import ComposeResult
@@ -49,10 +53,41 @@ if _TEXTUAL:
                     id="models",
                     markup=True,
                 ),
-                Static(f"[dim]ℹ {desc}[/dim]", id="description", markup=True),
-                Static("", id="status", markup=True),
+                 Static(f"[dim]ℹ {desc}[/dim]", id="description", markup=True),
+                 Static("[dim]Connectivity checks pending...[/dim]", id="health", markup=True),
+                 Static("", id="status", markup=True),
                 Static("[↑/↓] move / select · [enter/→] confirm & continue · [←] back · [ctrl+c] quit"),
-            )
+             )
+
+        def on_mount(self):
+            self.run_worker(self._probe_health(), exclusive=False)
+
+        async def _probe_health(self):
+            try:
+                from .health import probe_connectivity, render_health_matrix
+                from autoconduck.config import get_config, provider_for, resolve_api_key
+
+                cfg = get_config()
+                providers = []
+                for entry in getattr(cfg, "model_list", []) or []:
+                    if not isinstance(entry, dict):
+                        continue
+                    provider = provider_for(entry, cfg)
+                    if any(row.get("name") == provider for row in providers):
+                        continue
+                    providers.append({
+                        "name": provider,
+                        "api_key": resolve_api_key(entry.get("api_key"), provider=provider),
+                        "base_url": entry.get("api_base") or entry.get("base_url", ""),
+                    })
+                matrix = await probe_connectivity(providers, [getattr(cfg, "port", 11434)])
+                self.query_one("#health").update(render_health_matrix(matrix))
+            except Exception as exc:
+                logger.debug("Onboarding connectivity probe unavailable: %s", exc)
+                try:
+                    self.query_one("#health").update("[dim]Connectivity checks unavailable; continuing offline.[/dim]")
+                except Exception:
+                    pass
 
         def _update_view(self):
             try:
@@ -120,16 +155,13 @@ if _TEXTUAL:
 
         async def _async_download_and_integrate(self, selected: dict[str, Any]):
             def progress(downloaded: int, total: int):
-                if total > 0:
-                    pct = int((downloaded / total) * 100)
-                    mb_down = downloaded / (1024 * 1024)
-                    mb_tot = total / (1024 * 1024)
-                    try:
-                        self.query_one("#status").update(
-                            f"[bold cyan]Downloading {selected['name']}... {pct}% ({mb_down:.1f}/{mb_tot:.1f} MB)[/bold cyan]"
-                        )
-                    except Exception:
-                        pass
+                state = download_progress(downloaded, total)
+                pct = f"{state.percent}%" if state.percent is not None else f"{downloaded / (1024 * 1024):.1f} MB"
+                size = f"/{total / (1024 * 1024):.1f} MB" if total > 0 else ""
+                try:
+                    self.query_one("#status").update(f"[bold cyan]Downloading {selected['name']}... {pct} ({downloaded / (1024 * 1024):.1f}{size})[/bold cyan]")
+                except Exception:
+                    pass
 
             try:
                 await asyncio.to_thread(
@@ -148,6 +180,7 @@ if _TEXTUAL:
                 await asyncio.sleep(0.3)
                 self._finish()
             except Exception as exc:
+                logger.warning("SLM onboarding download failed; using heuristic fallback: %s", exc)
                 self._downloading = False
                 try:
                     self.query_one("#status").update(

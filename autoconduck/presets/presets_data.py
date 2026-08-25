@@ -27,7 +27,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "claude-3-7-sonnet-20250219",
             "provider": "anthropic",
-            "tier": "balanced",
             "price_in": 3.0,
             "price_out": 15.0,
             "api_key_env": "ANTHROPIC_API_KEY",
@@ -36,7 +35,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "claude-3-5-sonnet-20241022",
             "provider": "anthropic",
-            "tier": "balanced",
             "price_in": 3.0,
             "price_out": 15.0,
             "api_key_env": "ANTHROPIC_API_KEY",
@@ -44,7 +42,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "claude-3-5-haiku-20241022",
             "provider": "anthropic",
-            "tier": "budget",
             "price_in": 0.8,
             "price_out": 4.0,
             "api_key_env": "ANTHROPIC_API_KEY",
@@ -52,7 +49,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "claude-3-opus-20240229",
             "provider": "anthropic",
-            "tier": "expensive",
             "price_in": 15.0,
             "price_out": 75.0,
             "api_key_env": "ANTHROPIC_API_KEY",
@@ -60,7 +56,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "claude-sonnet-5",
             "provider": "anthropic",
-            "tier": "balanced",
             "price_in": 2.0,
             "price_out": 10.0,
             "api_key_env": "ANTHROPIC_API_KEY",
@@ -68,7 +63,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "claude-sonnet-4-6",
             "provider": "anthropic",
-            "tier": "balanced",
             "price_in": 3.0,
             "price_out": 15.0,
             "api_key_env": "ANTHROPIC_API_KEY",
@@ -76,7 +70,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "claude-opus-5",
             "provider": "anthropic",
-            "tier": "expensive",
             "price_in": 5.0,
             "price_out": 25.0,
             "api_key_env": "ANTHROPIC_API_KEY",
@@ -84,7 +77,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "claude-opus-4-8",
             "provider": "anthropic",
-            "tier": "expensive",
             "price_in": 5.0,
             "price_out": 25.0,
             "api_key_env": "ANTHROPIC_API_KEY",
@@ -92,7 +84,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "claude-haiku-4-5",
             "provider": "anthropic",
-            "tier": "budget",
             "price_in": 1.0,
             "price_out": 5.0,
             "api_key_env": "ANTHROPIC_API_KEY",
@@ -102,7 +93,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gpt-4o",
             "provider": "openai",
-            "tier": "balanced",
             "price_in": 2.5,
             "price_out": 10.0,
             "api_key_env": "OPENAI_API_KEY",
@@ -110,7 +100,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gpt-4o-mini",
             "provider": "openai",
-            "tier": "budget",
             "price_in": 0.15,
             "price_out": 0.6,
             "api_key_env": "OPENAI_API_KEY",
@@ -118,7 +107,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "o1",
             "provider": "openai",
-            "tier": "expensive",
             "price_in": 15.0,
             "price_out": 60.0,
             "api_key_env": "OPENAI_API_KEY",
@@ -127,7 +115,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "o3-mini",
             "provider": "openai",
-            "tier": "budget",
             "price_in": 1.1,
             "price_out": 4.4,
             "api_key_env": "OPENAI_API_KEY",
@@ -136,7 +123,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "o4-mini",
             "provider": "openai",
-            "tier": "budget",
             "price_in": 1.1,
             "price_out": 4.4,
             "api_key_env": "OPENAI_API_KEY",
@@ -144,7 +130,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gpt-4.5-preview",
             "provider": "openai",
-            "tier": "expensive",
             "price_in": 75.0,
             "price_out": 150.0,
             "api_key_env": "OPENAI_API_KEY",
@@ -152,7 +137,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gpt-5.6-luna",
             "provider": "openai",
-            "tier": "budget",
             "price_in": 0.2,
             "price_out": 1.2,
             "api_key_env": "OPENAI_API_KEY",
@@ -160,7 +144,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gpt-5.6",
             "provider": "openai",
-            "tier": "expensive",
             "price_in": 5.0,
             "price_out": 30.0,
             "api_key_env": "OPENAI_API_KEY",
@@ -168,7 +151,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gpt-5.2",
             "provider": "openai",
-            "tier": "balanced",
             "price_in": 1.75,
             "price_out": 14.0,
             "api_key_env": "OPENAI_API_KEY",
@@ -176,7 +158,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gpt-5-mini",
             "provider": "openai",
-            "tier": "budget",
             "price_in": 0.25,
             "price_out": 2.0,
             "api_key_env": "OPENAI_API_KEY",
@@ -184,7 +165,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gpt-5-nano",
             "provider": "openai",
-            "tier": "budget",
             "price_in": 0.05,
             "price_out": 0.4,
             "api_key_env": "OPENAI_API_KEY",
@@ -192,7 +172,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gpt-4.1",
             "provider": "openai",
-            "tier": "balanced",
             "price_in": 2.0,
             "price_out": 8.0,
             "api_key_env": "OPENAI_API_KEY",
@@ -202,7 +181,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gemini-2.5-pro",
             "provider": "google",
-            "tier": "balanced",
             "price_in": 1.25,
             "price_out": 10.0,
             "api_key_env": "GOOGLE_API_KEY",
@@ -210,7 +188,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gemini-2.5-flash",
             "provider": "google",
-            "tier": "budget",
             "price_in": 0.3,
             "price_out": 2.5,
             "api_key_env": "GOOGLE_API_KEY",
@@ -218,7 +195,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gemini-2.0-flash",
             "provider": "google",
-            "tier": "budget",
             "price_in": 0.1,
             "price_out": 0.4,
             "api_key_env": "GOOGLE_API_KEY",
@@ -226,7 +202,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gemini-1.5-pro",
             "provider": "google",
-            "tier": "balanced",
             "price_in": 1.25,
             "price_out": 5.0,
             "api_key_env": "GOOGLE_API_KEY",
@@ -234,7 +209,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gemini-1.5-flash",
             "provider": "google",
-            "tier": "budget",
             "price_in": 0.075,
             "price_out": 0.3,
             "api_key_env": "GOOGLE_API_KEY",
@@ -242,7 +216,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gemini-3.5-flash",
             "provider": "google",
-            "tier": "balanced",
             "price_in": 1.5,
             "price_out": 9.0,
             "api_key_env": "GOOGLE_API_KEY",
@@ -250,7 +223,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gemini-3.5-flash-lite",
             "provider": "google",
-            "tier": "budget",
             "price_in": 0.3,
             "price_out": 2.5,
             "api_key_env": "GOOGLE_API_KEY",
@@ -258,7 +230,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "gemini-3.1-pro-preview",
             "provider": "google",
-            "tier": "balanced",
             "price_in": 2.0,
             "price_out": 12.0,
             "api_key_env": "GOOGLE_API_KEY",
@@ -268,7 +239,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "mistral-large-latest",
             "provider": "mistral",
-            "tier": "balanced",
             "price_in": 2.0,
             "price_out": 6.0,
             "api_key_env": "MISTRAL_API_KEY",
@@ -276,7 +246,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "mistral-small-latest",
             "provider": "mistral",
-            "tier": "budget",
             "price_in": 0.1,
             "price_out": 0.3,
             "api_key_env": "MISTRAL_API_KEY",
@@ -284,7 +253,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "codestral-latest",
             "provider": "mistral",
-            "tier": "budget",
             "price_in": 0.3,
             "price_out": 0.9,
             "api_key_env": "MISTRAL_API_KEY",
@@ -292,7 +260,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "ministral-8b-latest",
             "provider": "mistral",
-            "tier": "budget",
             "price_in": 0.1,
             "price_out": 0.1,
             "api_key_env": "MISTRAL_API_KEY",
@@ -302,7 +269,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "deepseek-chat",
             "provider": "deepseek",
-            "tier": "budget",
             "price_in": 0.14,
             "price_out": 0.28,
             "api_key_env": "DEEPSEEK_API_KEY",
@@ -310,7 +276,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "deepseek-reasoner",
             "provider": "deepseek",
-            "tier": "budget",
             "price_in": 0.55,
             "price_out": 2.19,
             "api_key_env": "DEEPSEEK_API_KEY",
@@ -319,7 +284,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "deepseek-v3.2",
             "provider": "deepseek",
-            "tier": "budget",
             "price_in": 0.26,
             "price_out": 0.38,
             "api_key_env": "DEEPSEEK_API_KEY",
@@ -327,7 +291,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "deepseek-v4-flash",
             "provider": "deepseek",
-            "tier": "budget",
             "price_in": 0.14,
             "price_out": 0.28,
             "api_key_env": "DEEPSEEK_API_KEY",
@@ -335,7 +298,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "deepseek-v4-pro",
             "provider": "deepseek",
-            "tier": "budget",
             "price_in": 0.43,
             "price_out": 0.87,
             "api_key_env": "DEEPSEEK_API_KEY",
@@ -345,7 +307,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "llama-3.3-70b-versatile",
             "provider": "groq",
-            "tier": "budget",
             "price_in": 0.59,
             "price_out": 0.79,
             "api_key_env": "GROQ_API_KEY",
@@ -353,7 +314,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "llama-3.1-8b-instant",
             "provider": "groq",
-            "tier": "budget",
             "price_in": 0.05,
             "price_out": 0.08,
             "api_key_env": "GROQ_API_KEY",
@@ -361,7 +321,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "mixtral-8x7b-32768",
             "provider": "groq",
-            "tier": "budget",
             "price_in": 0.24,
             "price_out": 0.24,
             "api_key_env": "GROQ_API_KEY",
@@ -369,7 +328,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "deepseek-r1-distill-llama-70b",
             "provider": "groq",
-            "tier": "budget",
             "price_in": 0.75,
             "price_out": 0.99,
             "api_key_env": "GROQ_API_KEY",
@@ -379,7 +337,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "openrouter/auto",
             "provider": "openrouter",
-            "tier": "balanced",
             "price_in": 1.0,
             "price_out": 2.0,
             "api_key_env": "OPENROUTER_API_KEY",
@@ -387,7 +344,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "anthropic/claude-3.5-sonnet",
             "provider": "openrouter",
-            "tier": "expensive",
             "price_in": 3.0,
             "price_out": 15.0,
             "api_key_env": "OPENROUTER_API_KEY",
@@ -395,7 +351,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "openai/gpt-4o",
             "provider": "openrouter",
-            "tier": "balanced",
             "price_in": 2.5,
             "price_out": 10.0,
             "api_key_env": "OPENROUTER_API_KEY",
@@ -403,7 +358,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "deepseek/deepseek-r1",
             "provider": "openrouter",
-            "tier": "budget",
             "price_in": 0.55,
             "price_out": 2.19,
             "api_key_env": "OPENROUTER_API_KEY",
@@ -411,7 +365,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "google/gemini-2.5-flash",
             "provider": "openrouter",
-            "tier": "budget",
             "price_in": 0.30,
             "price_out": 2.50,
             "api_key_env": "OPENROUTER_API_KEY",
@@ -421,7 +374,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "togethercomputer/llama-3.3-70b-instruct",
             "provider": "together",
-            "tier": "budget",
             "price_in": 0.88,
             "price_out": 0.88,
             "api_key_env": "TOGETHER_API_KEY",
@@ -429,7 +381,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
             "provider": "together",
-            "tier": "budget",
             "price_in": 0.88,
             "price_out": 0.88,
             "api_key_env": "TOGETHER_API_KEY",
@@ -437,7 +388,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "deepseek-ai/DeepSeek-R1",
             "provider": "together",
-            "tier": "budget",
             "price_in": 0.55,
             "price_out": 2.19,
             "api_key_env": "TOGETHER_API_KEY",
@@ -445,7 +395,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "deepseek-ai/DeepSeek-V3",
             "provider": "together",
-            "tier": "budget",
             "price_in": 0.14,
             "price_out": 0.28,
             "api_key_env": "TOGETHER_API_KEY",
@@ -455,7 +404,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "grok-2-latest",
             "provider": "xai",
-            "tier": "balanced",
             "price_in": 2.0,
             "price_out": 10.0,
             "api_key_env": "XAI_API_KEY",
@@ -463,7 +411,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "grok-2-vision-latest",
             "provider": "xai",
-            "tier": "balanced",
             "price_in": 2.0,
             "price_out": 10.0,
             "api_key_env": "XAI_API_KEY",
@@ -471,7 +418,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "grok-beta",
             "provider": "xai",
-            "tier": "expensive",
             "price_in": 5.0,
             "price_out": 15.0,
             "api_key_env": "XAI_API_KEY",
@@ -479,7 +425,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "grok-4.5",
             "provider": "xai",
-            "tier": "balanced",
             "price_in": 2.0,
             "price_out": 6.0,
             "api_key_env": "XAI_API_KEY",
@@ -487,7 +432,6 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
         {
             "id": "grok-4-6",
             "provider": "xai",
-            "tier": "balanced",
             "price_in": 2.0,
             "price_out": 6.0,
             "api_key_env": "XAI_API_KEY",

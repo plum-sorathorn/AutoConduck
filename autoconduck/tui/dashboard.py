@@ -12,8 +12,10 @@ from autoconduck.tui.dashboard_screens import (
 )
 from autoconduck.tui.dashboard_widgets import (
     _cell_len,
+    decision_path,
     _format_box_lines,
     move_cursor,
+    record_value,
     render_log_rows,
 )
 from autoconduck.tui.keymap import FOOTER_HINT
@@ -21,7 +23,7 @@ from autoconduck.tui.keymap import FOOTER_HINT
 try:
     from textual.containers import Vertical
     from textual.screen import Screen
-    from textual.widgets import Static
+    from textual.widgets import DataTable, Static
     _TEXTUAL = True
 except ImportError:
     _TEXTUAL = False
@@ -45,7 +47,7 @@ if _TEXTUAL:
 
         MENU_ITEMS = [
             ("d", "Live Routing Stats", "Real-time routing decisions & cost tracker"),
-            ("m", "Configure Models", "Add providers, select models, set API keys"),
+            ("m", "Model Catalog", "Providers, presets, and API key vault"),
             ("u", "Check for Updates", "Check latest version & upgrade AutoConduck"),
             ("s", "Settings", "Launch behaviour, thresholds, log level"),
             ("a", "Launch Agent", "Start a configured coding agent"),
@@ -128,9 +130,8 @@ if _TEXTUAL:
             if idx == 0:
                 app.push_screen(DashboardScreen())
             elif idx == 1:
-                from .onboarding import ModelSourceScreen
-
-                app.push_screen(ModelSourceScreen(app))
+                from .onboarding.screens_models import ModelCatalogScreen
+                app.push_screen(ModelCatalogScreen(app))
             elif idx == 2:
                 app.push_screen(UpdateScreen(app))
             elif idx == 3:
@@ -160,7 +161,7 @@ if _TEXTUAL:
     class DashboardScreen(Screen):
         """Live routing decisions log — accessible from the main menu."""
 
-        BINDINGS = [("d", "drill", "drill"), ("p", "pause", "pause")]
+        BINDINGS = [("d", "drill", "drill selected decision"), ("p", "pause", "pause"), ("enter", "drill", "open decision")]
         DUCK_FRAMES = [
             '  __(o<   [bold cyan]AutoConduck[/bold cyan] . [green]proxy active[/green]',
             '  __(.<   [bold cyan]AutoConduck[/bold cyan] . [green]proxy active[/green]',
@@ -183,26 +184,28 @@ if _TEXTUAL:
             self.models_breakdown: dict[str, dict[str, Any]] = {}
             self.paths: dict[str, int] = {}
             self.pseudos: dict[str, int] = {}
+            self.metrics: dict[str, Any] = {}
 
         def compose(self):
             yield Vertical(
                 Static(self._mascot_header(), id="header", markup=True),
                 Static(self._graph_view(), id="graph", markup=True),
+                Static(self._telemetry_cards(), id="telemetry", markup=True),
                 Static(self._stats_summary(), id="stats", markup=True),
+                DataTable(id="decisions", cursor_type="row"),
                 Static(
-                    "recent routing decisions\n"
-                    + render_log_rows(self.records, self.cursor),
-                    id="log",
-                    markup=True,
-                ),
-                Static(
-                    "[up/down] move  [d] details  [p] pause  [esc/left] back  [ctrl+c] quit",
+                    "[up/down] move  [enter/d] details  [p] pause  [esc/left] back  [ctrl+c] quit",
                     id="footer",
                     markup=False,
                 ),
             )
 
         def on_mount(self):
+            try:
+                table = self.query_one("#decisions", DataTable)
+                table.add_columns("Timestamp", "Turn #", "Path", "Model Selected", "In/Out Tokens", "Cost ($)", "Turn Latency (ms)")
+            except Exception:
+                pass
             self._update_stats()
             self.set_interval(0.8, self._tick)
 
@@ -212,7 +215,9 @@ if _TEXTUAL:
             try:
                 self.query_one("#header", Static).update(self._mascot_header())
                 self.query_one("#graph", Static).update(self._graph_view())
+                self.query_one("#telemetry", Static).update(self._telemetry_cards())
                 self.query_one("#stats", Static).update(self._stats_summary())
+                self._refresh_table()
             except Exception:
                 pass
 
@@ -228,8 +233,39 @@ if _TEXTUAL:
                     self.models_breakdown = agg.get("models", {})
                     self.paths = agg.get("paths", {})
                     self.pseudos = agg.get("pseudos", {})
+                    self.metrics = agg.get("totals", {})
+                else:
+                    self.metrics = {}
             except Exception:
                 pass
+
+        def _refresh_table(self):
+            try:
+                table = self.query_one("#decisions", DataTable)
+                table.clear(columns=False)
+                for index, record in enumerate(self.records):
+                    stamp = str(record_value(record, "time", "timestamp", "ts"))[:19]
+                    path = decision_path(record)
+                    model = str(record_value(record, "model", "model_used"))[:24]
+                    prompt = int(record.get("prompt_tokens", 0) or 0)
+                    completion = int(record.get("completion_tokens", 0) or 0)
+                    latency = record_value(record, "latency_ms", "turn_latency_ms")
+                    table.add_row(stamp, str(record_value(record, "turn", "turn_number", default=index + 1)), path, model, f"{prompt:,}/{completion:,}", f"${float(record.get('cost', 0) or 0):.4f}", str(latency))
+            except Exception:
+                pass
+
+        def _telemetry_cards(self) -> str:
+            t = self.metrics or self.totals
+            cost = float(t.get("cost", 0) or 0)
+            savings = float(t.get("savings_percentage", 0) or 0)
+            prompt = int(t.get("prompt_tokens", 0) or 0)
+            completion = int(t.get("completion_tokens", 0) or 0)
+            cache = float(t.get("prompt_cache_hit_ratio", t.get("cache_hit_ratio", 0)) or 0)
+            return "\n".join(_format_box_lines("Live Telemetry", [
+                f"Cost: [bold green]${cost:.4f}[/bold green] session/monthly  Savings: [bold cyan]{savings:.1f}%[/bold cyan]",
+                f"Requests: [bold]{t.get('calls', 0)}[/bold]  Active streams: [bold]{t.get('active_streams', t.get('concurrent_streams', 0))}[/bold]  Token velocity: {prompt:,} prompt / {completion:,} completion tok/s",
+                f"Prefix cache: [bold]{cache:.1f}%[/bold] hit  Latency saved: [bold]{float(t.get('estimated_latency_saved_ms', 0) or 0):.1f} ms[/bold]",
+            ], width=76))
 
         def _graph_view(self) -> str:
             try:
@@ -248,7 +284,7 @@ if _TEXTUAL:
             completed = active.get("subtasks_completed", 0)
             total = active.get("subtasks_total", 0)
 
-            if is_active and path == "SLOW":
+            if is_active and decision_path({"path": path}) == "SLOW":
                 tg_n = "[green][OK] GUARD[/green]"
                 slm_n = (
                     "[bold yellow]● SLM PLAN[/bold yellow]"
@@ -289,7 +325,7 @@ if _TEXTUAL:
                         width=76,
                     )
                 )
-            elif is_active and path == "FAST":
+            elif is_active and decision_path({"path": path}) == "FAST":
                 lines = [
                     f"Selected Model: [bold green]{model}[/bold green] | Task Value V: [bold]{val:.2f}[/bold]",
                     "",
@@ -304,6 +340,12 @@ if _TEXTUAL:
                         width=76,
                     )
                 )
+            elif is_active and decision_path({"path": path}) == "OMP":
+                lines = [f"Delegated Model: [bold cyan]{model}[/bold cyan]", "", "[START] ──► [Turn Guard] ──► [OMP Agent Delegation] ──► [OMP Subagent Hook] ──► [END]", "", f"Status: [bold cyan]{detail}[/bold cyan]"]
+                return "\n".join(_format_box_lines("OMP Agent Delegation", lines, width=76))
+            elif is_active:
+                lines = [f"Model: [bold yellow]{model}[/bold yellow]", "", "[START] ──► [Turn Guard] ──► [FALLBACK PATH] ──► [END]", "", f"Status: [bold yellow]{detail}[/bold yellow]"]
+                return "\n".join(_format_box_lines("Fallback Path", lines, width=76))
             else:
                 from autoconduck import __version__
                 lines = [
@@ -355,16 +397,10 @@ if _TEXTUAL:
         def on_key(self, event):
             if event.key == "down":
                 self.cursor = move_cursor(self.cursor, 1, len(self.records))
-                self.query_one("#log").update(
-                    "recent routing decisions\n"
-                    + render_log_rows(self.records, self.cursor)
-                )
+                self._refresh_table()
             elif event.key == "up":
                 self.cursor = move_cursor(self.cursor, -1, len(self.records))
-                self.query_one("#log").update(
-                    "recent routing decisions\n"
-                    + render_log_rows(self.records, self.cursor)
-                )
+                self._refresh_table()
             elif event.key in ("left", "escape", "b"):
                 self.app.pop_screen()
 
@@ -375,6 +411,13 @@ if _TEXTUAL:
         def action_drill(self):
             record = self.records[self.cursor] if self.records else {}
             self.app.push_screen(DrillDownScreen(record))
+
+        def on_data_table_row_selected(self, event):
+            try:
+                self.cursor = event.cursor_row
+                self.action_drill()
+            except Exception:
+                pass
 
 else:
     class MainMenuScreen(Screen):  # type: ignore

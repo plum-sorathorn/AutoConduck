@@ -34,18 +34,6 @@ if _TEXTUAL:
                 "str",
             ),
             (
-                "selection.cheap_fast_max_cost",
-                "Cheap/Fast Tier Ceiling ($/1M)",
-                "Max cost ceiling for cheap_fast model pool (default 0.50)",
-                "float",
-            ),
-            (
-                "selection.balanced_max_cost",
-                "Balanced Tier Ceiling ($/1M)",
-                "Max cost ceiling for balanced model pool (default 4.00)",
-                "float",
-            ),
-            (
                 "selection.slm_circuit_breaker_timeout_ms",
                 "SLM Circuit Breaker (ms)",
                 "Timeout before degrading to balanced fallback (default 100)",
@@ -67,18 +55,6 @@ if _TEXTUAL:
                 "selection.rag_max_tokens",
                 "RAG Retrieval Max Tokens",
                 "Max retrieved tokens from LanceDB vector store (default 250)",
-                "int",
-            ),
-            (
-                "selection.value_to_cost_gamma",
-                "Value-to-Cost Gamma",
-                "Logarithmic cost scaling coefficient (default 1.0)",
-                "float",
-            ),
-            (
-                "selection.ema_min_samples",
-                "EMA Min Samples",
-                "Minimum samples before blending realized costs (default 3)",
                 "int",
             ),
         ]

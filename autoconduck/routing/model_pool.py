@@ -9,7 +9,6 @@ from typing import Any
 from autoconduck.config import Config
 from autoconduck.config.resolver import resolve_orchestrator_model
 from autoconduck.presets.model_presets import PRESETS
-from autoconduck.routing import pricing
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +156,7 @@ class ModelPool:
             return fallback
 
         # 1. Filter enabled & non-degraded & excluded
+        from autoconduck.routing import pricing
         eligible = [
             e for e in entries
             if e.enabled and not pricing.is_degraded(e.id) and e.id not in sla.exclude_models

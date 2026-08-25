@@ -268,12 +268,6 @@ Configuration is stored in `~/.autoconduck/config.yaml` (or `$AUTOCONDUCK_HOME/c
 
 ```yaml
 selection:
-  value_to_cost_gamma: 1.0
-  pseudo_bias_budget: -0.20
-  pseudo_bias_expensive: 0.20
-  pseudo_bias_enabled: true
-  ema_min_samples: 3
-  ema_alpha: 0.1
   degraded_error_rate: 0.20
   degraded_window_s: 300
   ambiguous_low: 0.60

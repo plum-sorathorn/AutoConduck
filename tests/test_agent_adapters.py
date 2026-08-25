@@ -21,6 +21,7 @@ def test_all_adapters_registered():
         "claude_code",
         "opencode",
         "pi",
+        "omp",
     }
     assert ids == expected
     assert binary_name_for("claude_code") == "claude"
@@ -32,7 +33,7 @@ def test_harnesses_module_alias():
     import autoconduck.harnesses as harnesses
     adapters = harnesses.all_harnesses()
     ids = {a.id for a in adapters}
-    assert ids == {"claude_code", "opencode", "pi"}
+    assert ids == {"claude_code", "opencode", "pi", "omp"}
 
 
 def test_claude_code_adapter_patch_and_revert(tmp_path, monkeypatch):

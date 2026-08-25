@@ -62,6 +62,18 @@ def _pi_env_blocks() -> tuple[str, str]:
     )
 
 
+def _omp_env_blocks(port: int, pseudo: str = "autoconduck") -> tuple[str, str]:
+    """Return OMP's proxy endpoint and default model environment."""
+    return (
+        'export OMP_BASE_URL="http://127.0.0.1:${PORT}/v1"\n'
+        'export OMP_API_KEY="autoconduck-local"\n'
+        f'export OMP_MODEL="autoconduck/{pseudo}"',
+        'set "OMP_BASE_URL=http://127.0.0.1:%PORT%/v1"\n'
+        'set "OMP_API_KEY=autoconduck-local"\n'
+        f'set "OMP_MODEL=autoconduck/{pseudo}"',
+    )
+
+
 def _opencode_env_blocks(port: int, pseudo: str = "autoconduck") -> tuple[str, str]:
     """Return environment variables for OpenCode."""
     bash = (
@@ -99,6 +111,9 @@ def shim_script(agent_id, real_bin):
     elif agent_id == "opencode":
         bash_env, _ = _opencode_env_blocks(cfg.port, pseudo)
         lines.append(bash_env)
+    elif agent_id == "omp":
+        bash_env, _ = _omp_env_blocks(cfg.port, pseudo)
+        lines.append(bash_env)
     lines.append('SHIM_ID="$$"')
     lines.append('"$PY" -m autoconduck ensure --port "$PORT" --client-id "$SHIM_ID" || true')
     lines.append('"$REAL_BIN" "$@"')
@@ -131,6 +146,9 @@ def shim_script_win(agent_id, real_bin):
         lines.append(cmd_env)
     elif agent_id == "opencode":
         _, cmd_env = _opencode_env_blocks(cfg.port, pseudo)
+        lines.append(cmd_env)
+    elif agent_id == "omp":
+        _, cmd_env = _omp_env_blocks(cfg.port, pseudo)
         lines.append(cmd_env)
     lines.append('set "SHIM_ID=%RANDOM%%RANDOM%%RANDOM%"')
     lines.append('"%PY%" -m autoconduck ensure --port %PORT% --client-id %SHIM_ID%')

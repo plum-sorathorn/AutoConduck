@@ -9,12 +9,14 @@ from .base import BaseAdapter
 from .claude_code import ClaudeCodeAdapter
 from .opencode import OpenCodeAdapter
 from .pi import PiAdapter
+from .omp import OmpAdapter
 
 __all__ = [
     "BaseAdapter",
     "ClaudeCodeAdapter",
     "OpenCodeAdapter",
     "PiAdapter",
+    "OmpAdapter",
     "all_adapters",
     "all_harnesses",
     "binary_name_for",
@@ -27,6 +29,7 @@ def all_adapters() -> list[BaseAdapter]:
         ClaudeCodeAdapter(),
         OpenCodeAdapter(),
         PiAdapter(),
+        OmpAdapter(),
     ]
 
 

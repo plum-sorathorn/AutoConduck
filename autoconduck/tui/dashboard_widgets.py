@@ -35,6 +35,26 @@ def render_log_rows(records: list[dict[str, Any]], cursor: int) -> str:
     return "\n".join(lines)
 
 
+def decision_path(record: dict[str, Any]) -> str:
+    """Normalize audit-log routing names for the dashboard."""
+    value = str(record.get("path", record.get("route", "FAST"))).upper()
+    if "OMP" in value or "AGENT" in value or "DELEGAT" in value:
+        return "OMP"
+    if "FALLBACK" in value or value in {"ERROR", "UNKNOWN"}:
+        return "FALLBACK"
+    if value in {"SLOW", "DAG", "DYNAMIC", "SLM"}:
+        return "SLOW"
+    return "FAST"
+
+
+def record_value(record: dict[str, Any], *keys: str, default: Any = "—") -> Any:
+    for key in keys:
+        value = record.get(key)
+        if value is not None and value != "":
+            return value
+    return default
+
+
 def _cell_len(s: str) -> int:
     """Compute visual terminal cell width of markup string."""
     try:

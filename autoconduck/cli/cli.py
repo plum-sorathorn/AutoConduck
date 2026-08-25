@@ -13,6 +13,41 @@ from autoconduck.config import get_config, load_config, save_config, home_dir
 from autoconduck.server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
 from .cli_launch import cmd_launch_agent, cmd_install, _open_new_terminal
 
+
+def cmd_omp_link(args):
+    from autoconduck import launcher
+    from autoconduck.harnesses import OmpAdapter
+
+    adapter = OmpAdapter()
+    if not adapter.detect():
+        print("Oh My Pi was not detected", file=sys.stderr)
+        return 1
+    cfg = load_config()
+    try:
+        adapter.patch(cfg, port=getattr(cfg, "port", DEFAULT_PORT))
+        launcher.install_shims(["omp"])
+        launcher.ensure_path_entry()
+    except Exception as exc:
+        print(f"failed omp: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_omp_unlink(args):
+    from autoconduck import launcher
+    from autoconduck.harnesses import OmpAdapter
+
+    try:
+        OmpAdapter().revert()
+        launcher.uninstall_shims(["omp"])
+        cfg = load_config()
+        if not cfg.shims:
+            launcher.remove_path_entry()
+    except Exception as exc:
+        print(f"failed omp unlink: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
 def _invoke_check_port(port: int, host: str = "127.0.0.1") -> None:
     fn = getattr(sys.modules.get(__name__), "_check_port_available", _check_port_available)
     try:
@@ -397,6 +432,12 @@ def main(argv: list[str] | None = None):
     install = sub.add_parser("install")
     install.add_argument("agents", nargs="*")
     install.set_defaults(handler=cmd_install)
+    omp = sub.add_parser("omp")
+    omp_sub = omp.add_subparsers(dest="omp_cmd", required=True)
+    omp_link = omp_sub.add_parser("link")
+    omp_link.set_defaults(handler=cmd_omp_link)
+    omp_unlink = omp_sub.add_parser("unlink")
+    omp_unlink.set_defaults(handler=cmd_omp_unlink)
     upd = sub.add_parser("update")
     upd.add_argument("--dry-run", action="store_true")
     upd.set_defaults(handler=cmd_update)

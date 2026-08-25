@@ -12,6 +12,9 @@ AGENT_ALIASES: dict[str, str] = {
     "opencode": "opencode",
     "open-code": "opencode",
     "pi": "pi",
+    "omp": "omp",
+    "ohmypi": "omp",
+    "oh-my-pi": "omp",
 }
 
 
@@ -21,7 +24,7 @@ def resolve_agent_ids(requested: list[str] | None) -> list[str]:
 
     adapters = all_adapters()
     if not requested:
-        return [a.id for a in adapters if launcher.real_binary_path(a.id) or a.id in ("claude_code", "opencode", "pi")]
+        return [a.id for a in adapters if launcher.real_binary_path(a.id) or a.id in ("claude_code", "opencode", "pi", "omp")]
 
     resolved: list[str] = []
     for raw in requested:

@@ -1,43 +1,64 @@
 __version__ = "0.3.4"
 
+import importlib
+
+_LAZY_MODULES = {
+    "_compat": "._compat", "auth": ".auth", "cli": ".cli",
+    "harnesses": ".harnesses", "launcher": ".launcher",
+    "orchestrator": ".orchestrator", "presets": ".presets",
+    "routing": ".routing", "server": ".server", "tui": ".tui",
+    "server_streaming": ".server.server_streaming", "messages_api": ".server.messages_api",
+    "messages_models": ".server.messages_models", "messages_sse": ".server.messages_sse",
+    "providers": ".auth.providers",
+    "dispatcher": ".routing.dispatcher",
+}
+
+
 import sys
+import types
 
-from . import (
-    _compat,  # noqa: F401
-    auth,
-    cli,
-    harnesses,
-    launcher,
-    presets,
-    server,
-)
-from . import orchestrator as _orchestrator  # noqa: F401
-from . import routing as _routing  # noqa: F401
-from . import tui as _tui  # noqa: F401
-from .routing import dispatcher, model_pool, pricing, slm_planner
 
-agents = harnesses
-sys.modules["autoconduck._compat"] = _compat
-sys.modules["autoconduck.harnesses"] = harnesses
-sys.modules["autoconduck.agents"] = harnesses
-sys.modules["autoconduck.auth"] = auth
-sys.modules["autoconduck.providers"] = auth.providers
-sys.modules["autoconduck.cli"] = cli
-sys.modules["autoconduck.cli_launch"] = cli.cli_launch
-sys.modules["autoconduck.launcher"] = launcher
-sys.modules["autoconduck.launcher_procs"] = launcher.launcher_procs
-sys.modules["autoconduck.launcher_shims"] = launcher.launcher_shims
-sys.modules["autoconduck.model_presets"] = presets.model_presets
-sys.modules["autoconduck.presets_data"] = presets.presets_data
-sys.modules["autoconduck.presets_fallback"] = presets.presets_fallback
-sys.modules["autoconduck.presets_ingest"] = presets.presets_ingest
-sys.modules["autoconduck.server"] = server
-sys.modules["autoconduck.server_routes"] = server.server_routes
-sys.modules["autoconduck.server_streaming"] = server.server_streaming
-sys.modules["autoconduck.messages_api"] = server.messages_api
-sys.modules["autoconduck.messages_models"] = server.messages_models
-sys.modules["autoconduck.messages_sse"] = server.messages_sse
-sys.modules["autoconduck.dispatcher"] = dispatcher
-sys.modules["autoconduck.pricing"] = pricing
-sys.modules["autoconduck.model_pool"] = model_pool
-sys.modules["autoconduck.slm_planner"] = slm_planner
+def __getattr__(name):
+    if name == "agents":
+        return __getattr__("harnesses")
+    module_name = _LAZY_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(module_name, __name__)
+    globals()[name] = module
+    sys.modules[f"{__name__}.{name}"] = module
+    return module
+
+
+def _register_lazy_aliases():
+    """Pre-register placeholder sys.modules entries for legacy FLAT aliases whose
+    dotted target is nested (e.g. "server_streaming" -> ".server.server_streaming")
+    so `import autoconduck.<name>` / `from autoconduck.<name> import X` resolve
+    without eagerly importing the (possibly heavy) real submodule. The import
+    machinery checks sys.modules for the dotted name right after importing this
+    parent package and before consulting any finder, so the alias must exist
+    here, not only via __getattr__.
+
+    Real on-disk subpackages (e.g. "auth", "routing", "server") are intentionally
+    skipped: they already resolve via the normal filesystem-based import system,
+    and pre-registering a placeholder for them would shadow the real package in
+    sys.modules and break its own submodule resolution (e.g. autoconduck.server
+    importing autoconduck.server.server_streaming).
+    """
+    for alias_name, target_name in _LAZY_MODULES.items():
+        if target_name == f".{alias_name}":
+            continue  # real subpackage; normal import already works
+        full_alias = f"{__name__}.{alias_name}"
+        placeholder = types.ModuleType(full_alias)
+
+        def _placeholder_getattr(attr, _alias_name=alias_name, _target_name=target_name, _full_alias=full_alias):
+            real = importlib.import_module(_target_name, __name__)
+            sys.modules[_full_alias] = real
+            globals()[_alias_name] = real
+            return getattr(real, attr)
+
+        placeholder.__getattr__ = _placeholder_getattr
+        sys.modules[full_alias] = placeholder
+
+
+_register_lazy_aliases()

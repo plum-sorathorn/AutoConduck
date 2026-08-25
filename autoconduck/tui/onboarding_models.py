@@ -1,6 +1,7 @@
 """Pure data helpers used by the onboarding screens."""
 from __future__ import annotations
 import re
+from functools import lru_cache
 from copy import deepcopy
 from typing import Any
 
@@ -26,11 +27,49 @@ def apply_api_key(entries: list[dict], value: str) -> list[dict]:
             for entry in result
             for entry_without_env in [{key: item for key, item in entry.items() if key != "api_key_env"}]]
 
+@lru_cache(maxsize=2048)
+def _search_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
 def search_match(term: str, *fields: str) -> bool:
     """Return whether a separator-insensitive term occurs in any field."""
-    normalize = lambda value: re.sub(r"[^a-z0-9]", "", value.lower())
-    normalized_term = normalize(term)
-    return not normalized_term or any(normalized_term in normalize(field) for field in fields)
+    normalized_term = _search_text(term)
+    return not normalized_term or any(normalized_term in _search_text(str(field)) for field in fields)
+
+
+def filter_catalog(models: list[dict[str, Any]], term: str = "", provider: str | None = None,
+                   capabilities: set[str] | None = None, min_context: int = 0) -> list[dict[str, Any]]:
+    """Filter catalog rows using cheap, deterministic predicates for live TUI updates."""
+    wanted = {item.lower() for item in (capabilities or set())}
+    result = []
+    for model in models:
+        if provider and str(model.get("provider", "")) != provider:
+            continue
+        if min_context and int(model.get("context_window", 0) or 0) < min_context:
+            continue
+        caps = {"thinking" if model.get("is_reasoning") else "",
+                "tool use" if model.get("supports_tools") else "",
+                "vision" if model.get("supports_vision") else ""}
+        if wanted and not wanted.issubset(caps):
+            continue
+        if search_match(term, model.get("id", ""), model.get("provider", "")):
+            result.append(model)
+    return result
+
+
+def catalog_filter_chips(models: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Return stable chip values available in a catalog."""
+    contexts = sorted({int(m.get("context_window", 0) or 0) for m in models if m.get("context_window")})
+    buckets = sorted({"<32k" if c < 32000 else "32k-128k" if c <= 128000 else ">128k" for c in contexts})
+    return {"providers": sorted({str(m.get("provider", "")) for m in models if m.get("provider")}),
+            "capabilities": ["Thinking", "Tool Use", "Vision"], "context_windows": buckets}
+
+
+def endpoint_check_description(provider: str, base_url: str, has_key: bool) -> dict[str, Any]:
+    """Describe an endpoint check without touching the network."""
+    return {"provider": provider, "base_url": base_url.strip(), "checks": ["connectivity", "latency", "authentication"],
+            "credentials_present": bool(has_key), "status": "ready" if has_key else "missing_credentials"}
 
 def models_for_provider(key: str, presets: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
     return [dict(row) for row in presets.get(key, [])]

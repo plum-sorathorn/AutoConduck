@@ -14,7 +14,6 @@ class ModelEntry(BaseModel):
     base_url: str | None = None
     anthropic_base_url: str | None = None
     api_base: str | None = None
-    tier: str = "balanced"
     price_in: float = 0.0
     price_out: float = 0.0
     cost_input: float = 0.0
@@ -39,17 +38,10 @@ class SelectionConfig(BaseModel):
     # 0.3.0 SLM Architecture & Dynamic DAG Tunables
     slm_model_path: str = "models/qwen2.5-coder-0.5b-instruct-q4.onnx"
     slm_circuit_breaker_timeout_ms: int = 100
-    cheap_fast_max_cost: float = 0.50
-    balanced_max_cost: float = 4.00
     session_guard_compaction_ratio: float = 0.80
     rag_max_tokens: int = 250
     rag_db_path: str = "~/.autoconduck/rag_db"
 
-    value_to_cost_gamma: float = 1.0
-    pseudo_bias_budget: float = -0.20
-    pseudo_bias_expensive: float = 0.20
-    pseudo_bias_enabled: bool = True
-    ema_min_samples: int = 3
     closeness_epsilon: float = 0.02
     expose_value_in_stats: bool = True
     phase_bands: dict[str, list[float]] = Field(default_factory=dict)
@@ -70,7 +62,6 @@ class SelectionConfig(BaseModel):
             # weights sum to 1.00
         }
     )
-    ema_alpha: float = 0.1
     quality_min_success_rate: float = 0.5
     spend_guard_enabled: bool = True
     spend_guard_max_usd_per_min: float = 0.20
@@ -102,7 +93,6 @@ class SelectionConfig(BaseModel):
     recon_max_complexity: float = 0.20
     edit_min_complexity: float = 0.45
     verify_complexity_band: list[float] = [0.20, 0.50]
-    latency_sensitivity: float = 0.0
     intent_drift_enabled: bool = True
     intent_drift_threshold: float = 0.70
     hysteresis_window_size: int = 5
