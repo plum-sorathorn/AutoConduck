@@ -49,9 +49,7 @@ async def handle_chat_completions(
             progress_setting = False
         else:
             progress_setting = configured_progress
-    progress_enabled = (
-        body.stream and progress_setting and body.model in PSEUDO_MODELS
-    )
+    progress_enabled = body.stream and progress_setting
 
     if progress_enabled:
 

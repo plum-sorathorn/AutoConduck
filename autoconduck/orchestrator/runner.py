@@ -47,6 +47,7 @@ async def run_dynamic_orchestration(
             except Exception:
                 pass
 
+        # Rebuild the graph every turn: the plan is re-derived per turn, so no caching/checkpointer.
         runner = build_dynamic_graph(plan, on_progress=on_progress)
         if on_progress is not None and plan.subtasks:
             try:

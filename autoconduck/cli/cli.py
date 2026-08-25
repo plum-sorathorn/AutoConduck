@@ -11,6 +11,7 @@ from autoconduck.config import get_config, load_config, save_config, home_dir
 # Heavy deps (fastapi, pydantic-core, litellm, textual, uvicorn) are deferred until a
 # server/CLI command actually needs them.
 from autoconduck.server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
+from autoconduck.server.server_streaming import _write_crash_report
 from .cli_launch import cmd_launch_agent, cmd_install, _open_new_terminal
 
 
@@ -467,5 +468,12 @@ def main(argv: list[str] | None = None):
             cmd_start(argparse.Namespace(headless=False, port=None, host="127.0.0.1"))
     except (KeyboardInterrupt, asyncio.CancelledError):
         return 0
+    except Exception as exc:
+        _write_crash_report(exc)
+        print(
+            f"AutoConduck crashed: {exc} — details in {home_dir() / 'run' / 'server.crash'}",
+            file=sys.stderr,
+        )
+        return 1
 from autoconduck.server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
 from .cli_launch import cmd_launch_agent, cmd_install, _open_new_terminal

@@ -71,7 +71,14 @@ if _TEXTUAL:
         def __init__(self, app_controller=None, selected=None):
             super().__init__()
             self.controller = app_controller
-            self.agent_selected = set(selected or ())
+            if selected is None:
+                self.agent_selected = {
+                    agent
+                    for agent in AGENTS
+                    if is_agent_configured(agent) or agent in detect_agents()
+                }
+            else:
+                self.agent_selected = set(selected)
             self.cursor = 0
             self.selected = set()
 

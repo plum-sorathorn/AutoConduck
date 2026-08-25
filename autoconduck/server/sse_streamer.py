@@ -35,11 +35,11 @@ PROGRESS_LABELS = {
 
 def render_progress_event(event: dict[str, object]) -> str:
     """Render one orchestration progress event as compact plain ASCII."""
-    node = str(event.get("node", "progress"))
+    node = str(event.get("node") or "progress")
     state = str(event.get("state", "running"))
     detail = str(event.get("step_detail") or node)
     label = PROGRESS_LABELS.get(node, node)
-    if node in {"slm_plan", "subagent_pool"} or (node == "rag" and state == "running"):
+    if node in {"slm_plan", "subagent_pool"}:
         lines = detail.splitlines() or [detail]
         return "\n".join([f"+-- [{label}]", *[f"| {line}" for line in lines], "'--"]) + "\n"
     glyph = STATUS_GLYPHS.get(state, "[..]")

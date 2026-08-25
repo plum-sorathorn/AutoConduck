@@ -231,6 +231,10 @@ if _TEXTUAL:
                     self.controller.pop_screen()
             elif event.key == "e":
                 self._start_edit()
+            elif event.key == "c" and self.controller:
+                from .onboarding import ModelSourceScreen
+
+                self.controller.push_screen(ModelSourceScreen(self.controller))
             event.stop()
 
 else:

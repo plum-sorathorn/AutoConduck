@@ -48,6 +48,7 @@ if _TEXTUAL:
         MENU_ITEMS = [
             ("d", "Live Routing Stats", "Real-time routing decisions & cost tracker"),
             ("m", "Model Catalog", "Providers, presets, and API key vault"),
+            ("c", "Configure Integrations", "Re-configure models and coding agents"),
             ("u", "Check for Updates", "Check latest version & upgrade AutoConduck"),
             ("s", "Settings", "Launch behaviour, thresholds, log level"),
             ("a", "Launch Agent", "Start a configured coding agent"),
@@ -133,12 +134,15 @@ if _TEXTUAL:
                 from .onboarding.screens_models import ModelCatalogScreen
                 app.push_screen(ModelCatalogScreen(app))
             elif idx == 2:
-                app.push_screen(UpdateScreen(app))
+                from .onboarding import ModelSourceScreen
+                app.push_screen(ModelSourceScreen(app))
             elif idx == 3:
+                app.push_screen(UpdateScreen(app))
+            elif idx == 4:
                 from .settings import SettingsScreen
 
                 app.push_screen(SettingsScreen(app))
-            elif idx == 4:
+            elif idx == 5:
                 app.push_screen(LaunchAgentScreen(app))
 
         def on_key(self, event):

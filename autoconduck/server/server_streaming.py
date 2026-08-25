@@ -1,6 +1,6 @@
 """Lazy-loaded FastAPI/LiteLLM server implementation."""
 
-import argparse, asyncio, ctypes, json, logging, os, sys, time, subprocess, shutil, signal
+import argparse, asyncio, ctypes, json, logging, os, sys, time, subprocess, shutil, signal, traceback
 from contextlib import asynccontextmanager
 from typing import Any
 from autoconduck import config
@@ -8,6 +8,15 @@ from autoconduck.config import get_config, home_dir
 
 
 DEFAULT_PORT = 11434
+logger = logging.getLogger("autoconduck")
+
+
+def _write_crash_report(exc):
+    crash_path = home_dir() / "run" / "server.crash"
+    crash_path.parent.mkdir(parents=True, exist_ok=True)
+    with crash_path.open("a", encoding="utf-8") as stream:
+        stream.write(f"\n--- AutoConduck crash at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+        stream.write(traceback.format_exc())
 
 
 def _find_free_port(start: int, tries: int = 11) -> int:
@@ -108,42 +117,47 @@ def _run_proxy(port: int, log_level: str = "info", host: str = "127.0.0.1"):
         level=level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    import uvicorn
-
-    # Write a readiness sentinel so cmd_launch_agent detects startup via filesystem
-    # rather than HTTP polling (faster on machines where the first TCP connect is slow).
-    def _write_ready():
-        try:
-            marker = home_dir() / "run" / f"server_{port}.ready"
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text("ready")
-        except Exception:
-            pass
-
-    config = uvicorn.Config(
-        _get_app(),
-        host=host,
-        port=port,
-        log_level=log_level.lower(),
-        access_log=False,
-    )
-    server = uvicorn.Server(config)
-    # Hook into uvicorn's startup lifecycle to write the marker as soon as
-    # the server is listening (before the first request is processed).
-    _orig_startup = server.startup
-
-    async def _patched_startup(sockets=None):
-        await _orig_startup(sockets=sockets)
-        _write_ready()
-        logging.getLogger("autoconduck").info(
-            "AutoConduck proxy ready at http://%s:%d (Press CTRL+C to quit)", host, port
-        )
-
-    server.startup = _patched_startup
     try:
-        server.run()
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        pass
+        import uvicorn
+
+        # Write a readiness sentinel so cmd_launch_agent detects startup via filesystem
+        # rather than HTTP polling (faster on machines where the first TCP connect is slow).
+        def _write_ready():
+            try:
+                marker = home_dir() / "run" / f"server_{port}.ready"
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text("ready")
+            except Exception:
+                pass
+
+        config = uvicorn.Config(
+            _get_app(),
+            host=host,
+            port=port,
+            log_level=log_level.lower(),
+            access_log=False,
+        )
+        server = uvicorn.Server(config)
+        # Hook into uvicorn's startup lifecycle to write the marker as soon as
+        # the server is listening (before the first request is processed).
+        _orig_startup = server.startup
+
+        async def _patched_startup(sockets=None):
+            await _orig_startup(sockets=sockets)
+            _write_ready()
+            logging.getLogger("autoconduck").info(
+                "AutoConduck proxy ready at http://%s:%d (Press CTRL+C to quit)", host, port
+            )
+
+        server.startup = _patched_startup
+        try:
+            server.run()
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
+    except Exception as exc:
+        logger.exception("AutoConduck proxy crashed")
+        _write_crash_report(exc)
+        raise
 
 
 SUPERVISOR_MAX_RAPID_FAILURES = 5
@@ -257,9 +271,27 @@ def _run_supervisor(
                 stream.write(
                     f"supervised server exited with code {exit_code}; restart {len(failures)}/{SUPERVISOR_MAX_RAPID_FAILURES}\n"
                 )
+            logger.warning(
+                "supervised server exited with code %s; restart %d/%d",
+                exit_code,
+                len(failures),
+                SUPERVISOR_MAX_RAPID_FAILURES,
+            )
+            crash_path = home_dir() / "run" / "server.crash"
+            crash_path.parent.mkdir(parents=True, exist_ok=True)
+            with crash_path.open("a", encoding="utf-8") as stream:
+                stream.write(
+                    f"supervised child exited with code {exit_code} at "
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S')}; see run/server.log for child stderr\n"
+                )
             if len(failures) >= SUPERVISOR_MAX_RAPID_FAILURES:
                 with log_path.open("a", encoding="utf-8") as stream:
                     stream.write("supervisor giving up after repeated rapid failures\n")
+                logger.error(
+                    "supervisor giving up after %d failures in %.0fs — run 'autoconduck start' to relaunch",
+                    SUPERVISOR_MAX_RAPID_FAILURES,
+                    SUPERVISOR_FAILURE_WINDOW,
+                )
                 return
             time.sleep(backoff)
             backoff = min(backoff * 2, SUPERVISOR_MAX_BACKOFF)

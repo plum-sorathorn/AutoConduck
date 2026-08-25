@@ -34,6 +34,10 @@ class BaseAdapter(ABC):
         ts = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
         # keep last 5
         dest = dest_dir / f"{ts}.bak"
+        suffix = 1
+        while dest.exists():
+            dest = dest_dir / f"{ts}-{suffix}.bak"
+            suffix += 1
         try:
             data = path.read_bytes()
             dest.write_bytes(data)
