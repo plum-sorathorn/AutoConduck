@@ -188,7 +188,7 @@ def detect_agents():
 
 
 def is_agent_configured(agent_id: str) -> bool:
-    from ...agents import all_adapters
+    from autoconduck.harnesses import all_adapters
 
     adapter = next(
         (
@@ -261,13 +261,4 @@ def configure_selected_agents(agents, port: int | None = None) -> list[str]:
     return configured
 
 
-
-try:
-    import textual as _TEXTUAL
-except ImportError:
-    _TEXTUAL = None
-
-def _require_textual():
-    if _TEXTUAL is None:
-        raise RuntimeError("Textual is required for the onboarding UI")
 

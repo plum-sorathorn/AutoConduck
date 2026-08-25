@@ -6,7 +6,7 @@ description: Consult the graphify knowledge graph at graphify-out/ for codebase 
 ## graphify
 
 Rules:
-- Before using ListDir, Grep, or Read to explore any part of this codebase you are not already certain about, you MUST first run graphify query "<question>" (CLI) or query_graph (MCP, if available). This applies to implementation tasks, bug fixes, and refactors -- not only literal questions.
+- Before using ListDir, Grep, or Read to explore any part of this codebase you are not already certain about, you MUST first run graphify query "<question>" (CLI) or query_graph (MCP, if available) if graphify-out/graph.json exists. This applies to implementation tasks, bug fixes, and refactors -- not only literal questions.
 - Do NOT begin a task by listing directories or grepping broadly. Locate relevant files via graphify query / query_graph first, then read only the specific files it points to.
 - Use graphify path "<A>" "<B>" / shortest_path (MCP) to understand relationships between two named components, and graphify explain "<concept>" / get_node (MCP) for a focused summary of one concept or module.
 - These return a scoped subgraph, almost always far smaller than GRAPH_REPORT.md or raw grep output -- treat them as strictly cheaper than manual exploration.

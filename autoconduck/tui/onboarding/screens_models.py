@@ -30,7 +30,7 @@ if _TEXTUAL:
             yield Vertical(Static(self._tabs(), id="tabs", markup=True),
                            Input(placeholder="search providers or models…", id="search"),
                            Static(self._body(), id="body", markup=True),
-                           Static("[←] back  [tab/→] next tab  [/] search  [ctrl+c] quit", id="footer"))
+                           Static("[←] back  [tab/→] next tab  [/] search  [ctrl+c] quit", id="footer", markup=False))
 
         def _tabs(self):
             return "  ".join(f"[bold cyan]{tab}[/bold cyan]" if i == self.tab else tab for i, tab in enumerate(self.TABS))
@@ -63,4 +63,7 @@ if _TEXTUAL:
             self.query_one("#tabs", Static).update(self._tabs())
             self.query_one("#body", Static).update(self._body())
 else:
-    ModelCatalogScreen = Screen
+    class ModelCatalogScreen(Screen):
+        def __init__(self, *args, **kwargs):
+            from . import _require_textual
+            _require_textual()

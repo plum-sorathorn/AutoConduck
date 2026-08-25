@@ -1,6 +1,7 @@
 """Settings screen — expose configurable options from the TUI."""
 
 from __future__ import annotations
+from typing import Any
 
 from .onboarding import _TEXTUAL, _require_textual
 from autoconduck.config import get_config, save_config

@@ -28,3 +28,46 @@ def test_catalog_filter_matches_provider_capability_context_and_fuzzy_term():
 def test_model_catalog_screen_can_be_constructed():
     from autoconduck.tui.onboarding.screens_models import ModelCatalogScreen
     assert ModelCatalogScreen() is not None
+
+
+async def test_all_tui_screens_mount_and_render_without_markup_errors():
+    import asyncio
+    from textual.app import App
+    from autoconduck.tui.dashboard import MainMenuScreen, DashboardScreen
+    from autoconduck.tui.dashboard_screens import UpdateScreen, LaunchAgentScreen, DrillDownScreen
+    from autoconduck.tui.settings import SettingsScreen
+    from autoconduck.tui.onboarding.screens import OnboardingScreen, ModelSourceScreen, ModelSelectionScreen
+    from autoconduck.tui.onboarding.screens_custom import ApiKeyScreen, CustomProvidersScreen
+    from autoconduck.tui.onboarding.screens_extra import ProviderFormScreen, LauncherIntegrationScreen
+    from autoconduck.tui.onboarding.screens_slm import SLMSetupScreen
+    from autoconduck.tui.onboarding.screens_models import ModelCatalogScreen
+
+    screens = [
+        MainMenuScreen(),
+        DashboardScreen(),
+        UpdateScreen(),
+        LaunchAgentScreen(),
+        DrillDownScreen({"turn": 1, "model": "test-model", "path": "FAST"}),
+        SettingsScreen(),
+        OnboardingScreen(),
+        ModelSourceScreen(),
+        ModelSelectionScreen(None, [], "anthropic"),
+        ApiKeyScreen(None, [], "anthropic"),
+        CustomProvidersScreen(None, []),
+        ProviderFormScreen(None, []),
+        LauncherIntegrationScreen(None, ["claude_code"]),
+        SLMSetupScreen(None),
+        ModelCatalogScreen(),
+    ]
+
+    class RenderTestApp(App):
+        async def on_mount(self):
+            for screen in screens:
+                await self.push_screen(screen)
+                await asyncio.sleep(0.01)
+                self.pop_screen()
+            await self.action_quit()
+
+    app = RenderTestApp()
+    await app.run_async(headless=True)
+
