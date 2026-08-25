@@ -262,11 +262,11 @@ class SLMPlanner:
                 "route": "dynamic_dag",
                 "confidence": 0.95,
                 "task_type": task_type,
-                "suggested_sla": CapabilitySLA(min_context=32000, requires_tools=True),
+                "suggested_sla": CapabilitySLA(min_context=32000, requires_tools=True, min_capability_score=0.4),
                 "needs_rag": needs_rag,
                 "rag_queries": rag_queries,
                 "subtasks": [t.model_dump() for t in subtasks],
-                "synthesizer_sla": CapabilitySLA(requires_reasoning=True, requires_tools=True),
+                "synthesizer_sla": CapabilitySLA(requires_reasoning=True, requires_tools=True, min_capability_score=0.45, min_output_tokens=8192),
                 "rationale": "Multi-step architectural workflow requires dynamic orchestration DAG",
                 "fallback_used": False,
             }

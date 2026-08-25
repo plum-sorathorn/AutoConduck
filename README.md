@@ -247,33 +247,6 @@ For complex requests (Complexity >= 0.75), AutoConduck executes an asynchronous 
 
 ---
 
-## Budget-Driven Tuning
-
-`autoconduck tune` is an open-loop calibration engine. It converts a monthly USD or token budget into routing controls for the active model pool:
-
-```bash
-# Launch interactive budget tuning UI
-autoconduck tune
-
-# Select specific tuning mode
-autoconduck tune --mode simple
-autoconduck tune --mode advanced
-```
-
-### Tuning Mechanics
-
-- **Target Rate:** Computes per-minute target spend from your monthly limit and active working hours.
-- **Budget Pressure (p in [0, 1]):** Computed using logarithmic cost bounds.
-- **Dynamic Adjustments Under Pressure:**
-  - Gamma scaling: Exponent scales as `1 + 2.0p`, curving cost targets steeply toward cheaper models.
-  - Pseudo-model biases: Budget bias adjusts to `-0.20 - 0.20p`; expensive bias adjusts to `0.20 - 0.35p`.
-  - Phase bands: Orchestrator phase bands shift down proportionally (planner `-0.20p`, subagents `-0.20p`, executor `-0.25p`).
-  - Ambiguity zone: Bounds shift to `(0.60 + 0.05p, 0.75 + 0.05p)`.
-  - EMA alpha: Adjusts to `0.10 + 0.10p`.
-- **Profiles:** Saved to `~/.autoconduck/tune_profile.json` with automatic backup of existing configuration.
-
----
-
 ## Interactive TUI Dashboard
 
 AutoConduck includes an interactive terminal UI built with Textual:
@@ -288,7 +261,7 @@ From the main menu, navigate directly to all major screens:
 
 - **Live Routing Stats (`d`):** Real-time routing decisions, latency histograms, and cost tracker.
 - **Configure Models (`m` / `e`):** Add custom providers, select models, and manage credentials.
-- **Tune Budget (`t`):** Configure monthly budget limits, headroom, and ambiguity bands.
+- **Check for Updates (`u`):** Check latest version and upgrade in-app.
 - **Settings (`s`):** Configure launch behavior, thresholds, and logging.
 - **Launch Agent (`a`):** Pick and launch a configured coding agent (Claude Code, OpenCode, Pi).
 

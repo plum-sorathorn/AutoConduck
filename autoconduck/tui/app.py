@@ -17,10 +17,9 @@ if _TEXTUAL:
         BINDINGS = [("ctrl+c", "quit", "quit"), ("ctrl+q", "ignore_quit", "disabled")]
         CSS = "Screen { padding: 1; } #footer { color: $text-muted; } #header { color: $success; } .focused { background: $boost; color: $text; }"
 
-        def __init__(self, configured=False, tune_mode=None, initial_screen=None):
+        def __init__(self, configured=False, initial_screen=None):
             super().__init__()
             self.configured = configured
-            self.tune_mode = tune_mode
             self.initial_screen = initial_screen
             self.paused = False
 
@@ -33,11 +32,7 @@ if _TEXTUAL:
                 ensure_server(port)
             except Exception:
                 pass
-            if self.tune_mode:
-                from .tune import TuneScreen, SimpleTuneScreen, AdvancedTuneScreen
-                screen = SimpleTuneScreen(self) if self.tune_mode == "simple" else AdvancedTuneScreen(self) if self.tune_mode == "advanced" else TuneScreen(self)
-                self.push_screen(screen)
-            elif self.initial_screen in ("edit", "models"):
+            if self.initial_screen in ("edit", "models"):
                 self.push_screen(ModelSourceScreen(self))
             else:
                 # "conduck" with no trailing options opens the main TUI menu.
@@ -46,7 +41,7 @@ if _TEXTUAL:
         def action_pause(self): self.paused = not self.paused
         def action_edit(self): self.push_screen(ModelSourceScreen(self))
         def action_ignore_quit(self): pass
-        def action_help(self): self.notify("up/down move  enter open  d stats  m models  t tune  s settings  a launch agent  ctrl+c quit")
+        def action_help(self): self.notify("up/down move  enter open  d stats  m models  s settings  a launch agent  ctrl+c quit")
 else:
     class AutoConduckApp(App):
         def __init__(self, *args, **kwargs): raise RuntimeError("Textual is required to use the AutoConduck TUI")

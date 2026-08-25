@@ -316,16 +316,3 @@ def cmd_launch_agent(agent_id: str, port: int | None = None, new_terminal: bool 
         return _sp.run([real_bin], env=env).returncode
     finally:
         launcher.release_server(port)
-
-def cmd_tune(args):
-    """Launch tuning UI, with a useful deterministic fallback."""
-    try:
-        from autoconduck.tui.app import AutoConduckApp
-
-        mode = getattr(args, "mode", None) or "select"
-        app = AutoConduckApp(configured=True, tune_mode=mode)
-        getattr(app, "run")()
-    except (ImportError, RuntimeError):
-        cfg = get_config()
-        print("AutoConduck tuning is unavailable without Textual.")
-        print(cfg.selection.model_dump())

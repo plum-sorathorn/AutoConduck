@@ -57,7 +57,7 @@ def test_cli_reset_command(capsys, monkeypatch, tmp_path):
 def test_update_upgrade_commands():
     assert update.upgrade_command("uv-tool") == "uv tool upgrade --reinstall autoconduck"
     assert update.upgrade_command("npm") == "npm install -g autoconduck@latest"
-    assert update.upgrade_command("pip") == "pip install --force-reinstall --upgrade autoconduck"
+    assert "pip install --force-reinstall --upgrade autoconduck" in update.upgrade_command("pip")
 
 
 def test_packaging_matrix():

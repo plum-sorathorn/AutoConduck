@@ -31,6 +31,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "price_in": 3.0,
             "price_out": 15.0,
             "api_key_env": "ANTHROPIC_API_KEY",
+            "capability_score": 0.5,
         },
         {
             "id": "claude-3-5-sonnet-20241022",
@@ -121,6 +122,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "price_in": 15.0,
             "price_out": 60.0,
             "api_key_env": "OPENAI_API_KEY",
+            "capability_score": 0.6,
         },
         {
             "id": "o3-mini",
@@ -129,6 +131,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "price_in": 1.1,
             "price_out": 4.4,
             "api_key_env": "OPENAI_API_KEY",
+            "capability_score": 0.5,
         },
         {
             "id": "o4-mini",
@@ -311,6 +314,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
             "price_in": 0.55,
             "price_out": 2.19,
             "api_key_env": "DEEPSEEK_API_KEY",
+            "capability_score": 0.5,
         },
         {
             "id": "deepseek-v3.2",

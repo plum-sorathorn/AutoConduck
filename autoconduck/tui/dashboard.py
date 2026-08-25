@@ -8,6 +8,7 @@ from autoconduck.tui.dashboard_screens import (
     DrillDownScreen,
     LaunchAgentScreen,
     UpdateCatalogScreen,
+    UpdateScreen,
 )
 from autoconduck.tui.dashboard_widgets import (
     _cell_len,
@@ -45,8 +46,7 @@ if _TEXTUAL:
         MENU_ITEMS = [
             ("d", "Live Routing Stats", "Real-time routing decisions & cost tracker"),
             ("m", "Configure Models", "Add providers, select models, set API keys"),
-            ("u", "Update Catalog", "Run catalog update scripts & sync latest models"),
-            ("t", "Tune Budget", "Budget limits, cost targets, ambiguity bands"),
+            ("u", "Check for Updates", "Check latest version & upgrade AutoConduck"),
             ("s", "Settings", "Launch behaviour, thresholds, log level"),
             ("a", "Launch Agent", "Start a configured coding agent"),
         ]
@@ -132,16 +132,12 @@ if _TEXTUAL:
 
                 app.push_screen(ModelSourceScreen(app))
             elif idx == 2:
-                app.push_screen(UpdateCatalogScreen(app))
+                app.push_screen(UpdateScreen(app))
             elif idx == 3:
-                from .tune import TuneScreen
-
-                app.push_screen(TuneScreen(app))
-            elif idx == 4:
                 from .settings import SettingsScreen
 
                 app.push_screen(SettingsScreen(app))
-            elif idx == 5:
+            elif idx == 4:
                 app.push_screen(LaunchAgentScreen(app))
 
         def on_key(self, event):
@@ -395,6 +391,7 @@ __all__ = [
     "DashboardScreen",
     "DrillDownScreen",
     "LaunchAgentScreen",
+    "UpdateScreen",
     "UpdateCatalogScreen",
     "move_cursor",
     "render_log_rows",

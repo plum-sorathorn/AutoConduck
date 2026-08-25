@@ -24,6 +24,7 @@ class ModelEntry(BaseModel):
     is_reasoning: bool = False
     enabled: bool = True
     max_usd_per_min: float | None = None
+    capability_score: float = 0.0
 
 
 class SelectionConfig(BaseModel):

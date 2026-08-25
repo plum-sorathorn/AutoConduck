@@ -23,84 +23,148 @@ except ImportError:
 
 
 if _TEXTUAL:
-    class UpdateCatalogScreen(Screen):
-        """Update model presets and refresh catalog snapshot."""
+    class UpdateScreen(Screen):
+        """Check for updates and run in-app upgrade."""
+
+        BINDINGS = [
+            ("enter", "upgrade", "Run upgrade"),
+            ("left", "back", "Back"),
+            ("escape", "back", "Back"),
+        ]
 
         def __init__(self, controller=None):
             super().__init__()
             self.controller = controller
-            self._status = (
-                "Press [bold cyan][enter][/bold cyan] or [bold cyan][u][/bold cyan] to sync latest models & pricing."
-            )
+            self._status = "Press [bold cyan]ENTER[/bold cyan] to run upgrade."
             self._running = False
             self._log_lines: list[str] = []
 
         def compose(self):
+            from pathlib import Path
+            from autoconduck import __version__, update
+            method = update.detect_install_method()
+            cmd = update.upgrade_command(method) or "git pull && pip install -e ."
             yield Vertical(
-                Static("┌─ AutoConduck · Update Model Catalog ─┐", markup=True),
+                Static("┌─ AutoConduck · Software Updates ─┐", markup=True),
+                Static(f"Installed version: [bold cyan]{__version__}[/bold cyan] ({method})", markup=True),
+                Static(f"Upgrade command:   [dim]{cmd}[/dim]", markup=True),
                 Static(self._status, id="status", markup=True),
-                Static("\n".join(self._log_lines) or "  Ready to sync.", id="log", markup=True),
+                Static("\n".join(self._log_lines) or "  Ready to upgrade.", id="log", markup=True),
                 Static(
-                    "[enter/u] sync catalog  [left/esc] back  [ctrl+c] quit",
+                    "[enter] upgrade  [left/esc] back  [ctrl+c] quit",
                     id="footer",
                     markup=False,
                 ),
             )
 
+        def action_upgrade(self):
+            if not self._running:
+                self._running = True
+                self._status = "[bold cyan]Starting upgrade… please wait…[/bold cyan]"
+                self._log_lines = ["  Initializing upgrade process…"]
+                try:
+                    self.query_one("#status", Static).update(self._status)
+                    self.query_one("#log", Static).update("\n".join(self._log_lines))
+                except Exception:
+                    pass
+                self.run_worker(self._run_upgrade(), exclusive=True)
+
+        def action_sync(self):
+            self.action_upgrade()
+
+        def action_back(self):
+            if self.controller:
+                try:
+                    self.controller.pop_screen()
+                    return
+                except Exception:
+                    pass
+            self.app.pop_screen()
+
         def on_key(self, event):
             if event.key in ("left", "escape"):
-                self.app.pop_screen()
-            elif event.key in ("enter", "u") and not self._running:
-                self._run_sync()
+                self.action_back()
+            elif event.key == "enter" and not self._running:
+                self.action_upgrade()
 
-        def _run_sync(self):
-            self._running = True
-            self._status = "[bold cyan]Syncing latest model presets and pricing… please wait…[/bold cyan]"
-            self._log_lines = []
+        async def _run_upgrade(self):
+            import asyncio
+            from pathlib import Path
+            from autoconduck import update, launcher
+            from autoconduck.config import load_config
             try:
-                self.query_one("#status", Static).update(self._status)
-                self.query_one("#log", Static).update("Starting catalog update…")
-            except Exception:
-                pass
+                from autoconduck.server import DEFAULT_PORT
+            except ImportError:
+                DEFAULT_PORT = 11434
 
             try:
-                from autoconduck.presets import presets_data, model_presets
+                method = update.detect_install_method()
+                cmd_str = update.upgrade_command(method)
 
-                self._log_lines.append("[dim]1. Syncing upstream model database & presets…[/dim]")
+                if not cmd_str:
+                    self._status = "[yellow]No managed package manager detected. Please update via git pull and reinstall.[/yellow]"
+                    self._running = False
+                    try:
+                        self.query_one("#status", Static).update(self._status)
+                    except Exception:
+                        pass
+                    return
+
+                self._status = f"[bold cyan]Running upgrade ({cmd_str})… please wait…[/bold cyan]"
+                self._log_lines = [f"[dim]Starting: {cmd_str}[/dim]"]
                 try:
-                    from scripts.sync_all_presets import sync_all
+                    self.query_one("#status", Static).update(self._status)
+                    self.query_one("#log", Static).update("\n".join(self._log_lines))
+                except Exception:
+                    pass
 
-                    synced = sync_all()
-                    presets_data.PRESETS.update(synced)
-                    self._log_lines.append(f"[green][OK][/green] Synced {len(synced)} provider groups")
-                except Exception as exc:
-                    self._log_lines.append(f"[yellow][WARN][/yellow] sync_all: {exc}")
-
-                self._log_lines.append("[dim]2. Syncing DevPass models...[/dim]")
+                # Stop server before upgrading to release any locks
                 try:
-                    from scripts.sync_devpass_presets import fetch_devpass_catalog
+                    cfg = load_config()
+                    port = getattr(cfg, "port", None) or DEFAULT_PORT
+                    launcher.stop_server(port)
+                    launcher.kill_existing_on_port(port)
+                except Exception:
+                    pass
 
-                    devpass_entries = fetch_devpass_catalog()
-                    if devpass_entries:
-                        presets_data.PRESETS["devpass"] = devpass_entries
-                        presets_data.FALLBACK_PRESETS["devpass"] = devpass_entries
-                        self._log_lines.append(f"[green][OK][/green] Synced {len(devpass_entries)} DevPass models")
-                except Exception as exc:
-                    self._log_lines.append(f"[yellow][WARN][/yellow] devpass sync: {exc}")
+                cwd = None
+                if "editable" in method:
+                    source_dir = update._module_path().parent.parent
+                    if (source_dir / "pyproject.toml").exists():
+                        cwd = str(source_dir)
+                    elif (Path.cwd() / "pyproject.toml").exists():
+                        cwd = str(Path.cwd())
 
-                self._log_lines.append("[dim]3. Refreshing curated catalog snapshot...[/dim]")
-                try:
-                    from scripts.refresh_catalog import curated_model_catalog
+                proc = await asyncio.create_subprocess_shell(
+                    cmd_str,
+                    cwd=cwd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
 
-                    model_presets._catalog_cache = None
-                    cat = curated_model_catalog()
-                    self._log_lines.append(f"[green][OK][/green] Curated catalog contains {len(cat)} models")
-                except Exception as exc:
-                    self._log_lines.append(f"[yellow][WARN][/yellow] refresh_catalog: {exc}")
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", errors="replace").rstrip()
+                    if text:
+                        self._log_lines.append(f"  {text}")
+                        if len(self._log_lines) > 20:
+                            self._log_lines = self._log_lines[-20:]
+                        try:
+                            self.query_one("#log", Static).update("\n".join(self._log_lines))
+                        except Exception:
+                            pass
 
-                self._status = "[bold green][OK] Catalog updated successfully with latest models![/bold green]"
+                await proc.wait()
+
+                if proc.returncode == 0:
+                    self._status = "[bold green][OK] AutoConduck upgraded successfully! Please restart AutoConduck.[/bold green]"
+                else:
+                    self._status = f"[bold red]Upgrade failed with exit code {proc.returncode}.[/bold red]"
             except Exception as exc:
-                self._status = f"[bold red]Sync failed: {exc}[/bold red]"
+                self._status = f"[bold red]Upgrade error: {exc}[/bold red]"
+                self._log_lines.append(f"[bold red]Error: {exc}[/bold red]")
             finally:
                 self._running = False
                 try:
@@ -108,6 +172,8 @@ if _TEXTUAL:
                     self.query_one("#log", Static).update("\n".join(self._log_lines))
                 except Exception:
                     pass
+
+    UpdateCatalogScreen = UpdateScreen
 
     class LaunchAgentScreen(Screen):
         """Pick and launch a configured coding agent."""
@@ -203,6 +269,10 @@ if _TEXTUAL:
                     pass
 
 else:
+    class UpdateScreen(Screen):  # type: ignore
+        def __init__(self, *args, **kwargs):
+            _require()
+
     class UpdateCatalogScreen(Screen):  # type: ignore
         def __init__(self, *args, **kwargs):
             _require()

@@ -36,3 +36,10 @@ def test_upsert_custom_models():
     ids = {m["id"] for m in updated}
     assert "custom-1" in ids
     assert "custom-2" in ids
+
+
+def test_update_screen_instantiation():
+    from autoconduck.tui.dashboard_screens import UpdateScreen, UpdateCatalogScreen
+    screen = UpdateScreen()
+    assert screen._running is False
+    assert UpdateCatalogScreen is UpdateScreen

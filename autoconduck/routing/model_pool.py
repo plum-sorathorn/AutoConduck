@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from autoconduck.config import Config
@@ -18,9 +18,12 @@ logger = logging.getLogger(__name__)
 class CapabilitySLA:
     """Service Level Agreement for model capabilities."""
     min_context: int = 0
+    min_output_tokens: int = 0
     requires_tools: bool = False
     requires_reasoning: bool = False
+    min_capability_score: float = 0.0
     max_cost: float = float('inf')
+    exclude_models: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -35,6 +38,7 @@ class ModelEntry:
     supports_tools: bool
     enabled: bool = True
     is_reasoning: bool = False
+    capability_score: float = 0.0
 
 
 class ModelPool:
@@ -86,6 +90,36 @@ class ModelPool:
                 if any(x in model_id.lower() for x in ["o1", "o3", "deepseek-r1", "reasoning"]):
                     is_reasoning = True
                     
+                cap_score = float(item.get("capability_score") or preset.get("capability_score", 0.0))
+                
+                # Heuristic fallback for unknown models
+                if cap_score == 0.0:
+                    import re
+                    # 1. Parameter Size Heuristic (Excellent for local/free models)
+                    param_match = re.search(r'(\d+(?:\.\d+)?)[bx]', model_id.lower())
+                    
+                    if param_match:
+                        params = float(param_match.group(1))
+                        if params >= 65:  # e.g., 70b, 72b, 400b
+                            cap_score = 0.5
+                        elif params >= 25:  # e.g., 32b, 35b
+                            cap_score = 0.4
+                        elif params >= 10:  # e.g., 14b, 12b
+                            cap_score = 0.3
+                        else:  # e.g., 7b, 8b
+                            cap_score = 0.2
+                    else:
+                        # 2. Pricing Heuristic (Excellent for proprietary API models)
+                        blended_price = price_in + (price_out * 0.5)
+                        if blended_price >= 2.0:  # e.g., Claude 3.5 Sonnet, GPT-4o
+                            cap_score = 0.5
+                        elif blended_price >= 0.5:  # e.g., DeepSeek Reasoner, O3-Mini
+                            cap_score = 0.4
+                        else:  # e.g., Flash, Mini, Haiku
+                            cap_score = 0.2
+                    
+                    if is_reasoning:
+                        cap_score += 0.1  # Boost reasoning models slightly
                 entries.append(
                     ModelEntry(
                         id=str(model_id),
@@ -98,6 +132,7 @@ class ModelPool:
                         supports_tools=tools,
                         enabled=item.get("enabled", True),
                         is_reasoning=is_reasoning,
+                        capability_score=cap_score,
                     )
                 )
         return entries
@@ -121,13 +156,13 @@ class ModelPool:
             fallback = resolve_orchestrator_model(self.config)
             return fallback or "gpt-4o"
 
-        # 1. Filter enabled & non-degraded
+        # 1. Filter enabled & non-degraded & excluded
         eligible = [
             e for e in entries
-            if e.enabled and not pricing.is_degraded(e.id)
+            if e.enabled and not pricing.is_degraded(e.id) and e.id not in sla.exclude_models
         ]
         if not eligible:
-            eligible = [e for e in entries if e.enabled] or entries
+            eligible = [e for e in entries if e.enabled and e.id not in sla.exclude_models] or entries
 
         # 2. Filter by tools
         if sla.requires_tools:
@@ -148,6 +183,14 @@ class ModelPool:
                 eligible = ctx_matches
             else:
                 eligible = sorted(eligible, key=lambda e: -e.context_window)
+
+        # 4.5 Filter by min_capability_score
+        if sla.min_capability_score > 0.0:
+            cap_matches = [e for e in eligible if getattr(e, "capability_score", 0.0) >= sla.min_capability_score]
+            if cap_matches:
+                eligible = cap_matches
+            else:
+                eligible = sorted(eligible, key=lambda e: -getattr(e, "capability_score", 0.0))
 
         # 5. Filter by max_cost (only if there are eligible models below the ceiling)
         cost_matches = [e for e in eligible if self._entry_cost(e) <= sla.max_cost]

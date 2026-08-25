@@ -1,6 +1,6 @@
 # AutoConduck working contract
 
-AutoConduck is a local zero-overhead model router and task orchestrator for OpenAI-compatible coding agents. Routing and selection specifications are documented in `docs/design/dynamic-model-selection.md` (plus `docs/design/tuning.md`).
+AutoConduck is a local zero-overhead model router and task orchestrator for OpenAI-compatible coding agents. Routing and selection specifications are documented in `docs/design/dynamic-model-selection.md`.
 
 ## Commands & Workflows
 
@@ -17,7 +17,6 @@ AutoConduck is a local zero-overhead model router and task orchestrator for Open
   - `stop [--port N]` — stop the running daemon.
   - `ensure` / `release` — internal launcher lifecycle commands for process refcounting.
   - `stats [--json] [--days N] [--reset] [--force]` — inspect routing audit logs and cost savings.
-  - `tune --mode` — optimize routing parameters.
   - `update [--dry-run]` — update runtime model catalog.
   - `edit` — open interactive model list editor.
   - `reset [--force]` / `uninstall [--force]` — restore agent configs and remove shims.

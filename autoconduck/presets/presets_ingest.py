@@ -7,7 +7,30 @@ from .presets_data import FALLBACK_PATH
 from .presets_fallback import FALLBACK_PRESETS
 
 _litellm_costs_cache: dict[str, dict] | None = None
+_benchmark_scores_cache: dict[str, float] | None = None
 
+
+def _ingest_benchmark_scores(enrich_pricing: bool = True) -> dict[str, float]:
+    """
+    Fetch external benchmark scores (e.g., Aider leaderboard or LMSYS Elo) to automatically 
+    assign capability scores to models, avoiding manual scoring.
+    """
+    global _benchmark_scores_cache
+    if _benchmark_scores_cache is not None:
+        return _benchmark_scores_cache
+        
+    if not enrich_pricing:
+        _benchmark_scores_cache = {}
+        return _benchmark_scores_cache
+        
+    try:
+        # In a production environment, this would pull from a stable CDN or HuggingFace Dataset
+        # containing normalized MMLU/Elo scores mapped to model IDs.
+        # For now, we seed it with an empty cache to be populated by the update script.
+        _benchmark_scores_cache = {}
+        return _benchmark_scores_cache
+    except Exception:
+        return {}
 
 def _load_fallback() -> dict[str, dict]:
     if FALLBACK_PATH.exists():

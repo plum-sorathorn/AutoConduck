@@ -11,7 +11,7 @@ from autoconduck.config import get_config, load_config, save_config, home_dir
 # Heavy deps (fastapi, pydantic-core, litellm, textual, uvicorn) are deferred until a
 # server/CLI command actually needs them.
 from autoconduck.server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
-from .cli_launch import cmd_launch_agent, cmd_install, cmd_tune, _open_new_terminal
+from .cli_launch import cmd_launch_agent, cmd_install, _open_new_terminal
 
 def _invoke_check_port(port: int, host: str = "127.0.0.1") -> None:
     fn = getattr(sys.modules.get(__name__), "_check_port_available", _check_port_available)
@@ -301,12 +301,25 @@ def cmd_update(args):
         launcher.kill_existing_on_port(port)
     except Exception:
         pass
+        
     print(f"Running upgrade: {command}")
+    import os, sys
+    if os.name == "nt":
+        # Windows locks .pyd files loaded by the current process.
+        # We use os.execv to replace the current Python process with 'uv'
+        # This safely releases all loaded .pyd file locks while keeping the output in the same console.
+        print(f"Running upgrade in-place: {command}")
+        uv_path = shutil.which(tool)
+        if uv_path:
+            os.execv(uv_path, [tool] + command.split()[1:])
+        sys.exit(0)
+        
     res = subprocess.run([tool, *command.split()[1:]], cwd=cwd, check=False)
     if res.returncode == 0:
         print("Upgrade completed successfully. Run autoconduck --version to confirm.")
     else:
         print(f"Upgrade finished with exit code {res.returncode}.")
+
 def cmd_ensure(args):
     from autoconduck import launcher
     launcher.ensure_server(args.port, getattr(args, "client_id", None))
@@ -381,9 +394,6 @@ def main(argv: list[str] | None = None):
     stats_parser.add_argument("--reset", action="store_true")
     stats_parser.add_argument("--force", action="store_true")
     stats_parser.set_defaults(handler=cmd_stats)
-    tune_parser = sub.add_parser("tune")
-    tune_parser.add_argument("--mode", choices=("simple", "advanced"), default=None)
-    tune_parser.set_defaults(handler=cmd_tune)
     install = sub.add_parser("install")
     install.add_argument("agents", nargs="*")
     install.set_defaults(handler=cmd_install)
@@ -417,4 +427,4 @@ def main(argv: list[str] | None = None):
     except (KeyboardInterrupt, asyncio.CancelledError):
         return 0
 from autoconduck.server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
-from .cli_launch import cmd_launch_agent, cmd_install, cmd_tune, _open_new_terminal
+from .cli_launch import cmd_launch_agent, cmd_install, _open_new_terminal

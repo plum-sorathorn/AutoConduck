@@ -42,12 +42,13 @@ def detect_install_method() -> str:
 
 
 def upgrade_command(method: str) -> str | None:
+    py = sys.executable or "python"
     return {
         "uv-tool": "uv tool upgrade --reinstall autoconduck",
         "uv-tool-editable": "uv tool install --reinstall --editable .",
-        "pip-editable": "pip install --force-reinstall -e .",
+        "pip-editable": f'"{py}" -m pip install --force-reinstall -e .',
         "npm": "npm install -g autoconduck@latest",
-        "pip": "pip install --force-reinstall --upgrade autoconduck",
+        "pip": f'"{py}" -m pip install --force-reinstall --upgrade autoconduck',
     }.get(method)
 
 
