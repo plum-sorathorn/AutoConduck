@@ -112,7 +112,7 @@ class SLMPlanner:
             route="fast_direct",
             confidence=0.5,
             task_type="chat",
-            suggested_sla=CapabilitySLA(min_context=16000, requires_tools=True),
+            suggested_sla=CapabilitySLA(min_context=16000, requires_tools=True, max_cost=1.5),
             synthesizer_sla=CapabilitySLA(requires_reasoning=True),
             needs_rag=False,
             rag_queries=[],
@@ -277,7 +277,11 @@ class SLMPlanner:
         sla = (
             CapabilitySLA(min_context=8000, max_cost=1.0)
             if len(text.split()) < 15 and not needs_rag and not is_debug
-            else CapabilitySLA(min_context=32000, requires_tools=True)
+            else (
+                CapabilitySLA(min_context=32000, requires_tools=True, max_cost=2.0)
+                if is_debug
+                else CapabilitySLA(min_context=32000, requires_tools=True, max_cost=1.5)
+            )
         )
 
         return {
@@ -288,7 +292,7 @@ class SLMPlanner:
             "needs_rag": needs_rag,
             "rag_queries": rag_queries,
             "subtasks": [],
-            "synthesizer_sla": CapabilitySLA(requires_reasoning=is_debug),
+            "synthesizer_sla": CapabilitySLA(requires_reasoning=is_debug, max_cost=2.0 if is_debug else 1.0),
             "rationale": f"Direct response for {task_type} query",
             "fallback_used": False,
         }

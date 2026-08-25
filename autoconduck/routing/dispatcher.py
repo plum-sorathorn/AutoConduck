@@ -59,7 +59,7 @@ def route(
             for t in ["read", "glob", "list", "grep", "bash", "status", "diff", "command", "file", "view", "tool"]
         )
         reason = f"tool_loop_bypass: {guard_res.last_tool_name or 'tool'}"
-        sla = CapabilitySLA(min_context=16000, requires_tools=True, max_cost=1.0 if is_routine_tool else 3.0)
+        sla = CapabilitySLA(min_context=16000, requires_tools=True, max_cost=1.0 if is_routine_tool else 1.5)
         model = pricing.select_for_sla(sla, config=config, pseudo_model=pseudo_model) or resolve_orchestrator_model(config)
         tier = "capability_sla"
 
