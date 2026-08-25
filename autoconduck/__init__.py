@@ -1,12 +1,22 @@
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 
 import sys
-from . import _compat, auth, cli, launcher, presets, server, harnesses, orchestrator, routing, tui
-from .routing import dispatcher, pricing, model_pool, slm_planner
+
+from . import (
+    _compat,  # noqa: F401
+    auth,
+    cli,
+    harnesses,
+    launcher,
+    presets,
+    server,
+)
+from . import orchestrator as _orchestrator  # noqa: F401
+from . import routing as _routing  # noqa: F401
+from . import tui as _tui  # noqa: F401
+from .routing import dispatcher, model_pool, pricing, slm_planner
 
 agents = harnesses
-
-# Backwards-compatibility aliases in sys.modules
 sys.modules["autoconduck._compat"] = _compat
 sys.modules["autoconduck.harnesses"] = harnesses
 sys.modules["autoconduck.agents"] = harnesses

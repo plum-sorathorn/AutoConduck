@@ -61,7 +61,7 @@ class ModelPool:
                 pool = self.config.models.pool
             
         if not pool or not isinstance(pool, list):
-            pool = [{"id": resolve_orchestrator_model(self.config) or "gpt-4o"}]
+            pool = [{"id": resolve_orchestrator_model(self.config)}]
 
         entries: list[ModelEntry] = []
         for item in pool:
@@ -154,7 +154,7 @@ class ModelPool:
         entries = self._get_model_entries()
         if not entries:
             fallback = resolve_orchestrator_model(self.config)
-            return fallback or "gpt-4o"
+            return fallback
 
         # 1. Filter enabled & non-degraded & excluded
         eligible = [

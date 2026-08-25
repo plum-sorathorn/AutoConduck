@@ -1,6 +1,6 @@
 <div align="center">
 
-# AutoConduck 0.3.2
+# AutoConduck 0.3.4
 
 **Local, zero-overhead SLM model router & dynamic LangGraph task orchestrator for coding assistants.**
 
@@ -22,7 +22,7 @@
 
 Coding agents (**Claude Code**, **OpenCode**, and **Pi**) frequently send every prompt—from a single-line typo fix or docstring lookup to a 20-file architecture migration—to a single expensive frontier model. This incurs unnecessary token spend on trivial turns while bottlenecking large multi-step changes.
 
-**AutoConduck 0.3.2** transforms model routing into an intelligent, autonomous SLM-driven dynamic execution engine:
+**AutoConduck 0.3.4** transforms model routing into an intelligent, autonomous SLM-driven dynamic execution engine:
 
 - **Turn Guard (0ms / <2ms):** Routine turns (active tool loops, single-file edits, command outputs) bypass heavy orchestration instantly, maintaining sub-millisecond agent responsiveness with zero LLM overhead.
 - **Embedded SLM Task Architect (Qwen 2.5 Coder 0.5B Instruct):** Local GGUF-quantized small language model generates structured, validated task plans in <100ms, determining exact DAG topology, tier assignments, and subtask dependencies.

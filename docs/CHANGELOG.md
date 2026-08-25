@@ -1,5 +1,13 @@
 # AutoConduck Changelog
 
+## [0.3.4] - 2026-08-25
+
+### Fixes & Reliability Enhancements
+- **Configuration Resilience & In-Memory Preservation (`config/manager.py`)**: Fixed an issue where transient file locks, missing/empty reads, or background atomic file replaces could cause `get_config()` to evict loaded models and fall back to hardcoded defaults. The in-memory configuration is now preserved with fail-soft guarantees when the config file is temporarily unavailable.
+- **Thread-Safe Atomic Config I/O**: Added thread locking (`threading.RLock`) around config load and save operations, collision-proof temporary filenames, and Windows-specific retry backoff for atomic replacements.
+- **Automatic Backup Recovery**: `load_config()` automatically recovers active configurations from timestamped backups under `~/.autoconduck/backups/config/` on cold starts if `config.yaml` is missing or corrupted.
+- **Provider-Aware Fallback Resolution (`config/resolver.py`, `routing/model_pool.py`, `routing/pricing.py`)**: Enhanced `resolve_orchestrator_model()` to discover provider credentials from environment variables (`LLMGATEWAY_API_KEY`, `ANTHROPIC_API_KEY`, etc.) and fallback presets before defaulting to `gpt-4o`.
+
 ## [0.3.2] - 2026-08-24
 
 ### Enhancements & Dynamic Model Tiering

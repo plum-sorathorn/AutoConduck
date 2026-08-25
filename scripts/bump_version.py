@@ -92,13 +92,41 @@ def update_npm_packages(new_version: str) -> None:
             print(f"  [OK] Updated {pkg_file.relative_to(ROOT)} -> {new_version}")
 
 
+def update_docs(new_version: str) -> None:
+    # AGENTS.md
+    agents_file = ROOT / "AGENTS.md"
+    if agents_file.is_file():
+        content = agents_file.read_text(encoding="utf-8")
+        updated = re.sub(r'Project:\s*\*\*AutoConduck\*\*\s*\(`[^`]+`\s*in\s*`pyproject\.toml`\)', f'Project: **AutoConduck** (`{new_version}` in `pyproject.toml`)', content)
+        agents_file.write_text(updated, encoding="utf-8")
+        print(f"  [OK] Updated AGENTS.md -> {new_version}")
+
+    # README.md
+    readme_file = ROOT / "README.md"
+    if readme_file.is_file():
+        content = readme_file.read_text(encoding="utf-8")
+        updated = re.sub(r'# AutoConduck\s+\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?', f'# AutoConduck {new_version}', content)
+        updated = re.sub(r'\*\*AutoConduck\s+\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?\*\*', f'**AutoConduck {new_version}**', updated)
+        readme_file.write_text(updated, encoding="utf-8")
+        print(f"  [OK] Updated README.md -> {new_version}")
+
+    # PROJECT.md
+    project_file = ROOT / "PROJECT.md"
+    if project_file.is_file():
+        content = project_file.read_text(encoding="utf-8")
+        updated = re.sub(r'# Project:\s*AutoConduck\s+\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?', f'# Project: AutoConduck {new_version}', content)
+        updated = re.sub(r'AutoConduck\s+\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?\s+transforms', f'AutoConduck {new_version} transforms', updated)
+        project_file.write_text(updated, encoding="utf-8")
+        print(f"  [OK] Updated PROJECT.md -> {new_version}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Synchronize version across all AutoConduck files")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("version", nargs="?", help="Explicit new version (e.g. 0.3.3)")
-    group.add_argument("--patch", action="store_true", help="Bump patch version (e.g. 0.3.2 -> 0.3.3)")
-    group.add_argument("--minor", action="store_true", help="Bump minor version (e.g. 0.3.2 -> 0.4.0)")
-    group.add_argument("--major", action="store_true", help="Bump major version (e.g. 0.3.2 -> 1.0.0)")
+    group.add_argument("version", nargs="?", help="Explicit new version (e.g. 0.3.4)")
+    group.add_argument("--patch", action="store_true", help="Bump patch version (e.g. 0.3.3 -> 0.3.4)")
+    group.add_argument("--minor", action="store_true", help="Bump minor version (e.g. 0.3.3 -> 0.4.0)")
+    group.add_argument("--major", action="store_true", help="Bump major version (e.g. 0.3.3 -> 1.0.0)")
     group.add_argument("--current", action="store_true", help="Print current version and exit")
     parser.add_argument("--sync", action="store_true", help="Sync npm packages to match pyproject.toml without bumping")
 
@@ -128,6 +156,7 @@ def main() -> None:
     update_pyproject(new_version)
     update_init(new_version)
     update_npm_packages(new_version)
+    update_docs(new_version)
     print(f"\nSuccessfully bumped and synchronized to {new_version}!")
 
 

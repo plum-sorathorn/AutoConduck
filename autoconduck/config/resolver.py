@@ -161,13 +161,21 @@ def resolve_orchestrator_model(cfg: Any = None) -> str:
         from autoconduck.auth.auth import load_auth
 
         auth = load_auth()
-        if auth:
-            from autoconduck.presets.presets_fallback import _FALLBACK_PRESETS
+        from autoconduck.presets.presets_fallback import FALLBACK_PRESETS
 
+        if auth:
             for prov in auth:
-                presets = _FALLBACK_PRESETS.get(prov, [])
+                presets = FALLBACK_PRESETS.get(prov, [])
                 for p in presets:
                     if isinstance(p, dict) and p.get("id"):
+                        return str(p["id"])
+
+        # Check environment variables for known provider credentials
+        for prov, presets in FALLBACK_PRESETS.items():
+            for p in presets:
+                if isinstance(p, dict):
+                    key_env = p.get("api_key_env")
+                    if key_env and os.environ.get(key_env):
                         return str(p["id"])
     except Exception:
         pass

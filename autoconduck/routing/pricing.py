@@ -44,4 +44,4 @@ def select_for_sla(
     if config:
         pool = ModelPool(config)
         return pool.select_by_sla(sla, pseudo_model)
-    return "gpt-4o"
+    return resolve_orchestrator_model(config)

@@ -1,7 +1,7 @@
-# Project: AutoConduck 0.3.2 Modernization
+# Project: AutoConduck 0.3.4 Modernization
 
 ## Architecture
-AutoConduck 0.3.2 transforms from a heuristic 10-factor regex complexity scorer and static DAG pipeline into an intelligent Dynamic SLM Orchestration Engine.
+AutoConduck 0.3.4 transforms from a heuristic 10-factor regex complexity scorer and static DAG pipeline into an intelligent Dynamic SLM Orchestration Engine.
 
 ### Data Flow & Execution Pipeline
 1. **Client Request**: `/v1/chat/completions` (OpenAI) or `/v1/messages` (Anthropic).
