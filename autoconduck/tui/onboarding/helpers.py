@@ -167,7 +167,7 @@ def _require_textual():
         raise RuntimeError("Textual is required to use the AutoConduck TUI")
 
 
-AGENTS = ("claude_code", "opencode", "pi")
+AGENTS = ("claude_code", "opencode", "pi", "omp")
 
 
 def detect_agents():
@@ -176,8 +176,14 @@ def detect_agents():
         "claude_code": [home / ".claude" / "settings.json"],
         "opencode": [home / ".config" / "opencode" / "config.json"],
         "pi": [home / ".pi" / "agent" / "settings.json"],
+        "omp": [
+            home / ".omp" / "agent" / "models.yml",
+            home / ".omp" / "agent" / "models.yaml",
+            home / ".omp" / "agent" / "config.yml",
+            home / ".omp" / "agent" / "config.yaml",
+        ],
     }
-    commands = {"claude_code": "claude", "opencode": "opencode", "pi": "pi"}
+    commands = {"claude_code": "claude", "opencode": "opencode", "pi": "pi", "omp": "omp"}
     return {
         n: next(
             (str(p) for p in locations[n] if p.exists()),

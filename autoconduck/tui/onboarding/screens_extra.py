@@ -223,7 +223,7 @@ class ProviderFormScreen(Screen):
 
 
 class LauncherIntegrationScreen(Screen):
-    ELIGIBLE = {"claude_code", "opencode", "pi"}
+    ELIGIBLE = {"claude_code", "opencode", "pi", "omp"}
 
     def __init__(self, controller, selected=None):
         super().__init__()

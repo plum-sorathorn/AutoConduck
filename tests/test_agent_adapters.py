@@ -127,6 +127,7 @@ def test_launcher_shims_generation():
         "claude_code",
         "opencode",
         "pi",
+        "omp",
     ):
         bash = shim_script(agent_id, real_bin)
         assert "ensure --port" in bash
@@ -141,6 +142,8 @@ def test_agent_alias_resolution():
     assert resolve_agent_ids(["claude"]) == ["claude_code"]
     assert resolve_agent_ids(["open-code"]) == ["opencode"]
     assert resolve_agent_ids(["pi"]) == ["pi"]
+    assert resolve_agent_ids(["omp"]) == ["omp"]
+    assert resolve_agent_ids(["ohmypi"]) == ["omp"]
     assert resolve_agent_ids(["all"]) == [a.id for a in all_adapters()]
 
 
@@ -224,9 +227,10 @@ def test_onboarding_configure_selected_agents(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / ".pi" / "agent"))
 
-    configured = configure_selected_agents(["claude_code", "pi"])
+    configured = configure_selected_agents(["claude_code", "pi", "omp"])
     assert "claude_code" in configured
     assert "pi" in configured
+    assert "omp" in configured
 
 
 def test_universal_handoff_execution_directives(tmp_path, monkeypatch):
