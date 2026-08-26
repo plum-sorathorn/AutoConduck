@@ -1,7 +1,10 @@
-"""Bounded manual smoke test for a configured AutoConduck gateway."""
 import argparse
 import json
+import sys
+from pathlib import Path
 from fastapi.testclient import TestClient
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from autoconduck.main import _build
 

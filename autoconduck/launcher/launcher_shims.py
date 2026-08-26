@@ -10,7 +10,7 @@ def _shims_dir() -> Path:
     return launcher.shims_dir()
 
 def _adapter(agent_id):
-    from autoconduck.agents import all_adapters
+    from autoconduck.harnesses import all_adapters
 
     return next((a for a in all_adapters() if a.id == agent_id), None)
 
@@ -55,15 +55,38 @@ def _claude_env_blocks(port: int, pseudo: str = "autoconduck") -> tuple[str, str
 
 
 def _pi_env_blocks() -> tuple[str, str]:
-    """Return Pi's standard agent markers for launcher-created processes.
-
-    Pi normally adds these itself, but setting them in the shim also covers
-    wrappers and older Pi releases without changing Pi's provider settings.
-    """
+    """Return Pi's standard agent markers for launcher-created processes."""
     return (
         'export AI_AGENT="pi"\nexport PI_CODING_AGENT="true"',
         'set "AI_AGENT=pi"\nset "PI_CODING_AGENT=true"',
     )
+
+
+def _omp_env_blocks(port: int, pseudo: str = "autoconduck") -> tuple[str, str]:
+    """Return OMP's proxy endpoint and default model environment."""
+    return (
+        'export OMP_BASE_URL="http://127.0.0.1:${PORT}/v1"\n'
+        'export OMP_API_KEY="autoconduck-local"\n'
+        f'export OMP_MODEL="autoconduck/{pseudo}"',
+        'set "OMP_BASE_URL=http://127.0.0.1:%PORT%/v1"\n'
+        'set "OMP_API_KEY=autoconduck-local"\n'
+        f'set "OMP_MODEL=autoconduck/{pseudo}"',
+    )
+
+
+def _opencode_env_blocks(port: int, pseudo: str = "autoconduck") -> tuple[str, str]:
+    """Return environment variables for OpenCode."""
+    bash = (
+        'export OPENAI_BASE_URL="http://127.0.0.1:${PORT}/v1"\n'
+        'export OPENAI_API_KEY="autoconduck-local"\n'
+        f'export OPENCODE_MODEL="autoconduck/{pseudo}"'
+    )
+    cmd = (
+        'set "OPENAI_BASE_URL=http://127.0.0.1:%PORT%/v1"\n'
+        'set "OPENAI_API_KEY=autoconduck-local"\n'
+        f'set "OPENCODE_MODEL=autoconduck/{pseudo}"'
+    )
+    return bash, cmd
 
 
 def shim_script(agent_id, real_bin):
@@ -71,6 +94,7 @@ def shim_script(agent_id, real_bin):
 
     real_bin = str(real_bin)
     cfg = config.get_config()
+    pseudo = getattr(cfg, "pseudo_model", "autoconduck") or "autoconduck"
     lines = [
         "#!/usr/bin/env bash",
         "set -u",
@@ -79,15 +103,22 @@ def shim_script(agent_id, real_bin):
         f'PORT="${{AUTOCONDUCK_PORT:-{cfg.port}}}"',
     ]
     if agent_id == "claude_code":
-        bash_env, _ = _claude_env_blocks(cfg.port, cfg.pseudo_model)
+        bash_env, _ = _claude_env_blocks(cfg.port, pseudo)
         lines.append(bash_env)
     elif agent_id == "pi":
         bash_env, _ = _pi_env_blocks()
         lines.append(bash_env)
-    lines.append('"$PY" -m autoconduck ensure --port "$PORT" || true')
+    elif agent_id == "opencode":
+        bash_env, _ = _opencode_env_blocks(cfg.port, pseudo)
+        lines.append(bash_env)
+    elif agent_id == "omp":
+        bash_env, _ = _omp_env_blocks(cfg.port, pseudo)
+        lines.append(bash_env)
+    lines.append('SHIM_ID="$$"')
+    lines.append('"$PY" -m autoconduck ensure --port "$PORT" --client-id "$SHIM_ID" || true')
     lines.append('"$REAL_BIN" "$@"')
     lines.append("rc=$?")
-    lines.append('"$PY" -m autoconduck release --port "$PORT" || true')
+    lines.append('"$PY" -m autoconduck release --port "$PORT" --client-id "$SHIM_ID" || true')
     lines.append("exit $rc")
     return "\n".join(lines) + "\n"
 
@@ -99,6 +130,7 @@ def shim_script_win(agent_id, real_bin):
         return s.replace("%", "%%").replace('"', '""')
 
     cfg = config.get_config()
+    pseudo = getattr(cfg, "pseudo_model", "autoconduck") or "autoconduck"
     lines = [
         "@echo off",
         f'set "REAL_BIN={esc(real_bin)}"',
@@ -107,15 +139,22 @@ def shim_script_win(agent_id, real_bin):
         "if not defined PORT set PORT=" + str(cfg.port),
     ]
     if agent_id == "claude_code":
-        _, cmd_env = _claude_env_blocks(cfg.port, cfg.pseudo_model)
+        _, cmd_env = _claude_env_blocks(cfg.port, pseudo)
         lines.append(cmd_env)
     elif agent_id == "pi":
         _, cmd_env = _pi_env_blocks()
         lines.append(cmd_env)
-    lines.append('"%PY%" -m autoconduck ensure --port %PORT%')
+    elif agent_id == "opencode":
+        _, cmd_env = _opencode_env_blocks(cfg.port, pseudo)
+        lines.append(cmd_env)
+    elif agent_id == "omp":
+        _, cmd_env = _omp_env_blocks(cfg.port, pseudo)
+        lines.append(cmd_env)
+    lines.append('set "SHIM_ID=%RANDOM%%RANDOM%%RANDOM%"')
+    lines.append('"%PY%" -m autoconduck ensure --port %PORT% --client-id %SHIM_ID%')
     lines.append('"%REAL_BIN%" %*')
     lines.append("set RC=%ERRORLEVEL%")
-    lines.append('"%PY%" -m autoconduck release --port %PORT%')
+    lines.append('"%PY%" -m autoconduck release --port %PORT% --client-id %SHIM_ID%')
     lines.append("exit /b %RC%")
     return "\n".join(lines) + "\n"
 

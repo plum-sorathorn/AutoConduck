@@ -6,7 +6,7 @@ def _models_value(widget):
     return getattr(widget, "text", getattr(widget, "value", ""))
 from ..onboarding_models import apply_api_key, upsert_custom_models, remove_custom_provider, search_match
 from autoconduck.config import get_config, save_config, resolve_api_key
-from autoconduck.model_presets import curated_model_catalog, resolve_models
+from autoconduck.presets.model_presets import curated_model_catalog, resolve_models
 try:
     from autoconduck import launcher
 except ImportError:
@@ -92,7 +92,11 @@ if _TEXTUAL:
                             LauncherIntegrationScreen(self.controller, self.agents)
                         )
                     else:
-                        self._finish()
+                        configure_selected_agents(self.agents)
+                        from .screens_slm import SLMSetupScreen
+                        self.controller.push_screen(
+                            SLMSetupScreen(self.controller)
+                        )
                 except Exception as exc:
                     self.query_one("#error").update(str(exc))
 
@@ -207,9 +211,11 @@ if _TEXTUAL:
                         LauncherIntegrationScreen(self.controller, self.agents)
                     )
                 else:
-                    from ..dashboard import MainMenuScreen
-
-                    self.controller.switch_screen(MainMenuScreen())
+                    configure_selected_agents(self.agents)
+                    from .screens_slm import SLMSetupScreen
+                    self.controller.push_screen(
+                        SLMSetupScreen(self.controller)
+                    )
 
 
 from .screens_extra import ProviderFormScreen, LauncherIntegrationScreen

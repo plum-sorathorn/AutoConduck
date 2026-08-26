@@ -80,7 +80,7 @@ def kill_process(pid: int) -> bool:
     if os.name == "nt":
         try:
             result = subprocess.run(
-                ["taskkill", "/F", "/PID", str(pid)],
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
                 capture_output=True,
                 check=False,
                 creationflags=subprocess.CREATE_NO_WINDOW,
@@ -108,8 +108,75 @@ def kill_process(pid: int) -> bool:
         return False
 
 
+def get_parent_pid(pid: int) -> int | None:
+    """Return the parent PID of a given process ID, or None if unknown."""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        class PROCESSENTRY32(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", ctypes.c_char * 260),
+            ]
+
+        kernel32 = ctypes.windll.kernel32
+        snapshot = kernel32.CreateToolhelp32Snapshot(2, 0)  # TH32CS_SNAPPROCESS = 2
+        if not snapshot or snapshot == -1:
+            return None
+        entry = PROCESSENTRY32()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
+        try:
+            if kernel32.Process32First(snapshot, ctypes.byref(entry)):
+                while True:
+                    if entry.th32ProcessID == pid:
+                        return entry.th32ParentProcessID
+                    if not kernel32.Process32Next(snapshot, ctypes.byref(entry)):
+                        break
+        finally:
+            kernel32.CloseHandle(snapshot)
+        return None
+    try:
+        with open(f"/proc/{pid}/status", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("PPid:"):
+                    return int(line.split()[1])
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def is_port_bindable(port: int, host: str = "127.0.0.1") -> bool:
+    """Check if the TCP port is immediately bindable without error."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((host, port))
+            return True
+        except OSError:
+            return False
+
+
+def wait_for_port_free(port: int, host: str = "127.0.0.1", timeout: float = 3.0) -> bool:
+    """Poll until the TCP port is completely free and bindable."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if is_port_bindable(port, host):
+            return True
+        time.sleep(0.05)
+    return is_port_bindable(port, host)
+
+
 def prompt_kill_port(port: int, pid: int) -> bool:
-    if not sys.stdin.isatty():
+    if sys.stdin is None or not hasattr(sys.stdin, "isatty") or not sys.stdin.isatty():
         return False
     answer = input(
         f"Port {port} is in use by process {pid}. Kill it and start AutoConduck? [y/N] "

@@ -3,13 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 from autoconduck.config import ModelEntry
-from .presets_data import *
+
 from . import presets_ingest as _ingest_module
+from .presets_data import *
 from .presets_ingest import (
     _catalog_id_is_unqualified,
     _catalog_provider,
     _load_fallback,
     clean_model_id,
+    normalize_model_id_for_provider,
 )
 
 _litellm_costs_cache: dict[str, dict] | None = None
@@ -27,6 +29,7 @@ __all__ = [
     "_ingest_litellm_costs",
     "_catalog_provider",
     "clean_model_id",
+    "normalize_model_id_for_provider",
     "_catalog_id_is_unqualified",
     "curated_model_catalog",
     "catalog_for_provider",
@@ -34,6 +37,7 @@ __all__ = [
     "normalize_entries",
     "resolve_models",
 ]
+
 
 def _ingest_litellm_costs(enrich_pricing: bool = True) -> dict[str, dict]:
     global _litellm_costs_cache
@@ -43,8 +47,11 @@ def _ingest_litellm_costs(enrich_pricing: bool = True) -> dict[str, dict]:
     _litellm_costs_cache = result
     return result
 
+
 def default_preset_models(key: str) -> list[dict[str, Any]]:
     return list(PRESETS.get(key, []))
+
+
 def curated_model_catalog() -> list[dict[str, Any]]:
     """Return deduplicated chat models with prices in USD per million tokens."""
     global _catalog_cache
@@ -105,12 +112,16 @@ def curated_model_catalog() -> list[dict[str, Any]]:
             )
     _catalog_cache = sorted(rows.values(), key=lambda row: (row["provider"], row["id"]))
     return [dict(row) for row in _catalog_cache]
+
+
 def catalog_for_provider(provider: str) -> list[dict[str, Any]]:
     return [
         row
         for row in curated_model_catalog()
         if row["provider"].lower() == provider.lower()
     ]
+
+
 def discover_models(
     preset_keys: list[str] | None = None,
     custom_models: list[dict[str, Any]] | None = None,
@@ -140,7 +151,9 @@ def discover_models(
                 if isinstance(raw_entry, ModelEntry)
                 else raw_entry
             )
-            mid = raw["id"]
+            mid = normalize_model_id_for_provider(
+                str(raw["id"]), str(raw.get("provider", "openai"))
+            )
             # enrich price from litellm if available
             price_in = raw.get("price_in")
             price_out = raw.get("price_out")
@@ -158,7 +171,6 @@ def discover_models(
                     api_key_env=raw.get("api_key_env", "OPENAI_API_KEY"),
                     api_key=raw.get("api_key"),
                     base_url=raw.get("base_url"),
-                    tier=raw.get("tier", "balanced"),
                     price_in=float(price_in or 0),
                     price_out=float(price_out or 0),
                     enabled=bool(raw.get("enabled", True)),
@@ -169,6 +181,9 @@ def discover_models(
         mid = raw.get("id") or raw.get("model")
         if not mid:
             continue
+        mid = normalize_model_id_for_provider(
+            str(mid), str(raw.get("provider", "openai"))
+        )
         # price lookup
         pi = raw.get("price_in")
         po = raw.get("price_out")
@@ -183,7 +198,6 @@ def discover_models(
                 api_key_env=str(raw.get("api_key_env", "OPENAI_API_KEY")),
                 api_key=raw.get("api_key"),
                 base_url=raw.get("base_url"),
-                tier=str(raw.get("tier", "balanced")),
                 price_in=float(pi or 0.001),
                 price_out=float(po or 0.002),
                 enabled=bool(raw.get("enabled", True)),
@@ -195,6 +209,8 @@ def discover_models(
     for e in entries:
         seen[e.id] = e
     return list(seen.values())
+
+
 def normalize_entries(raw_list: list[dict[str, Any]]) -> list[ModelEntry]:
     return [ModelEntry.model_validate(r) for r in raw_list]
 

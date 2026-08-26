@@ -1,8 +1,11 @@
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, replace
+from typing import Literal, Any
 import os
 from urllib.parse import urlsplit
-from . import semantic_router, evaluator, pricing
+from . import pricing
+from autoconduck.routing.model_pool import CapabilitySLA
+from autoconduck.routing.slm_planner import SLMPlanner, ExecutionPlan, SubTaskSpec
+from autoconduck.server.turn_guard import TurnGuard, TurnAction, TurnClassificationResult
 
 
 def _user_messages(messages: list) -> list:
@@ -21,278 +24,169 @@ class RoutingDecision:
     complexity: float
     reason: str
     model: str | None = None
-
-
-def _default_tiebreaker(message, pseudo_model, config):
-    try:
-        import litellm
-        from ..config import (
-            get_config,
-            normalize_api_base,
-            qualify_model,
-            resolve_api_key,
-        )
-
-        cfg = config or get_config()
-        content = getattr(message, "content", str(message))
-        model = pricing.cheapest_enabled(cfg)
-        if not model:
-            return None
-        entry = next(
-            (
-                e
-                for source in (
-                    getattr(cfg, "model_list", []) or [],
-                    getattr(cfg, "custom_models", []) or [],
-                )
-                for e in source
-                if isinstance(e, dict)
-                and str(
-                    e.get("id") or e.get("model_name") or e.get("model") or ""
-                ).removeprefix("openai/")
-                == str(model).removeprefix("openai/")
-            ),
-            {},
-        )
-        source = (
-            entry.get("litellm_params")
-            if isinstance(entry.get("litellm_params"), dict)
-            else entry
-        )
-        base = source.get("base_url") or source.get("api_base")
-        if base:
-            base = normalize_api_base(base)
-            parsed = urlsplit(base)
-            try:
-                local_port = int(
-                    os.environ.get("AUTOCONDUCK_PORT", getattr(cfg, "port", 11434))
-                )
-            except ValueError:
-                local_port = getattr(cfg, "port", 11434)
-            if (
-                parsed.hostname in {"127.0.0.1", "localhost", "::1"}
-                and (parsed.port or 80) == local_port
-            ):
-                # The local gateway would recurse into this tiebreaker call.
-                return None
-        params = {"model": qualify_model(model)}
-        if base:
-            params["api_base"] = base
-        api_key = resolve_api_key(source)
-        if api_key:
-            params["api_key"] = api_key
-        short_content = str(content or "")[:500]
-        result = litellm.completion(
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Reply with FAST or SLOW, then a space, then a complexity digit 1-9 (1=trivial, 9=very complex). Example: 'FAST 3'. Classify: {short_content}",
-                }
-            ],
-            max_tokens=3,
-            timeout=1.5,
-            **params,
-        )
-        answer = result.choices[0].message.content.strip().upper()
-        match = __import__("re").match(
-            r"^(FAST|SLOW)(?:\s+([1-9]))?\s*$", answer
-        )
-        return answer if match else None
-    except Exception:
-        return None
+    route: str = "fast_direct"
+    plan: Any = None
+    tier: str | None = None
+    candidates_considered: int = 0
+    candidates_excluded_by: dict[str, int] | None = None
+    binding_constraint: str | None = None
+    min_capability_score_applied: float = 0.0
+    spend_cap_engaged: bool = False
+    fallback_reason: str | None = None
+    capability_fit_applied: float | None = None
+    binding_capability_dim: str | None = None
 
 
 def route(
     messages: list,
-    history,
+    history: Any = None,
     pseudo_model: str = "autoconduck",
-    tiebreaker=None,
-    config=None,
+    tiebreaker: Any = None,
+    config: Any = None,
 ) -> RoutingDecision:
     if config is None:
         from ..config import get_config
-
         config = get_config()
-    if getattr(getattr(config, "selection", None), "enable_fast_path_graph", True):
-        from .fast_graph import execute_fast_graph, FastGraphState
 
-        state = execute_fast_graph(
-            FastGraphState(
-                messages=messages,
-                history=history,
-                pseudo_model=pseudo_model,
-                config=config,
-                tiebreaker=tiebreaker,
-            )
-        )
-        return RoutingDecision(
-            path=state.path,
-            confidence_band=state.confidence_band,
-            confidence=state.confidence,
-            complexity=state.complexity,
-            reason=state.reason,
-            model=state.model,
-        )
-    user_messages = _user_messages(messages)
-    last = user_messages[-1] if user_messages else ""
-    text = (
-        last.get("content", "")
-        if isinstance(last, dict)
-        else getattr(last, "content", str(last))
-    )
-    text = evaluator.clean_routing_text(text)
-    match = semantic_router.route(text)
-    result = evaluator.score(messages, history, match, pseudo_model, config)
-    if len(enabled) <= 1 and result.confidence_band == "ambiguous":
-        path = "slow" if match.route == "slow_path" else "fast"
-        model = (
-            pricing.select_closest(
-                pricing.pool_ids(config),
-                result.complexity,
-                config,
-                pseudo_model=pseudo_model,
-            )
-            if path == "fast"
-            else None
-        )
-        if path == "fast" and not model:
-            from ..config import resolve_orchestrator_model
+    from ..config import resolve_orchestrator_model
 
-            model = resolve_orchestrator_model(config)
-        if model:
-            from ..stats import record_selection
+    # Step 1: Turn Guard 0ms Classification (<2ms overhead)
+    guard = TurnGuard()
+    guard_res = guard.classify_turn(messages)
 
-            record_selection(
-                result.complexity,
-                pricing.target_scaled_cost(result.complexity, pseudo_model, config),
-                model,
-                config,
-            )
-        return RoutingDecision(
-            path=path,
-            confidence_band="ambiguous",
-            confidence=result.confidence,
-            complexity=result.complexity,
-            reason=f"single-model, router-resolved: {path}",
-            model=model,
+    plan = None
+    selection_info = None
+    if guard_res.target_action == TurnAction.DIRECT_ACTIVE_TIER:
+        path = "fast"
+        route_name = "fast_direct"
+        confidence_band = "fast"
+        confidence = 1.0
+        complexity = 0.2
+        last_tool = (guard_res.last_tool_name or "").lower()
+        is_routine_tool = any(
+            t in last_tool
+            for t in ["read", "glob", "list", "grep", "bash", "status", "diff", "command", "file", "view", "tool"]
         )
-    if result.confidence_band == "ambiguous":
-        selection = getattr(config, "selection", config)
-        tiebreaker_floor = float(getattr(selection, "tiebreaker_min_complexity", 0.45))
-        if pseudo_model.endswith("budget"):
-            tiebreaker_floor = float(
-                getattr(selection, "budget_tiebreaker_min_complexity", 0.65)
-            )
-        use_tiebreaker = tiebreaker is not None or (
-            bool(getattr(selection, "tiebreaker_enabled", True))
-            and result.complexity >= tiebreaker_floor
+        reason = f"tool_loop_bypass: {guard_res.last_tool_name or 'tool'}"
+        sla = CapabilitySLA(min_context=16000, requires_tools=True, max_cost=1.0 if is_routine_tool else 1.5)
+        selection_info = pricing.select_for_sla_detailed(sla, config=config, pseudo_model=pseudo_model)
+        model = selection_info.model or resolve_orchestrator_model(config)
+        tier = "capability_sla"
+
+    elif guard_res.target_action == TurnAction.ESCALATE_SLM:
+        path = "slow"
+        route_name = "dynamic_dag"
+        confidence_band = "slow"
+        confidence = 0.95
+        complexity = 0.85
+        tier = "capability_sla"
+        reason = f"stagnation_escalation: {guard_res.stagnation_reason}"
+        planner = SLMPlanner()
+        plan = planner.create_escalation_plan(
+            messages, reason=f"stagnation_escalation: {guard_res.stagnation_reason}"
         )
-        if not use_tiebreaker:
-            path, complexity = "fast", result.complexity
-            reason_suffix = "fast (below-floor)"
+        selection_info = _select_planned(plan.suggested_sla, plan, config, pseudo_model, "escalate")
+        model = selection_info.model or resolve_orchestrator_model(config)
+
+    else:
+        # Step 2: Embedded SLM Task Architect (<100ms circuit breaker)
+        planner = SLMPlanner()
+        plan = planner.plan_sync(messages, config)
+
+        if plan.route == "dynamic_dag":
+            path = "slow"
+            route_name = "dynamic_dag"
+            confidence_band = "slow"
+            confidence = plan.confidence
+            complexity = 0.85 if plan.task_type in ("refactor", "full_workflow") else 0.75
+            tier = "capability_sla"
+            reason = plan.rationale or f"dynamic_dag_{plan.task_type}"
+            selection_info = _select_planned(plan.suggested_sla, plan, config, pseudo_model, "refactor" if plan.task_type in ("refactor", "full_workflow", "multi_edit") else None)
+            model = selection_info.model or resolve_orchestrator_model(config)
         else:
-            try:
-                answer = str((tiebreaker or _default_tiebreaker)(messages[-1], pseudo_model, config)).upper()
-            except Exception:
-                answer = "NONE"
-            import re
+            path = "fast"
+            route_name = "fast_direct"
+            confidence_band = "fast"
+            confidence = plan.confidence
+            complexity = 0.2
+            tier = "capability_sla"
+            reason = plan.rationale or f"fast_direct_{plan.task_type}"
+            model = pricing.select_for_sla(
+                plan.suggested_sla, config=config, pseudo_model=pseudo_model
+            ) or resolve_orchestrator_model(config)
 
-            match = re.match(r"^(FAST|SLOW)(?:\s+([1-9]))?\s*$", answer)
-            if answer == "NONE" or not match:
-                slow_threshold = float(getattr(selection, "slow_threshold", 0.75))
-                tiebreaker_model = pricing.cheapest_enabled(config)
-                degraded = bool(
-                    tiebreaker_model
-                    and pricing.is_degraded(
-                        tiebreaker_model,
-                        getattr(config, "degraded_window_s", 300),
-                        getattr(config, "degraded_error_rate", 0.2),
-                    )
-                )
-                if degraded:
-                    path = "fast"
-                    reason_suffix = "unavailable: degraded-provider"
-                else:
-                    path = "slow" if result.complexity >= slow_threshold else "fast"
-                    reason_suffix = "unavailable: complexity-fallback"
-                complexity = result.complexity
-            else:
-                digit = int(match.group(2)) if match.group(2) else None
-                complexity = (
-                    0.5 * result.complexity + 0.5 * (digit / 9)
-                    if digit is not None
-                    else result.complexity
-                )
-                path = "slow" if match.group(1) == "SLOW" else "fast"
-                reason_suffix = path
-        model = (
-            pricing.select_closest(
-                pricing.pool_ids(config), complexity, config, pseudo_model=pseudo_model
-            )
-            if path == "fast"
-            else None
-        )
-        if path == "fast" and not model:
-            from ..config import resolve_orchestrator_model
-
-            model = resolve_orchestrator_model(config)
-        if model:
+    if model:
+        try:
             from ..stats import record_selection
-
             record_selection(
                 complexity,
-                pricing.target_scaled_cost(complexity, pseudo_model, config),
+                0.5,
                 model,
                 config,
             )
-        return RoutingDecision(
-            path=path,
-            confidence_band="ambiguous",
-            confidence=result.confidence,
-            complexity=complexity,
-            reason=(
-                "tiebreaker: " + reason_suffix
-                if not reason_suffix.startswith("unavailable:")
-                else "tiebreaker_" + reason_suffix
-            ),
-            model=model,
-        )
-    selection = getattr(config, "selection", config)
-    max_fast_cost = getattr(selection, "fast_path_max_scaled_cost", 0.50)
-    try:
-        max_fast_cost = float(max_fast_cost)
-    except (TypeError, ValueError):
-        max_fast_cost = 0.50
+        except Exception:
+            pass
 
-    model = (
-        pricing.select_closest(
-            pricing.pool_ids(config),
-            result.complexity,
-            config,
-            pseudo_model=pseudo_model,
-            max_scaled_cost=max_fast_cost,
-        )
-        if result.path == "fast"
-        else None
-    )
-    if result.path == "fast" and not model:
-        from ..config import resolve_orchestrator_model
-
-        model = resolve_orchestrator_model(config)
-    if model:
-        from ..stats import record_selection
-
-        record_selection(
-            result.complexity,
-            pricing.target_scaled_cost(result.complexity, pseudo_model, config),
-            model,
-            config,
-        )
     return RoutingDecision(
-        path=result.path,
-        confidence_band=result.confidence_band,
-        confidence=result.confidence,
-        complexity=result.complexity,
-        reason=result.reason,
+        path=path,
+        confidence_band=confidence_band,
+        confidence=confidence,
+        complexity=complexity,
+        reason=reason,
         model=model,
+        route=route_name,
+        plan=plan,
+        tier=tier,
+        candidates_considered=selection_info.candidates_considered if selection_info else 0,
+        candidates_excluded_by=selection_info.candidates_excluded_by if selection_info else None,
+        binding_constraint=selection_info.binding_constraint if selection_info else None,
+        min_capability_score_applied=selection_info.min_capability_score_applied if selection_info else 0.0,
+        spend_cap_engaged=selection_info.spend_cap_engaged if selection_info else False,
+        fallback_reason=selection_info.fallback_reason if selection_info else None,
+        capability_fit_applied=selection_info.capability_fit_applied if selection_info else None,
+        binding_capability_dim=selection_info.binding_capability_dim if selection_info else None,
     )
+
+
+def _select_planned(sla: CapabilitySLA, plan: Any, config: Any, pseudo_model: str, tier: str | None):
+    try:
+        confidence = max(0.0, min(1.0, float(plan.confidence)))
+        selection = getattr(config, "selection", None)
+        base = sla.min_capability_score
+        if base > 0:
+            floor = min(base + float(getattr(selection, "confidence_floor_k", 0.15)) * (1 - confidence), float(getattr(selection, "confidence_floor_max", 0.6)))
+        else:
+            floor = base
+        ceiling = None
+        if tier:
+            ceilings = getattr(selection, "path_price_cap_usd_per_mtok", {})
+            ceiling = ceilings.get(tier)
+        modified = replace(
+            sla,
+            min_capability_score=floor,
+            max_price_usd_per_mtok=ceiling,
+            task_type=getattr(plan, "task_type", None),
+        )
+        return pricing.select_for_sla_detailed(modified, config=config, pseudo_model=pseudo_model)
+    except Exception:
+        return pricing.select_for_sla_detailed(sla, config=config, pseudo_model=pseudo_model)
+
+
+def pick_fast_model(body_model: str = "autoconduck", cfg: Any = None) -> str:
+    """Pick an economical fast model within the capability SLA."""
+    if cfg is None:
+        from ..config import get_config
+        cfg = get_config()
+    try:
+        from ..config import resolve_orchestrator_model
+        return (
+            pricing.select_for_sla(
+                CapabilitySLA(min_context=16000, requires_tools=True, max_cost=1.0),
+                config=cfg,
+                pseudo_model=body_model,
+            )
+            or resolve_orchestrator_model(cfg)
+        )
+    except Exception:
+        from ..config import resolve_orchestrator_model
+        return resolve_orchestrator_model(cfg)

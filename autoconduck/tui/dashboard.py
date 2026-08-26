@@ -1,79 +1,43 @@
 """Compact live routing dashboard / main navigation hub."""
+
 from __future__ import annotations
-import json
-from .keymap import FOOTER_HINT
 
+from typing import Any
 
-def move_cursor(cursor: int, delta: int, length: int) -> int:
-    return 0 if length <= 0 else max(0, min(length - 1, cursor + delta))
-
-
-def render_log_rows(records: list[dict], cursor: int) -> str:
-    if not records:
-        return "(no routing decisions yet)"
-    lines = []
-    for index, record in enumerate(records):
-        stamp = record.get("time", record.get("timestamp", "--"))
-        route = record.get("route", "fast")
-        model = record.get("model", record.get("model_used", "--"))
-        prompt = str(record.get("prompt", "")).replace("\n", " ")[:40].replace("[", "\\[")
-        confidence = record.get("confidence", "--")
-        line = (
-            f"› {stamp} {route} {model} {prompt} ({confidence})"
-            if index == cursor
-            else f"  {stamp} {route} {model} {prompt} ({confidence})"
-        )
-        lines.append(f"[reverse]{line}[/reverse]" if index == cursor else line)
-    return "\n".join(lines)
-
-
-def _cell_len(s: str) -> int:
-    try:
-        from rich.text import Text
-        return Text.from_markup(s).cell_len
-    except Exception:
-        import re
-        return len(re.sub(r'\[/?[a-zA-Z0-9_ =#,-]+\]', '', s))
-
-
-def _format_box_lines(title: str, lines: list[str], width: int = 76) -> list[str]:
-    title_len = _cell_len(title)
-    dashes = max(0, width - 6 - title_len)
-    top = f"+-- {title} {'-' * dashes}+"
-    bottom = f"+{'-' * (width - 2)}+"
-
-    result = [top]
-    for line in lines:
-        if line.startswith("-") and set(line) == {"-"}:
-            result.append(f"+{'-' * (width - 2)}+")
-            continue
-        l_len = _cell_len(line)
-        pad = max(0, width - 4 - l_len)
-        result.append(f"| {line}{' ' * pad} |")
-    result.append(bottom)
-    return result
-
+from autoconduck.tui.dashboard_screens import (
+    DrillDownScreen,
+    LaunchAgentScreen,
+    UpdateCatalogScreen,
+    UpdateScreen,
+)
+from autoconduck.tui.dashboard_widgets import (
+    _cell_len,
+    decision_path,
+    _format_box_lines,
+    move_cursor,
+    record_value,
+    render_log_rows,
+)
+from autoconduck.tui.keymap import FOOTER_HINT
 
 try:
     from textual.containers import Vertical
     from textual.screen import Screen
-    from textual.widgets import Static, Input
+    from textual.widgets import DataTable, Static
     _TEXTUAL = True
 except ImportError:
     _TEXTUAL = False
-    class Screen:
+
+    class Screen:  # type: ignore
         pass
+
     def _require():
         raise RuntimeError("Textual is required to use the AutoConduck TUI")
 
 
 if _TEXTUAL:
     class MainMenuScreen(Screen):
-        """Main navigation hub.
-
-        Replaces the old passive dashboard as the app entry point.
-        From here you can navigate to every other TUI screen.
-        """
+        """Main navigation hub."""
 
         DUCK_FRAMES = [
             '  __(o<   [bold cyan]AutoConduck[/bold cyan]',
@@ -82,11 +46,12 @@ if _TEXTUAL:
         ]
 
         MENU_ITEMS = [
-            ("d", "Live Routing Stats",     "Real-time routing decisions & cost tracker"),
-            ("m", "Configure Models",       "Add providers, select models, set API keys"),
-            ("t", "Tune Budget",            "Budget limits, cost targets, ambiguity bands"),
-            ("s", "Settings",               "Launch behaviour, thresholds, log level"),
-            ("a", "Launch Agent",           "Start a configured coding agent"),
+            ("d", "Live Routing Stats", "Real-time routing decisions & cost tracker"),
+            ("m", "Model Catalog", "Providers, presets, and API key vault"),
+            ("c", "Configure Integrations", "Re-configure models and coding agents"),
+            ("u", "Check for Updates", "Check latest version & upgrade AutoConduck"),
+            ("s", "Settings", "Launch behaviour, thresholds, log level"),
+            ("a", "Launch Agent", "Start a configured coding agent"),
         ]
 
         def __init__(self):
@@ -94,8 +59,11 @@ if _TEXTUAL:
             self.cursor = 0
             self.duck_frame = 0
             self.totals = {
-                "calls": 0, "prompt_tokens": 0,
-                "completion_tokens": 0, "total_tokens": 0, "cost": 0.0,
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost": 0.0,
             }
 
         def compose(self):
@@ -126,6 +94,7 @@ if _TEXTUAL:
         def _update_stats(self):
             try:
                 from autoconduck import stats
+
                 records = stats.load_records(limit=50)
                 if records:
                     agg = stats.aggregate(records)
@@ -159,18 +128,21 @@ if _TEXTUAL:
         def _navigate(self, idx: int):
             _, title, _ = self.MENU_ITEMS[idx]
             app = self.app
-            if idx == 0:  # Live Stats
+            if idx == 0:
                 app.push_screen(DashboardScreen())
-            elif idx == 1:  # Configure Models
+            elif idx == 1:
+                from .onboarding.screens_models import ModelCatalogScreen
+                app.push_screen(ModelCatalogScreen(app))
+            elif idx == 2:
                 from .onboarding import ModelSourceScreen
                 app.push_screen(ModelSourceScreen(app))
-            elif idx == 2:  # Tune Budget
-                from .tune import TuneScreen
-                app.push_screen(TuneScreen(app))
-            elif idx == 3:  # Settings
+            elif idx == 3:
+                app.push_screen(UpdateScreen(app))
+            elif idx == 4:
                 from .settings import SettingsScreen
+
                 app.push_screen(SettingsScreen(app))
-            elif idx == 4:  # Launch Agent
+            elif idx == 5:
                 app.push_screen(LaunchAgentScreen(app))
 
         def on_key(self, event):
@@ -190,78 +162,10 @@ if _TEXTUAL:
                         self._navigate(i)
                         break
 
-    class LaunchAgentScreen(Screen):
-        """Pick and launch a configured coding agent."""
-
-        def __init__(self, controller=None):
-            super().__init__()
-            self.controller = controller
-            self.cursor = 0
-            self._agents = []
-            self._msg = ""
-
-        def _load_agents(self):
-            from autoconduck.tui.onboarding import AGENTS, detect_agents, is_agent_configured
-            detected = detect_agents()
-            configured = {a for a in AGENTS if is_agent_configured(a)}
-            self._agents = [
-                {
-                    "id": a,
-                    "detected": detected.get(a) or "not found",
-                    "configured": a in configured,
-                }
-                for a in AGENTS
-            ]
-
-        def _render_rows(self):
-            lines = ["  Select a coding agent to launch:\n"]
-            for i, ag in enumerate(self._agents):
-                status = "[green]ready[/green]" if ag["configured"] else "[red]not configured[/red]"
-                mark = ">> " if i == self.cursor else "   "
-                row = f"{mark}[bold]{ag['id']}[/bold]  {status}  [dim]{ag['detected']}[/dim]"
-                lines.append(f"[reverse]{row}[/reverse]" if i == self.cursor else row)
-            if self._msg:
-                lines.append(f"\n{self._msg}")
-            return "\n".join(lines)
-
-        def compose(self):
-            self._load_agents()
-            yield Vertical(
-                Static("AutoConduck - Launch Agent"),
-                Static(self._render_rows(), id="rows", markup=True),
-                Static(
-                    "[up/down] navigate  [enter] launch  [left] back  [ctrl+c] quit",
-                    id="footer",
-                    markup=False,
-                ),
-            )
-
-        def _launch(self):
-            if not self._agents:
-                return
-            ag = self._agents[self.cursor]
-            if not ag["configured"]:
-                self._msg = f"Agent '{ag['id']}' is not configured — run: autoconduck install {ag['id']}"
-                self.query_one("#rows").update(self._render_rows())
-                return
-            self.app.exit(result=f"launch:{ag['id']}")
-
-        def on_key(self, event):
-            if event.key == "down":
-                self.cursor = move_cursor(self.cursor, 1, len(self._agents))
-                self.query_one("#rows").update(self._render_rows())
-            elif event.key == "up":
-                self.cursor = move_cursor(self.cursor, -1, len(self._agents))
-                self.query_one("#rows").update(self._render_rows())
-            elif event.key == "enter":
-                self._launch()
-            elif event.key == "left":
-                self.app.pop_screen()
-
     class DashboardScreen(Screen):
         """Live routing decisions log — accessible from the main menu."""
 
-        BINDINGS = [("d", "drill", "drill"), ("p", "pause", "pause")]
+        BINDINGS = [("d", "drill", "drill selected decision"), ("p", "pause", "pause"), ("enter", "drill", "open decision")]
         DUCK_FRAMES = [
             '  __(o<   [bold cyan]AutoConduck[/bold cyan] . [green]proxy active[/green]',
             '  __(.<   [bold cyan]AutoConduck[/bold cyan] . [green]proxy active[/green]',
@@ -270,25 +174,42 @@ if _TEXTUAL:
 
         def __init__(self):
             super().__init__()
-            self.records: list[dict] = []
+            self.records: list[dict[str, Any]] = []
             self.cursor = 0
             self.paused = False
             self.duck_frame = 0
-            self.totals = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cost": 0.0}
-            self.models_breakdown: dict[str, dict] = {}
+            self.totals = {
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost": 0.0,
+            }
+            self.models_breakdown: dict[str, dict[str, Any]] = {}
             self.paths: dict[str, int] = {}
             self.pseudos: dict[str, int] = {}
+            self.metrics: dict[str, Any] = {}
 
         def compose(self):
             yield Vertical(
                 Static(self._mascot_header(), id="header", markup=True),
                 Static(self._graph_view(), id="graph", markup=True),
+                Static(self._telemetry_cards(), id="telemetry", markup=True),
                 Static(self._stats_summary(), id="stats", markup=True),
-                Static("recent routing decisions\n" + render_log_rows(self.records, self.cursor), id="log", markup=True),
-                Static("[up/down] move  [d] details  [p] pause  [esc/left] back  [ctrl+c] quit", id="footer", markup=False),
+                DataTable(id="decisions", cursor_type="row"),
+                Static(
+                    "[up/down] move  [enter/d] details  [p] pause  [esc/left] back  [ctrl+c] quit",
+                    id="footer",
+                    markup=False,
+                ),
             )
 
         def on_mount(self):
+            try:
+                table = self.query_one("#decisions", DataTable)
+                table.add_columns("Timestamp", "Turn #", "Path", "Model Selected", "In/Out Tokens", "Cost ($)", "Turn Latency (ms)")
+            except Exception:
+                pass
             self._update_stats()
             self.set_interval(0.8, self._tick)
 
@@ -298,13 +219,16 @@ if _TEXTUAL:
             try:
                 self.query_one("#header", Static).update(self._mascot_header())
                 self.query_one("#graph", Static).update(self._graph_view())
+                self.query_one("#telemetry", Static).update(self._telemetry_cards())
                 self.query_one("#stats", Static).update(self._stats_summary())
+                self._refresh_table()
             except Exception:
                 pass
 
         def _update_stats(self):
             try:
                 from autoconduck import stats
+
                 records = stats.load_records(limit=100)
                 if records:
                     self.records = list(reversed(records))
@@ -313,12 +237,44 @@ if _TEXTUAL:
                     self.models_breakdown = agg.get("models", {})
                     self.paths = agg.get("paths", {})
                     self.pseudos = agg.get("pseudos", {})
+                    self.metrics = agg.get("totals", {})
+                else:
+                    self.metrics = {}
             except Exception:
                 pass
+
+        def _refresh_table(self):
+            try:
+                table = self.query_one("#decisions", DataTable)
+                table.clear(columns=False)
+                for index, record in enumerate(self.records):
+                    stamp = str(record_value(record, "time", "timestamp", "ts"))[:19]
+                    path = decision_path(record)
+                    model = str(record_value(record, "model", "model_used"))[:24]
+                    prompt = int(record.get("prompt_tokens", 0) or 0)
+                    completion = int(record.get("completion_tokens", 0) or 0)
+                    latency = record_value(record, "latency_ms", "turn_latency_ms")
+                    table.add_row(stamp, str(record_value(record, "turn", "turn_number", default=index + 1)), path, model, f"{prompt:,}/{completion:,}", f"${float(record.get('cost', 0) or 0):.4f}", str(latency))
+            except Exception:
+                pass
+
+        def _telemetry_cards(self) -> str:
+            t = self.metrics or self.totals
+            cost = float(t.get("cost", 0) or 0)
+            savings = float(t.get("savings_percentage", 0) or 0)
+            prompt = int(t.get("prompt_tokens", 0) or 0)
+            completion = int(t.get("completion_tokens", 0) or 0)
+            cache = float(t.get("prompt_cache_hit_ratio", t.get("cache_hit_ratio", 0)) or 0)
+            return "\n".join(_format_box_lines("Live Telemetry", [
+                f"Cost: [bold green]${cost:.4f}[/bold green] session/monthly  Savings: [bold cyan]{savings:.1f}%[/bold cyan]",
+                f"Requests: [bold]{t.get('calls', 0)}[/bold]  Active streams: [bold]{t.get('active_streams', t.get('concurrent_streams', 0))}[/bold]  Token velocity: {prompt:,} prompt / {completion:,} completion tok/s",
+                f"Prefix cache: [bold]{cache:.1f}%[/bold] hit  Latency saved: [bold]{float(t.get('estimated_latency_saved_ms', 0) or 0):.1f} ms[/bold]",
+            ], width=76))
 
         def _graph_view(self) -> str:
             try:
                 from autoconduck import stats
+
                 active = stats.get_active_routing()
             except Exception:
                 active = {"active": False, "path": "FAST", "node": "idle"}
@@ -332,37 +288,82 @@ if _TEXTUAL:
             completed = active.get("subtasks_completed", 0)
             total = active.get("subtasks_total", 0)
 
-            if is_active and path == "SLOW":
-                p_n = "[bold yellow]● PLANNER[/bold yellow]" if node == "planner" else ("[green]✓ PLANNER[/green]" if node in ("subagents", "compactor", "executor") else "[dim]○ PLANNER[/dim]")
-                sub_label = f"SUBAGENTS ({completed}/{total})" if total else "SUBAGENTS"
-                s_n = f"[bold yellow]● {sub_label}[/bold yellow]" if node == "subagents" else ("[green]✓ SUBAGENTS[/green]" if node in ("compactor", "executor") else "[dim]○ SUBAGENTS[/dim]")
-                c_n = "[bold yellow]● COMPACTOR[/bold yellow]" if node == "compactor" else ("[green]✓ COMPACTOR[/green]" if node == "executor" else "[dim]○ COMPACTOR[/dim]")
-                e_n = "[bold yellow]● EXECUTOR[/bold yellow]" if node == "executor" else "[dim]○ EXECUTOR[/dim]"
+            if is_active and decision_path({"path": path}) == "SLOW":
+                tg_n = "[green][OK] GUARD[/green]"
+                slm_n = (
+                    "[bold yellow]● SLM PLAN[/bold yellow]"
+                    if node in ("init", "rag", "slm")
+                    else "[green][OK] SLM PLAN[/green]"
+                )
+                dag_label = (
+                    f"DAG NODES ({completed}/{total})"
+                    if total
+                    else "DYNAMIC DAG"
+                )
+                dag_n = (
+                    f"[bold yellow]● {dag_label}[/bold yellow]"
+                    if node not in ("init", "rag", "slm", "synthesizer", "idle")
+                    else (
+                        "[green][OK] DYNAMIC DAG[/green]"
+                        if node == "synthesizer"
+                        else "[dim]○ DYNAMIC DAG[/dim]"
+                    )
+                )
+                syn_n = (
+                    "[bold yellow]● SYNTHESIZER[/bold yellow]"
+                    if node == "synthesizer"
+                    else "[dim]○ SYNTHESIZER[/dim]"
+                )
 
                 lines = [
-                    f"Target: [bold]{model}[/bold] | Task Value V: [bold yellow]{val:.2f}[/bold yellow]",
+                    f"Target: [bold]{model}[/bold] | Active Node: [bold yellow]{node}[/bold yellow]",
                     "",
-                    f"[START] ──► {p_n} ──► {s_n} ──► {c_n} ──► {e_n} ──► [END]",
+                    f"[START] ──► {tg_n} ──► {slm_n} ──► {dag_n} ──► {syn_n} ──► [END]",
                     "",
                     f"Status: [bold cyan]{detail}[/bold cyan]",
                 ]
-                return "\n".join(_format_box_lines("[bold cyan]LangGraph SLOW Path Execution[/bold cyan]", lines, width=76))
-            elif is_active and path == "FAST":
+                return "\n".join(
+                    _format_box_lines(
+                        "[bold cyan]LangGraph Dynamic DAG Execution[/bold cyan]",
+                        lines,
+                        width=76,
+                    )
+                )
+            elif is_active and decision_path({"path": path}) == "FAST":
                 lines = [
                     f"Selected Model: [bold green]{model}[/bold green] | Task Value V: [bold]{val:.2f}[/bold]",
                     "",
-                    "[START] ──────────► [⚡ FAST DIRECT DISPATCH] ──────────► [END]",
+                    "[START] ──► [Turn Guard (0ms)] ──► [FAST DIRECT DISPATCH] ──► [END]",
                     "",
                     f"Status: [bold green]{detail}[/bold green]",
                 ]
-                return "\n".join(_format_box_lines("[bold green]Direct FAST Path Execution[/bold green]", lines, width=76))
+                return "\n".join(
+                    _format_box_lines(
+                        "[bold green]Direct FAST Path Execution[/bold green]",
+                        lines,
+                        width=76,
+                    )
+                )
+            elif is_active and decision_path({"path": path}) == "OMP":
+                lines = [f"Delegated Model: [bold cyan]{model}[/bold cyan]", "", "[START] ──► [Turn Guard] ──► [OMP Agent Delegation] ──► [OMP Subagent Hook] ──► [END]", "", f"Status: [bold cyan]{detail}[/bold cyan]"]
+                return "\n".join(_format_box_lines("OMP Agent Delegation", lines, width=76))
+            elif is_active:
+                lines = [f"Model: [bold yellow]{model}[/bold yellow]", "", "[START] ──► [Turn Guard] ──► [FALLBACK PATH] ──► [END]", "", f"Status: [bold yellow]{detail}[/bold yellow]"]
+                return "\n".join(_format_box_lines("Fallback Path", lines, width=76))
             else:
+                from autoconduck import __version__
                 lines = [
-                    "Engine: [bold]AutoConduck Proxy[/bold] | Standby | Exposure: Active",
+                    f"Engine: [bold]AutoConduck {__version__} Engine[/bold] | Standby | SLM & RAG Active",
                     "",
-                    "[START] ──► [● ROUTER READY] ──► (FAST Direct / SLOW Orchestrator)",
+                    "[START] ──► [Turn Guard] ──► (Direct Fast Path / Dynamic DAG Engine)",
                 ]
-                return "\n".join(_format_box_lines("[bold dim]Routing Mechanism Standby[/bold dim]", lines, width=76))
+                return "\n".join(
+                    _format_box_lines(
+                        "[bold dim]SLM Orchestration Engine Standby[/bold dim]",
+                        lines,
+                        width=76,
+                    )
+                )
 
         def _mascot_header(self):
             status_label = "PAUSED" if self.paused else "RUNNING"
@@ -378,24 +379,32 @@ if _TEXTUAL:
             ]
             if self.models_breakdown:
                 lines.append("-" * 72)
-                lines.append(f"{'Model':<28} | {'Calls':<6} | {'Tokens':<12} | {'Spend ($)':<10}")
+                lines.append(
+                    f"{'Model':<28} | {'Calls':<6} | {'Tokens':<12} | {'Spend ($)':<10}"
+                )
                 lines.append("-" * 72)
                 for m, row in list(self.models_breakdown.items())[:5]:
                     m_display = m[:28]
-                    lines.append(f"{m_display:<28} | {row['calls']:<6} | {row['total_tokens']:<12,} | ${row['cost']:<9.4f}")
+                    lines.append(
+                        f"{m_display:<28} | {row['calls']:<6} | {row['total_tokens']:<12,} | ${row['cost']:<9.4f}"
+                    )
             if self.paths or self.pseudos:
                 lines.append("-" * 72)
-                path_str = ", ".join(f"{k}={v}" for k, v in sorted(self.paths.items()))
+                path_str = ", ".join(
+                    f"{k}={v}" for k, v in sorted(self.paths.items())
+                )
                 lines.append(f"Paths: {path_str}")
-            return "\n".join(_format_box_lines("Usage & Cost Accounting", lines, width=76))
+            return "\n".join(
+                _format_box_lines("Usage & Cost Accounting", lines, width=76)
+            )
 
         def on_key(self, event):
             if event.key == "down":
                 self.cursor = move_cursor(self.cursor, 1, len(self.records))
-                self.query_one("#log").update("recent routing decisions\n" + render_log_rows(self.records, self.cursor))
+                self._refresh_table()
             elif event.key == "up":
                 self.cursor = move_cursor(self.cursor, -1, len(self.records))
-                self.query_one("#log").update("recent routing decisions\n" + render_log_rows(self.records, self.cursor))
+                self._refresh_table()
             elif event.key in ("left", "escape", "b"):
                 self.app.pop_screen()
 
@@ -407,41 +416,31 @@ if _TEXTUAL:
             record = self.records[self.cursor] if self.records else {}
             self.app.push_screen(DrillDownScreen(record))
 
-    class DrillDownScreen(Screen):
-        def __init__(self, decision=None):
-            super().__init__()
-            self.decision = decision or {}
-
-        def compose(self):
-            content = (
-                "+----- Routing Decision -----+\n"
-                + "\n".join(f"{k}: {v}" for k, v in self.decision.items())
-                + "\n\n[left] back  [c] copy JSON  [ctrl+c] quit"
-            )
-            yield Static(content, markup=False)
-
-        def on_key(self, event):
-            if event.key == "left":
-                self.app.pop_screen()
-            elif event.key == "c" and self.decision:
-                try:
-                    self.app.copy_to_clipboard(json.dumps(self.decision))
-                except Exception:
-                    pass
+        def on_data_table_row_selected(self, event):
+            try:
+                self.cursor = event.cursor_row
+                self.action_drill()
+            except Exception:
+                pass
 
 else:
-    class MainMenuScreen(Screen):
+    class MainMenuScreen(Screen):  # type: ignore
         def __init__(self, *args, **kwargs):
             _require()
 
-    class DashboardScreen(Screen):
+    class DashboardScreen(Screen):  # type: ignore
         def __init__(self, *args, **kwargs):
             _require()
 
-    class DrillDownScreen(Screen):
-        def __init__(self, *args, **kwargs):
-            _require()
 
-    class LaunchAgentScreen(Screen):
-        def __init__(self, *args, **kwargs):
-            _require()
+__all__ = [
+    "MainMenuScreen",
+    "DashboardScreen",
+    "DrillDownScreen",
+    "LaunchAgentScreen",
+    "UpdateScreen",
+    "UpdateCatalogScreen",
+    "move_cursor",
+    "render_log_rows",
+    "_format_box_lines",
+]

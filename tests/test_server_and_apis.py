@@ -6,14 +6,12 @@ from fastapi.testclient import TestClient
 from autoconduck import main, server_streaming
 from autoconduck.config import Config
 from autoconduck.jsonutil import parse_json_text
-from autoconduck.messages_api import (
-    AnthropicSSETranslator,
-    anthropic_response_text,
-    count_tokens,
+from autoconduck.server.messages_api import (
     openai_messages_from_anthropic,
     openai_tool_choice_from_anthropic,
     openai_tools_from_anthropic,
 )
+from autoconduck.server.messages_sse import AnthropicSSETranslator, anthropic_response_text, count_tokens
 
 
 @pytest.fixture
@@ -98,10 +96,10 @@ def test_completions_with_orchestrator_tool_calls(monkeypatch):
         "Plan markdown content",
         tool_calls=[{"index": 0, "id": "call_123", "type": "function", "function": {"name": "subagent", "arguments": '{"workflowScript":"..."}'}}]
     )
-    async def mock_run(*args, **kwargs):
-        return handoff
+    async def mock_slow_route(*args, **kwargs):
+        return {"content": handoff.content, "tool_calls": handoff.tool_calls}
 
-    monkeypatch.setattr("autoconduck.orchestrator.run", mock_run)
+    monkeypatch.setattr("autoconduck.orchestrator.run", mock_slow_route)
     monkeypatch.setattr("autoconduck.routing.dispatcher.route", lambda *a, **kw: type("D", (), {"path": "SLOW", "model": None, "complexity": 0.85})())
     main._build()
     client = TestClient(main.app)
@@ -132,10 +130,10 @@ def test_messages_endpoint_guards_undeclared_tools(monkeypatch):
         "Refactoring plan content",
         tool_calls=[{"index": 0, "id": "call_sub", "type": "function", "function": {"name": "subagent", "arguments": '{"workflowScript":"..."}'}}]
     )
-    async def mock_run(*args, **kwargs):
-        return handoff
+    async def mock_slow_route(*args, **kwargs):
+        return {"content": handoff.content, "tool_calls": handoff.tool_calls}
 
-    monkeypatch.setattr("autoconduck.orchestrator.run", mock_run)
+    monkeypatch.setattr("autoconduck.orchestrator.run", mock_slow_route)
     monkeypatch.setattr("autoconduck.routing.dispatcher.route", lambda *a, **kw: type("D", (), {"path": "SLOW", "model": None, "complexity": 0.85})())
     main._build()
     client = TestClient(main.app)

@@ -61,3 +61,71 @@ def test_custom_endpoint_and_litellm_config():
     llm_cfg = generate_litellm_config(endpoint, ["my-custom-model"])
     assert len(llm_cfg) == 1
     assert llm_cfg[0]["model_name"] == "my-custom-model"
+
+
+def test_in_memory_config_preservation_on_missing_file(tmp_path, monkeypatch):
+    from autoconduck.config.manager import get_config, _has_configured_models
+    import autoconduck.config.manager as manager_mod
+
+    cfg_file = tmp_path / "config.yaml"
+    cfg_data = {
+        "model_list": [
+            {"id": "qwen3.7-flash", "provider": "openai", "cost_input": 0.1, "cost_output": 0.2, "enabled": True}
+        ]
+    }
+    cfg_file.write_text(yaml.dump(cfg_data), encoding="utf-8")
+    monkeypatch.setattr(manager_mod, "config_path", lambda path=None: cfg_file)
+
+    loaded = get_config()
+    assert _has_configured_models(loaded)
+    assert loaded.model_list[0]["id"] == "qwen3.7-flash"
+
+    # Simulate config.yaml disappearing or truncated to 0 bytes
+    cfg_file.unlink()
+
+    retained = get_config()
+    assert _has_configured_models(retained)
+    assert retained.model_list[0]["id"] == "qwen3.7-flash"
+
+
+def test_backup_recovery_on_cold_boot(tmp_path, monkeypatch):
+    from autoconduck.config.manager import load_config, _has_configured_models
+    import autoconduck.config.manager as manager_mod
+
+    cfg_file = tmp_path / "config.yaml"
+    backups_dir = tmp_path / "backups" / "config"
+    backups_dir.mkdir(parents=True, exist_ok=True)
+
+    bak_data = {
+        "model_list": [
+            {"id": "qwen3.7-flash", "provider": "openai", "cost_input": 0.1, "cost_output": 0.2, "enabled": True}
+        ]
+    }
+    bak_file = backups_dir / "20260825-000000-000000.bak"
+    bak_file.write_text(yaml.dump(bak_data), encoding="utf-8")
+
+    monkeypatch.setattr(manager_mod, "config_path", lambda path=None: cfg_file)
+    monkeypatch.setattr(manager_mod, "backups_dir", lambda agent=None: backups_dir)
+
+    manager_mod._config = None
+    manager_mod._config_digest = None
+    manager_mod._config_path = None
+
+    loaded = load_config(cfg_file)
+    assert _has_configured_models(loaded)
+    assert loaded.model_list[0]["id"] == "qwen3.7-flash"
+    assert cfg_file.exists()
+
+
+def test_smart_fallback_provider_env_vars(monkeypatch):
+    import autoconduck.auth.auth as auth_mod
+    from autoconduck.config.resolver import resolve_orchestrator_model
+
+    empty_cfg = Config()
+    monkeypatch.setattr(auth_mod, "load_auth", lambda: {})
+    monkeypatch.setenv("LLMGATEWAY_API_KEY", "mock-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    resolved = resolve_orchestrator_model(empty_cfg)
+    assert resolved == "qwen3.7-flash"
+

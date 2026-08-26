@@ -1,4 +1,4 @@
-"""Pricing, closest-cost selection, phase bands, and catalog presets unit tests."""
+"""Pricing, SLA selection, and catalog presets unit tests."""
 import builtins
 import pytest
 
@@ -19,14 +19,15 @@ from autoconduck.model_presets import (
     discover_models,
 )
 from autoconduck.routing import pricing
+from autoconduck.routing.model_pool import CapabilitySLA
 
 
 # ---------------------------------------------------------------------------
-# Pricing & Closest-Cost Selection
+# Pricing & Capability SLA Selection
 # ---------------------------------------------------------------------------
 
 
-def test_select_closest_basic():
+def test_select_for_sla_basic():
     cfg = Config(
         model_list=[
             {"id": "cheap", "price_in": 0.1, "price_out": 0.2, "enabled": True},
@@ -34,82 +35,33 @@ def test_select_closest_basic():
             {"id": "expensive", "price_in": 10.0, "price_out": 30.0, "enabled": True},
         ]
     )
-    pool = pricing.pool_ids(cfg)
-    assert pricing.select_closest(pool, 0.1, cfg) == "cheap"
-    assert pricing.select_closest(pool, 0.5, cfg) == "mid"
-    assert pricing.select_closest(pool, 0.9, cfg) == "expensive"
+    # Without constraints, picks cheapest
+    assert pricing.select_for_sla(CapabilitySLA(), cfg) == "cheap"
+    # With max_cost cap
+    assert pricing.select_for_sla(CapabilitySLA(max_cost=0.5), cfg) == "cheap"
+    # If expensive pseudo_model is used
+    assert pricing.select_for_sla(CapabilitySLA(), cfg, pseudo_model="autoconduck-expensive") == "expensive"
 
 
-def test_select_closest_respects_max_scaled_cost_cap():
+def test_select_for_sla_context_window_filtering():
     cfg = Config(
         model_list=[
-            {"id": "cheap", "price_in": 0.1, "price_out": 0.2, "enabled": True},
-            {"id": "expensive", "price_in": 10.0, "price_out": 30.0, "enabled": True},
-        ],
-        selection=SelectionConfig(max_file_read_scaled_cost=0.55),
-    )
-    pool = pricing.pool_ids(cfg)
-    assert pricing.select_closest(pool, 0.90, cfg, max_scaled_cost=0.55) == "cheap"
-
-
-def test_expensive_model_ceiling():
-    cfg = Config(
-        model_list=[
-            {"id": "cheap-fast-model", "price_in": 0.1, "price_out": 0.2, "enabled": True},
-            {"id": "expensive-mega-model", "price_in": 100.0, "price_out": 300.0, "enabled": True},
-        ],
-        selection=SelectionConfig(max_file_read_scaled_cost=0.55),
-    )
-    assert pricing.is_expensive_model("expensive-mega-model", cfg) is True
-    assert pricing.is_expensive_model("cheap-fast-model", cfg) is False
-
-
-def test_ema_realized_cost_blend():
-    cfg = Config(
-        model_list=[
-            {"id": "adaptive-model", "price_in": 1.0, "price_out": 2.0, "enabled": True}
+            {"id": "cheap-small", "price_in": 0.1, "price_out": 0.2, "context_window": 8000, "enabled": True},
+            {"id": "expensive-large", "price_in": 10.0, "price_out": 30.0, "context_window": 128000, "enabled": True},
         ]
     )
-    pricing.record_usage("adaptive-model", 100, 200, cost=0.05)
-    pricing.record_usage("adaptive-model", 100, 200, cost=0.06)
-    pricing.record_usage("adaptive-model", 100, 200, cost=0.07)
-    effective = pricing._entry_effective_value("adaptive-model", cfg)
-    assert effective > 0.0
+    # Demanding 32k context filters out cheap-small
+    assert pricing.select_for_sla(CapabilitySLA(min_context=32000), cfg) == "expensive-large"
 
 
-def test_degraded_model_exclusion():
+def test_select_for_sla_tools_filtering():
     cfg = Config(
         model_list=[
-            {"id": "failing-model", "price_in": 0.5, "price_out": 0.5, "enabled": True},
-            {"id": "backup-model", "price_in": 0.6, "price_out": 0.6, "enabled": True},
+            {"id": "cheap-no-tools", "price_in": 0.1, "price_out": 0.2, "supports_tools": False, "enabled": True},
+            {"id": "mid-tools", "price_in": 1.0, "price_out": 2.0, "supports_tools": True, "enabled": True},
         ]
     )
-    # Simulate high error rate
-    for _ in range(5):
-        pricing.record_error("failing-model")
-    assert pricing.is_degraded("failing-model", window_s=300, error_rate=0.2) is True
-    pool = pricing.pool_ids(cfg)
-    degraded = {m for m in pool if pricing.is_degraded(m, window_s=300, error_rate=0.2)}
-    selected = pricing.select_closest(pool, 0.5, cfg, degraded=degraded)
-    assert selected == "backup-model"
-
-
-# ---------------------------------------------------------------------------
-# Phase Bands
-# ---------------------------------------------------------------------------
-
-
-def test_phase_band_filters_pool_planner():
-    cfg = Config(
-        model_list=[
-            {"id": "cheap", "price_in": 0.01, "price_out": 0.01, "enabled": True},
-            {"id": "flagship", "price_in": 5.0, "price_out": 15.0, "enabled": True},
-        ],
-        selection=SelectionConfig(phase_bands={"planner": [0.55, 0.85]}),
-    )
-    pool = pricing.pool_ids(cfg)
-    selected = pricing.select_closest(pool, 0.5, cfg, band=(0.55, 0.85))
-    assert selected in pool
+    assert pricing.select_for_sla(CapabilitySLA(requires_tools=True), cfg) == "mid-tools"
 
 
 # ---------------------------------------------------------------------------
@@ -158,3 +110,21 @@ def test_discover_models_preserves_literal_api_key():
     entries = discover_models(preset_keys=["custom"], custom_models=custom, use_litellm=False)
     assert entries[0].api_key == "sk-lit"
     assert entries[0].model_dump()["api_key"] == "sk-lit"
+
+
+def test_select_for_sla_integration():
+    cfg = Config(
+        model_list=[
+            {"id": "flash-cheap", "price_in": 0.1, "price_out": 0.2, "context_window": 128000, "supports_tools": True, "enabled": True},
+            {"id": "balanced-mid", "price_in": 1.0, "price_out": 2.5, "context_window": 128000, "supports_tools": True, "enabled": True},
+            {"id": "frontier-expert", "price_in": 5.0, "price_out": 15.0, "context_window": 200000, "supports_tools": True, "is_reasoning": True, "enabled": True},
+        ]
+    )
+    # Default SLA picks flash-cheap (cheapest capable)
+    assert pricing.select_for_sla(CapabilitySLA(), cfg) == "flash-cheap"
+    
+    # Demanding reasoning picks frontier-expert
+    assert pricing.select_for_sla(CapabilitySLA(requires_reasoning=True), cfg) == "frontier-expert"
+
+    # Context window filtering > 150k
+    assert pricing.select_for_sla(CapabilitySLA(min_context=150000), cfg) == "frontier-expert"

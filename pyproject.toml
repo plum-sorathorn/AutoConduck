@@ -1,6 +1,6 @@
 [project]
 name = "autoconduck"
-version = "0.2.3"
+version = "0.3.5"
 description = "Local zero-overhead model router + task orchestrator for coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,8 +13,11 @@ dependencies = [
   "tiktoken>=0.6",
   "textual>=0.70",
   "litellm[proxy]>=1.40",
-  "semantic-router",
   "langgraph",
+  "langgraph-checkpoint-sqlite",
+  "onnxruntime>=1.17.0",
+  "outlines>=0.1.0",
+  "lancedb>=0.10",
   "json-repair",
 ]
 [project.scripts]
@@ -27,6 +30,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["autoconduck", "autoconduck.*"]
+
+[tool.setuptools.package-data]
+autoconduck = ["presets/*.json"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

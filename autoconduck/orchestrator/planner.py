@@ -226,18 +226,21 @@ def _select_planner_model(retry: bool = False, cfg=None, task_value=0.5, config=
             from autoconduck.config import qualify_model
 
             return qualify_model(str(override).strip())
+        from autoconduck.config import resolve_orchestrator_model
+
         if retry and getattr(config.selection, "planner_retry_cheaper", False):
-            return pricing.cheapest_enabled(config) or "gpt-4o"
+            return pricing.cheapest_enabled(config) or resolve_orchestrator_model(config)
         lo, hi = config.selection.phase_bands["planner"]
         target = hi if retry else (lo + (hi - lo) * task_value)
-        from autoconduck.config import resolve_orchestrator_model
 
         return pricing.select_closest(
             pricing.pool_ids(config), target, config, band=(lo, hi)
         ) or resolve_orchestrator_model(config)
     except Exception:
         pass
-    return "gpt-4o"
+    from autoconduck.config import resolve_orchestrator_model
+
+    return resolve_orchestrator_model(config)
 
 
 def _model_name(cfg=None, task_value=0.5, config=None) -> str:

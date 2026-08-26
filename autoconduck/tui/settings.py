@@ -1,6 +1,7 @@
 """Settings screen — expose configurable options from the TUI."""
 
 from __future__ import annotations
+from typing import Any
 
 from .onboarding import _TEXTUAL, _require_textual
 from autoconduck.config import get_config, save_config
@@ -22,24 +23,6 @@ if _TEXTUAL:
                 "bool",
             ),
             (
-                "ambiguous_low",
-                "Ambiguous band lower edge",
-                "Confidence below this => ambiguous zone (default 0.60)",
-                "float",
-            ),
-            (
-                "ambiguous_high",
-                "Ambiguous band upper edge",
-                "Confidence above this => confident routing (default 0.75)",
-                "float",
-            ),
-            (
-                "selection.slow_threshold",
-                "Slow-path threshold",
-                "Complexity at or above this => SLOW path (default 0.75)",
-                "float",
-            ),
-            (
                 "port",
                 "Proxy listen port",
                 "Port the AutoConduck proxy binds to (default 11434)",
@@ -52,22 +35,28 @@ if _TEXTUAL:
                 "str",
             ),
             (
-                "selection.tiebreaker_enabled",
-                "Tiebreaker enabled",
-                "Use a cheap LLM to break routing ties in the ambiguous band",
-                "bool",
+                "selection.slm_circuit_breaker_timeout_ms",
+                "SLM Circuit Breaker (ms)",
+                "Timeout before degrading to balanced fallback (default 100)",
+                "int",
             ),
             (
-                "selection.tiebreaker_min_complexity",
-                "Tiebreaker min complexity",
-                "Only invoke the tiebreaker when complexity >= this value (default 0.45)",
+                "selection.slm_model_path",
+                "Embedded SLM Model Path",
+                "Path to local ONNX/embedded SLM model",
+                "str",
+            ),
+            (
+                "selection.session_guard_compaction_ratio",
+                "Session Compaction Ratio",
+                "Context ceiling ratio before session compaction (default 0.80)",
                 "float",
             ),
             (
-                "selection.fast_path_max_scaled_cost",
-                "Fast path cost cap",
-                "Max scaled cost ceiling for models on FAST path (default 0.50)",
-                "float",
+                "selection.rag_max_tokens",
+                "RAG Retrieval Max Tokens",
+                "Max retrieved tokens from LanceDB vector store (default 250)",
+                "int",
             ),
         ]
 
@@ -242,6 +231,10 @@ if _TEXTUAL:
                     self.controller.pop_screen()
             elif event.key == "e":
                 self._start_edit()
+            elif event.key == "c" and self.controller:
+                from .onboarding import ModelSourceScreen
+
+                self.controller.push_screen(ModelSourceScreen(self.controller))
             event.stop()
 
 else:

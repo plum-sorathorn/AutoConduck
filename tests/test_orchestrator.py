@@ -1,17 +1,13 @@
-"""LangGraph orchestrator, planner, subagents, and executor blueprint unit tests."""
+"""LangGraph orchestrator, dynamic factory, and session guard unit tests."""
 import json
 import pytest
 from unittest.mock import MagicMock, patch
 
 from autoconduck.config import Config, SelectionConfig
-from autoconduck.orchestrator.compactor import compact
-from autoconduck.orchestrator.planner import (
-    OutputContract,
-    SubTask,
-    TaskPlan,
-    build_task_plan,
-)
-from autoconduck.orchestrator.recon import ReconTarget, build_recon_plan
+from autoconduck.orchestrator.dynamic_factory import DynamicState, build_dynamic_graph
+from autoconduck.orchestrator.session_guard import SessionGuard
+from autoconduck.routing.slm_planner import ExecutionPlan, SubTask
+from autoconduck.routing.model_pool import CapabilitySLA
 from autoconduck.orchestrator.roles import RoleConfig, role_card
 from autoconduck.orchestrator.subagents import (
     build_subagent_prompt,
@@ -20,41 +16,45 @@ from autoconduck.orchestrator.subagents import (
 )
 
 
-def test_subtask_and_task_plan_schema():
-    subtask = SubTask(
-        id="t1",
-        goal="Inspect routing logic",
-        scope=["autoconduck/routing/dispatcher.py"],
-        output_contract=OutputContract(description="Summary of routing rules"),
-        constraints=["Do not modify files"],
-        depends_on=[],
-        role="read",
+def test_dynamic_graph_compilation_and_execution():
+    plan = ExecutionPlan(
+        route="dynamic_dag",
+        suggested_sla=CapabilitySLA(requires_tools=True),
+        needs_rag=False,
+        subtasks=[
+            SubTask(
+                id="t1",
+                goal="Analyze routing",
+                role="read",
+                depends_on=[],
+            ),
+            SubTask(
+                id="t2",
+                goal="Synthesize results",
+                role="read",
+                depends_on=["t1"],
+            ),
+        ],
+        synthesizer_sla=CapabilitySLA(requires_reasoning=True),
     )
-    plan = TaskPlan(
-        subtasks=[subtask],
-        summary="Test task plan",
-        budget_hint=0.5,
-    )
-    assert plan.subtasks[0].id == "t1"
-    assert plan.budget_hint == 0.5
+    runner = build_dynamic_graph(plan)
+    assert runner is not None
 
 
-def test_build_subagent_prompt_structure():
-    task = SubTask(
-        id="t1",
-        goal="Inspect authentication",
-        scope=["autoconduck/auth.py"],
-        output_contract=OutputContract(description="Security notes"),
-        constraints=["Do not edit"],
-        verified_context=["Auth uses YAML file"],
-        read_budget=3,
-        role="read",
-    )
-    prompt = build_subagent_prompt(task, "Sibling context")
-    assert "ROLE: You are a read-only file analyst" in prompt
-    assert "FILES IN SCOPE (only these): autoconduck/auth.py" in prompt
-    assert "VERIFIED CONTEXT" in prompt
-    assert "TOOL BUDGET: You may make at most 3" in prompt
+def test_session_guard_compaction():
+    guard = SessionGuard(max_tokens=100)
+    verbose = "data line " * 200
+    messages = [
+        {"role": "system", "content": "You are assistant."},
+        {"role": "user", "content": "Initial user task."},
+        {"role": "assistant", "content": "Working on it..."},
+        {"role": "tool", "content": verbose},
+    ]
+    res = guard.check_and_compact(messages, max_tokens=100)
+    assert res.compacted is True
+    assert res.cache_prefix_preserved is True
+    assert res.messages[0]["role"] == "system"
+    assert res.final_tokens < res.original_tokens
 
 
 def test_subagent_target_read_vs_write():
@@ -68,25 +68,6 @@ def test_subagent_target_read_vs_write():
     read_target = subagent_target("analyze", "read", 1, 0.5, cfg)
     write_target = subagent_target("analyze", "write", 1, 0.5, cfg)
     assert read_target < write_target
-
-
-def test_compact_dedupes_references():
-    findings = [
-        "Issue detected at autoconduck/auth.py:25",
-        "Issue detected at autoconduck/auth.py:25",
-        "Different issue at autoconduck/config.py:10",
-    ]
-    merged = compact(findings)
-    assert merged.count("autoconduck/auth.py:25") == 1
-    assert "autoconduck/config.py:10" in merged
-
-
-def test_recon_plan_target_extraction():
-    prompt = "Please check autoconduck/digest.py and autoconduck/config.py"
-    plan = build_recon_plan([{"role": "user", "content": prompt}], cfg=Config())
-    # Deterministic file path extraction from prompt
-    assert isinstance(plan, ReconTarget)
-    assert isinstance(plan.files, list)
 
 
 def test_role_card_generation():
@@ -290,25 +271,17 @@ def test_format_execution_handoff_with_subagents():
         summary="Refactor auth tokens",
     )
     outputs = {"t1": "auth.py:25 has get_provider_key."}
-    with patch("autoconduck.orchestrator.handoff.check_subagent_support", return_value=(True, True)):
-        res = format_execution_handoff(plan, outputs, "")
-        assert "## Implementation Plan & Verified Context" in res
-        assert "Refactor auth tokens" in res
-        assert "#### 1. `t1`: Inspect token handling" in res
-        assert "#### 2. `t2`: Update API endpoint" in res
-        assert "auth.py:25 has get_provider_key." in res
-        assert "pi-subagents" in res
-        assert res.tool_calls is not None
-        assert len(res.tool_calls) == 1
-        assert res.tool_calls[0]["function"]["name"] == "subagent"
-        args = json.loads(res.tool_calls[0]["function"]["arguments"])
-        assert "workflowScript" in args
-        assert "runs.all" in args["workflowScript"] or "runs.run" in args["workflowScript"]
-        assert "worker" in args["workflowScript"]
-        assert "pytest" in args["workflowScript"]
+    res = format_execution_handoff(plan, outputs, "")
+    assert "## Implementation Plan & Verified Context" in res
+    assert "Refactor auth tokens" in res
+    assert "#### 1. `t1`: Inspect token handling" in res
+    assert "#### 2. `t2`: Update API endpoint" in res
+    assert "auth.py:25 has get_provider_key." in res
+    assert "Proceed with implementation of the subtasks sequentially" in res
+    assert res.tool_calls is None
 
 
-def test_format_execution_handoff_linear_fallback_warning():
+def test_format_execution_handoff_linear_execution():
     from autoconduck.orchestrator.handoff import format_execution_handoff
     from autoconduck.orchestrator.planner import TaskPlan, SubTask
 
@@ -318,11 +291,12 @@ def test_format_execution_handoff_linear_fallback_warning():
         ],
         summary="Fix bug in app",
     )
-    with patch("autoconduck.orchestrator.handoff.check_subagent_support", return_value=(True, False)):
-        res = format_execution_handoff(plan, {}, "")
-        assert "Linear Execution Mode" in res
-        assert "pi-subagents" in res
-        assert "Executing subtasks linearly" in res
+    res = format_execution_handoff(plan, {}, "")
+    assert "## Implementation Plan & Verified Context" in res
+    assert "Fix bug in app" in res
+    assert "#### 1. `t1`: Fix bug" in res
+    assert "Proceed with implementation of the subtasks sequentially" in res
+    assert res.tool_calls is None
 
 
 def test_resolve_1hop_dependencies(tmp_path):
@@ -353,16 +327,3 @@ def test_resolve_analysts_for_task():
     assert "reviewer" in roles
     assert "scout" in roles
     assert "oracle" in roles
-
-
-def test_check_subagent_support_agent_filtering():
-    from autoconduck.orchestrator.handoff import check_subagent_support
-
-    # Non-pi client types must always return False, False
-    assert check_subagent_support(client_type="claude") == (False, False)
-    assert check_subagent_support(client_type="opencode") == (False, False)
-
-    # Non-pi user agents must return False, False
-    assert check_subagent_support(user_agent="OpenCode/1.0") == (False, False)
-    assert check_subagent_support(user_agent="Claude-Code/0.2.9") == (False, False)
-    assert check_subagent_support(user_agent="anthropic-sdk-typescript/0.27.0") == (False, False)

@@ -11,7 +11,51 @@ from autoconduck.config import get_config, load_config, save_config, home_dir
 # Heavy deps (fastapi, pydantic-core, litellm, textual, uvicorn) are deferred until a
 # server/CLI command actually needs them.
 from autoconduck.server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
-from .cli_launch import cmd_launch_agent, cmd_install, cmd_tune, _open_new_terminal
+from autoconduck.server.server_streaming import _write_crash_report
+from .cli_launch import cmd_launch_agent, cmd_install, _open_new_terminal
+
+
+def cmd_omp_link(args):
+    from autoconduck import launcher
+    from autoconduck.harnesses import OmpAdapter
+
+    adapter = OmpAdapter()
+    if not adapter.detect():
+        print("Oh My Pi was not detected", file=sys.stderr)
+        return 1
+    cfg = load_config()
+    try:
+        adapter.patch(cfg, port=getattr(cfg, "port", DEFAULT_PORT))
+        launcher.install_shims(["omp"])
+        launcher.ensure_path_entry()
+    except Exception as exc:
+        print(f"failed omp: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_omp_unlink(args):
+    from autoconduck import launcher
+    from autoconduck.harnesses import OmpAdapter
+
+    try:
+        OmpAdapter().revert()
+        launcher.uninstall_shims(["omp"])
+        cfg = load_config()
+        if not cfg.shims:
+            launcher.remove_path_entry()
+    except Exception as exc:
+        print(f"failed omp unlink: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+def _invoke_check_port(port: int, host: str = "127.0.0.1") -> None:
+    fn = getattr(sys.modules.get(__name__), "_check_port_available", _check_port_available)
+    try:
+        return fn(port, host)
+    except TypeError:
+        return fn(port)
+
 
 def cmd_start(args):
     flags = [
@@ -37,7 +81,7 @@ def cmd_start(args):
     # never as a side effect of starting the API or opening the TUI.
     if getattr(args, "headless", False):
         if getattr(args, "daemon", False):
-            _check_port_available(port)
+            _invoke_check_port(port, getattr(args, "host", "127.0.0.1"))
             log = home_dir() / "run" / "server.log"
             log.parent.mkdir(parents=True, exist_ok=True)
             from autoconduck.launcher import daemon_python
@@ -123,12 +167,12 @@ def cmd_start(args):
         if getattr(args, "supervisor", False):
             _run_supervisor(port, cfg.log_level, args.host)
             return
-        _check_port_available(port)
+        _invoke_check_port(port, getattr(args, "host", "127.0.0.1"))
         _run_proxy(
             port, cfg.log_level, args.host
         ) if args.host != "127.0.0.1" else _run_proxy(port, cfg.log_level)
     else:
-        _check_port_available(port)
+        _invoke_check_port(port, getattr(args, "host", "127.0.0.1"))
         try:
             from autoconduck.tui.app import AutoConduckApp
             is_configured = bool(
@@ -144,7 +188,7 @@ def cmd_start(args):
                 agent_id = res.split("launch:", 1)[1]
                 cmd_launch_agent(agent_id)
         except (ImportError, RuntimeError):
-            _check_port_available(port)
+            _invoke_check_port(port, getattr(args, "host", "127.0.0.1"))
             _run_proxy(
                 port, cfg.log_level, args.host
             ) if args.host != "127.0.0.1" else _run_proxy(port, cfg.log_level)
@@ -159,14 +203,14 @@ def cmd_edit(args):
         or getattr(cfg, "model_list", [])
         or getattr(cfg, "custom_models", [])
     )
-    getattr(AutoConduckApp(configured=is_configured), "run")()
+    getattr(AutoConduckApp(configured=is_configured, initial_screen="edit"), "run")()
 def cmd_reset(args):
     if not getattr(args, "force", False) and input(
         "Reset AutoConduck, stop the daemon, revert coding agent configurations, and delete state under autoconduck home? [y/N] "
     ).lower() not in ("y", "yes"):
         return
     cfg = load_config()
-    from autoconduck.agents import all_adapters
+    from autoconduck.harnesses import all_adapters
     from autoconduck import launcher, update
     try:
         launcher.stop_server(getattr(cfg, "port", None) or DEFAULT_PORT)
@@ -178,11 +222,11 @@ def cmd_reset(args):
             paths = [p for p in adapter.config_paths() if p.exists()]
             adapter.revert()
             reverted.append(
-                f"  ✓ Reverted {adapter.display_name}"
+                f"  [OK] Reverted {adapter.display_name}"
                 + (f" ({', '.join(str(p) for p in paths)})" if paths else "")
             )
         except Exception as exc:
-            print(f"  ✗ Failed {adapter.display_name}: {exc}")
+            print(f"  [FAIL] Failed {adapter.display_name}: {exc}")
     launcher.uninstall_shims()
     launcher.remove_path_entry()
     purge_home_dir(home_dir())
@@ -212,24 +256,41 @@ def _run_detached_self_destruct(command_args, cwd=None):
     else:
         os.execvp(command_args[0], command_args)
 def cmd_uninstall(args):
+    # Capture port before cmd_reset purges the home dir.
+    try:
+        _pre_cfg = load_config()
+        _port = getattr(_pre_cfg, "port", None) or DEFAULT_PORT
+    except Exception:
+        _port = DEFAULT_PORT
     cmd_reset(args)
     from autoconduck import update, launcher
-    cfg = load_config()
-    port = getattr(cfg, "port", None) or DEFAULT_PORT
+    # Kill any daemon still alive on the port (pidfile may already be gone).
     try:
-        launcher.stop_server(port)
-        launcher.kill_existing_on_port(port)
+        launcher.stop_server(_port)
+        launcher.kill_existing_on_port(_port)
     except Exception:
         pass
     method = update.detect_install_method()
     command = update.uninstall_hint(method)
-    if command:
-        print(f"Uninstalling package via: {command}")
-        tool = shutil.which(command.split()[0])
-        if tool:
-            subprocess.run([tool, *command.split()[1:]], check=False)
-        else:
-            subprocess.run(command, shell=True, check=False)
+    if not command:
+        return
+    print(f"Uninstalling package via: {command}")
+    tool = shutil.which(command.split()[0])
+    full_cmd = [tool or command.split()[0], *command.split()[1:]]
+    # When installed as a uv tool the current process is loaded from the very
+    # directory uv wants to delete.  Running the uninstall synchronously
+    # therefore fails with "Access is denied".  Detach a small shell snippet
+    # that waits for us to exit before invoking uv, so the Lib/ directory is
+    # released in time.
+    if method.startswith("uv-tool") and tool:
+        _run_detached_self_destruct(full_cmd)
+        # _run_detached_self_destruct calls sys.exit() on Windows and
+        # os.execvp() on POSIX — this line is never reached.
+        return
+    if tool:
+        subprocess.run(full_cmd, check=False)
+    else:
+        subprocess.run(command, shell=True, check=False)
 def purge_home_dir(home: Path) -> None:
     """Remove state, refusing obvious catastrophic paths."""
     import shutil
@@ -276,22 +337,35 @@ def cmd_update(args):
         launcher.kill_existing_on_port(port)
     except Exception:
         pass
+        
     print(f"Running upgrade: {command}")
+    import os, sys
+    if os.name == "nt":
+        # Windows locks .pyd files loaded by the current process.
+        # We use os.execv to replace the current Python process with 'uv'
+        # This safely releases all loaded .pyd file locks while keeping the output in the same console.
+        print(f"Running upgrade in-place: {command}")
+        uv_path = shutil.which(tool)
+        if uv_path:
+            os.execv(uv_path, [tool] + command.split()[1:])
+        sys.exit(0)
+        
     res = subprocess.run([tool, *command.split()[1:]], cwd=cwd, check=False)
     if res.returncode == 0:
         print("Upgrade completed successfully. Run autoconduck --version to confirm.")
     else:
         print(f"Upgrade finished with exit code {res.returncode}.")
+
 def cmd_ensure(args):
     from autoconduck import launcher
-    launcher.ensure_server(args.port)
+    launcher.ensure_server(args.port, getattr(args, "client_id", None))
 def cmd_release(args):
     from autoconduck import launcher
-    launcher.release_server(args.port)
+    launcher.release_server(args.port, getattr(args, "client_id", None))
 def cmd_stop(args):
     from autoconduck import launcher
     launcher.stop_server(args.port)
-    from autoconduck.agents.claude_code import ClaudeCodeAdapter
+    from autoconduck.harnesses.claude_code import ClaudeCodeAdapter
     ClaudeCodeAdapter().revert()
 def cmd_stats(args):
     from autoconduck import stats
@@ -348,6 +422,7 @@ def main(argv: list[str] | None = None):
     ):
         p = sub.add_parser(name)
         p.add_argument("--port", type=int)
+        p.add_argument("--client-id", type=str, default=None)
         p.set_defaults(handler=func)
     stats_parser = sub.add_parser("stats")
     stats_parser.add_argument("--json", action="store_true")
@@ -355,12 +430,15 @@ def main(argv: list[str] | None = None):
     stats_parser.add_argument("--reset", action="store_true")
     stats_parser.add_argument("--force", action="store_true")
     stats_parser.set_defaults(handler=cmd_stats)
-    tune_parser = sub.add_parser("tune")
-    tune_parser.add_argument("--mode", choices=("simple", "advanced"), default=None)
-    tune_parser.set_defaults(handler=cmd_tune)
     install = sub.add_parser("install")
     install.add_argument("agents", nargs="*")
     install.set_defaults(handler=cmd_install)
+    omp = sub.add_parser("omp")
+    omp_sub = omp.add_subparsers(dest="omp_cmd", required=True)
+    omp_link = omp_sub.add_parser("link")
+    omp_link.set_defaults(handler=cmd_omp_link)
+    omp_unlink = omp_sub.add_parser("unlink")
+    omp_unlink.set_defaults(handler=cmd_omp_unlink)
     upd = sub.add_parser("update")
     upd.add_argument("--dry-run", action="store_true")
     upd.set_defaults(handler=cmd_update)
@@ -390,5 +468,12 @@ def main(argv: list[str] | None = None):
             cmd_start(argparse.Namespace(headless=False, port=None, host="127.0.0.1"))
     except (KeyboardInterrupt, asyncio.CancelledError):
         return 0
+    except Exception as exc:
+        _write_crash_report(exc)
+        print(
+            f"AutoConduck crashed: {exc} — details in {home_dir() / 'run' / 'server.crash'}",
+            file=sys.stderr,
+        )
+        return 1
 from autoconduck.server import DEFAULT_PORT, _check_port_available, _find_free_port, _run_proxy, _run_supervisor
-from .cli_launch import cmd_launch_agent, cmd_install, cmd_tune, _open_new_terminal
+from .cli_launch import cmd_launch_agent, cmd_install, _open_new_terminal

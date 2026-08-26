@@ -4,7 +4,7 @@ from .helpers import *
 from .helpers import _persist
 from ..onboarding_models import models_for_provider, overrides_for_toggle, default_enabled_ids, search_match, apply_api_key
 from autoconduck.config import get_config, resolve_api_key
-from autoconduck.model_presets import PRESETS
+from autoconduck.presets.model_presets import PRESETS
 from .screens_custom import ApiKeyScreen, CustomProvidersScreen
 try:
     from textual.app import ComposeResult
@@ -71,7 +71,14 @@ if _TEXTUAL:
         def __init__(self, app_controller=None, selected=None):
             super().__init__()
             self.controller = app_controller
-            self.agent_selected = set(selected or ())
+            if selected is None:
+                self.agent_selected = {
+                    agent
+                    for agent in AGENTS
+                    if is_agent_configured(agent) or agent in detect_agents()
+                }
+            else:
+                self.agent_selected = set(selected)
             self.cursor = 0
             self.selected = set()
 
