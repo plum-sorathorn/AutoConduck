@@ -6,13 +6,13 @@
 
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg?style=flat&logo=python&logoColor=white)](https://python.org)
 [![Fast Path Latency](https://img.shields.io/badge/turn--guard-%3C2ms-brightgreen.svg?style=flat)](https://github.com)
-[![SLM Engine](https://img.shields.io/badge/SLM-Qwen%202.5%20Coder%200.5B-purple.svg?style=flat)](https://github.com)
+[![SLM Engine](https://img.shields.io/badge/SLM-Qwen%202.5%20Coder%200.5B%20(ONNX%2FGGUF)-purple.svg?style=flat)](https://github.com)
 [![LangGraph](https://img.shields.io/badge/orchestrator-LangGraph%20Dynamic%20DAG-blue.svg?style=flat)](https://github.com/langchain-ai/langgraph)
 [![LiteLLM](https://img.shields.io/badge/proxy-LiteLLM-orange.svg?style=flat)](https://github.com/BerriAI/litellm)
 [![FastAPI](https://img.shields.io/badge/server-FastAPI-009688.svg?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat)](LICENSE)
 
-[Why AutoConduck?](#why-autoconduck) • [Architecture](#architecture) • [Quick Start](#quick-start) • [Supported Agents](#supported-agents) • [How It Works](#how-it-works-internally) • [TUI Dashboard](#interactive-tui-dashboard) • [Configuration](#configuration-reference) • [Development](#development)
+[Why AutoConduck?](#why-autoconduck) • [Architecture](#architecture) • [Quick Start](#quick-start) • [Supported Agents](#supported-agents) • [How It Works](#how-it-works-internally) • [TUI Dashboard](#interactive-tui-dashboard) • [CLI Reference](#cli-command-reference) • [Configuration](#configuration-reference) • [Development](#development)
 
 </div>
 
@@ -20,24 +20,25 @@
 
 ## Why AutoConduck?
 
-Coding agents (**Claude Code**, **OpenCode**, and **Pi**) frequently send every prompt—from a single-line typo fix or docstring lookup to a 20-file architecture migration—to a single expensive frontier model. This incurs unnecessary token spend on trivial turns while bottlenecking large multi-step changes.
+Coding agents (**Claude Code**, **OpenCode**, **Pi**, and **Oh My Pi**) frequently send every prompt, from a single-line typo fix, git status check, or docstring lookup to a 20-file architecture migration, to a single expensive frontier model. This incurs massive token spend on routine turns while bottlenecking large multi-step changes without structured task decomposition.
 
-**AutoConduck 0.3.5** transforms model routing into an intelligent, autonomous SLM-driven dynamic execution engine:
+**AutoConduck 0.3.5** transforms local model routing into an autonomous, SLM-driven execution engine:
 
-- **Turn Guard (0ms / <2ms):** Routine turns (active tool loops, single-file edits, command outputs) bypass heavy orchestration instantly, maintaining sub-millisecond agent responsiveness with zero LLM overhead.
-- **Embedded SLM Task Architect (Qwen 2.5 Coder 0.5B Instruct):** Local GGUF-quantized small language model generates structured, validated task plans in <100ms, determining exact DAG topology, SLA requirements, and subtask dependencies.
-- **Dynamic DAG LangGraph Factory:** Compiles tailored runtime execution graphs for every complex workflow, executing parallel subtask nodes and deterministic context retrieval.
-- **LanceDB Knowledge & RAG Subsystem:** Vector store semantic search automatically retrieves relevant codebase snippets without manual file discovery.
-- **Session Lifecycle & Context Guard:** Preserves immutable prompt-caching prefixes across 40+ turns and applies intelligent compaction at the 80% context window ceiling.
-- **Real-Time Reasoning SSE Streamer:** Streams live SLM cognitive deliberations directly to client coding agents using OpenAI `reasoning_content` and Anthropic `thinking_delta` protocols.
-- **Dynamic SLA-Based Model Matching:** The SLM assigns each subtask a `CapabilitySLA` (`min_context`, `requires_tools`, `requires_reasoning`, `max_cost`), and the Query Optimizer selects the absolute cheapest active model that meets it.
+- **Turn Guard (0ms / <2ms):** Synchronous, regex-only classifier that detects active tool loops and dispatches them directly to the active model tier without replanning overhead. Stagnation is detected only on 3+ identical consecutive calls or 2+ consecutive errors.
+- **Embedded SLM Task Architect (Qwen 2.5 Coder 0.5B ONNX / GGUF):** Local small language model generates validated Pydantic task plans in <100ms, specifying exact DAG topology, subtask constraints, and SLA requirements.
+- **"Fit-Gate Then Cheapest" 4D Capability Selection:** Filters models against a 4-dimensional capability vector (`reasoning`, `tool_reliability`, `code_quality`, `latency_class`) weighted per task type, then picks the absolute cheapest qualifying model.
+- **Confidence-Tightened Capability Floor:** Low SLM plan confidence dynamically raises the capability floor ($\min(\text{base} + 0.15 \times (1 - \text{conf}), 0.60)$) to ensure difficult prompts land on capable models.
+- **Dynamic DAG LangGraph Factory:** Compiles tailored runtime StateGraphs for complex multi-subtask workflows with parallel fan-out execution and unified markdown handoff synthesis.
+- **LanceDB Knowledge & RAG Subsystem:** Embedded vector store with zero-cost 16-dimensional term-hash embeddings retrieves relevant codebase snippets without external API dependencies.
+- **Session Lifecycle & Context Guard:** Preserves immutable prompt-caching prefixes (turns 0 & 1) across 40+ turns and applies structural compaction at the 80% context window ceiling.
+- **Real-Time Reasoning SSE Streamer:** Streams live cognitive deliberations directly to client coding agents using OpenAI `reasoning_content` and Anthropic `thinking_delta` protocols.
 
 ---
 
 ## Architecture
 
 ```text
-Agent Request (Claude Code / OpenCode / Pi)
+Agent Request (Claude Code / OpenCode / Pi / OMP)
                           │
                           ▼
             FastAPI Server (LiteLLM Proxy)
@@ -48,8 +49,9 @@ Agent Request (Claude Code / OpenCode / Pi)
                           ▼
     ┌─────────────────────────────────────────────────────────────┐
     │                 Turn Guard (0ms / <2ms)                     │
-    │  - Active tool turn suppression (direct model execution)    │
-    │  - Stagnation & error streak detector                       │
+    │  - Synchronous regex turn classifier                        │
+    │  - Healthy tool loop bypass -> DIRECT_ACTIVE_TIER           │
+    │  - Stagnation detector (3+ identical calls or 2+ errors)     │
     └─────────────────────────────┬───────────────────────────────┘
                                   │
                    Is Task a New Turn / Escalation?
@@ -58,9 +60,9 @@ Agent Request (Claude Code / OpenCode / Pi)
                  ▼ (Tool Loop / Simple)            ▼ (New Turn / Complex)
       ┌──────────────────────┐        ┌─────────────────────────────┐
       │  ModelPool.select_   │        │     SLM Task Architect      │
-     │       by_sla()       │        │  (Qwen 2.5 Coder 0.5B GGUF) │
-     │  (CapabilitySLA /    │        │  ExecutionPlan Synthesis    │
-     │   Query Optimizer)   │        └──────────────┬──────────────┘
+      │       by_sla()       │        │ (Qwen 2.5 Coder 0.5B ONNX)  │
+      │   4-Dim Capability   │        │  ExecutionPlan Synthesis    │
+      │  Fit-Gate & Cheapest │        └──────────────┬──────────────┘
       └──────────┬───────────┘                       │
                  │                                   ▼
                  │                    ┌─────────────────────────────┐
@@ -86,11 +88,12 @@ Agent Request (Claude Code / OpenCode / Pi)
 
 ### Core Architecture Pillars
 
-1. **Turn Guard (`server/turn_guard.py`):** Pure regex classifier that bypasses tool loops in <2ms, detects stagnation loops, and triggers SLM re-planning only when necessary; selection uses `CapabilitySLA` requirements with `ModelPool.select_by_sla()`.
-2. **SLM Task Architect (`routing/slm_planner.py`):** Embedded local Qwen 2.5 Coder 0.5B model producing validated Pydantic `ExecutionPlan` JSON structures.
-3. **Dynamic Graph Factory (`orchestrator/dynamic_factory.py`):** Dynamic LangGraph compilation compiling parallel subtask fan-outs with SQLite state checkpointing.
-4. **Knowledge Vector Store (`knowledge/vector_store.py`):** LanceDB embedded vector database for fast semantic code context retrieval.
-5. **Session Guard (`orchestrator/session_guard.py`):** Prompt-cache-friendly prefix immutability and context window ceiling protection.
+1. **Turn Guard (`server/turn_guard.py`):** Pure synchronous regex classifier executing in <2ms. Distinguishes clean user turns (`SLM_PLAN`), active healthy tool loops (`DIRECT_ACTIVE_TIER`), and loop stagnation (`ESCALATE_SLM`). Healthy multi-file workflows stay direct without replanning churn.
+2. **SLM Task Architect (`routing/slm_planner.py`):** Local ONNX/GGUF model generating typed Pydantic `ExecutionPlan` structures with strict 100ms circuit breakers and deterministic fallbacks.
+3. **Capability Vector Model Selection (`routing/model_pool.py`):** Multi-dimensional capability scoring (`reasoning`, `tool_reliability`, `code_quality`, `latency_class`) weighted across 10 task types. Models are fit-gated and sorted by absolute cost ascending.
+4. **Dynamic Graph Factory (`orchestrator/dynamic_factory.py`):** Compiles per-turn transient LangGraph execution topologies with parallel worker fan-outs and typed reducers.
+5. **Session Guard (`orchestrator/session_guard.py`):** Enforces byte-identical prompt prefix immutability across turns for upstream provider cache hits, and compacts non-structural message history at 80% context capacity.
+6. **Knowledge Vector Store (`knowledge/vector_store.py`):** Embedded LanceDB vector index using deterministic 16-dimensional term-hash embeddings for zero-overhead local code symbol retrieval.
 
 ---
 
@@ -101,10 +104,10 @@ Agent Request (Claude Code / OpenCode / Pi)
 Install globally via **npm** or directly with **pip**:
 
 ```bash
-# Global installation (recommended for launcher shims)
+# Global installation via npm
 npm install -g autoconduck
 
-# Or local Python installation
+# Or Python installation via pip
 pip install -r requirements.txt
 pip install -e .
 ```
@@ -115,13 +118,13 @@ pip install -e .
 # 1. Interactive onboarding & TUI dashboard
 autoconduck
 
-# 2. Start as a background daemon
+# 2. Start headless daemon in background
 autoconduck start --headless --daemon
 
-# 3. Stop the background service
+# 3. Stop background daemon
 autoconduck stop
 
-# 4. Direct agent shortcuts
+# 4. Direct agent launch shortcuts
 autoconduck start --claude
 autoconduck start --opencode
 autoconduck start --pi
@@ -133,24 +136,27 @@ The server listens on `http://127.0.0.1:11434/v1` by default.
 
 ## Supported Agents
 
-AutoConduck provides automated configuration and launcher shims for **Claude Code**, **OpenCode**, and **Pi**:
+AutoConduck provides automated configuration, shims, and lifecycle hooks for **Claude Code**, **OpenCode**, **Pi**, and **Oh My Pi (OMP)**:
 
 ```bash
-# Automatically configure and install shims for supported agents:
-autoconduck install claude_code opencode pi
+# Automatically configure and install launcher shims for all agents:
+autoconduck install all
+
+# Or install specific agents:
+autoconduck install claude opencode pi omp
 ```
 
-Agent configuration edits are bounded between `# BEGIN AUTOCONDUCK` and `# END AUTOCONDUCK`, with automated backups saved to `~/.autoconduck/backups/<agent>/<timestamp>.bak`. Running `autoconduck reset` or `autoconduck uninstall` cleanly restores original configs.
+Agent configuration edits are bounded between `# BEGIN AUTOCONDUCK` and `# END AUTOCONDUCK` markers, with automated backups saved to `~/.autoconduck/backups/<agent>/<timestamp>.bak` (retaining the last 5 backups). Running `autoconduck reset` or `autoconduck uninstall` cleanly restores all original configuration files.
 
 ### Claude Code
 
-AutoConduck provides an Anthropic-compatible `/v1/messages` translation shim:
+AutoConduck provides an Anthropic-compatible `/v1/messages` translation shim and configures `settings.json`:
 
 ```bash
 # Launch directly through AutoConduck
 autoconduck start --claude
 
-# Or manually point Claude Code to the proxy:
+# Or manually configure Claude Code environment:
 export ANTHROPIC_BASE_URL="http://127.0.0.1:11434"
 export ANTHROPIC_AUTH_TOKEN="autoconduck-local"
 export ANTHROPIC_MODEL="autoconduck"
@@ -159,14 +165,17 @@ claude
 
 ### OpenCode
 
-AutoConduck connects directly to OpenCode via standard OpenAI-compatible endpoints:
+AutoConduck configures `opencode.json` with structured OpenAI-compatible provider endpoints:
 
 ```json
-// In opencode.json
 {
-  "provider": "openai",
-  "base_url": "http://127.0.0.1:11434/v1",
-  "model": "autoconduck"
+  "provider": {
+    "autoconduck": {
+      "type": "openai",
+      "baseURL": "http://127.0.0.1:11434/v1"
+    }
+  },
+  "model": "autoconduck/autoconduck"
 }
 ```
 
@@ -177,14 +186,23 @@ autoconduck start --opencode
 
 ### Pi Coding Agent
 
-Pi connects via settings or CLI arguments:
+AutoConduck installs a dedicated TypeScript extension `<pi_dir>/extensions/autoconduck.ts` using `pi.registerProvider()` and sets `defaultProvider: "autoconduck"` in `settings.json`:
 
 ```bash
 # Launch directly through AutoConduck
 autoconduck start --pi
+```
 
-# Or pass the local API base:
-pi --api-base http://127.0.0.1:11434/v1 --model autoconduck
+### Oh My Pi (OMP)
+
+AutoConduck supports Oh My Pi through dedicated link commands and config patching (`~/.omp/agent/models.yml` and `config.yml`):
+
+```bash
+# Link Oh My Pi to AutoConduck
+autoconduck omp link
+
+# Unlink Oh My Pi
+autoconduck omp unlink
 ```
 
 ---
@@ -193,36 +211,57 @@ pi --api-base http://127.0.0.1:11434/v1 --model autoconduck
 
 AutoConduck presents three virtual models to coding agents:
 
-| Pseudo-Model | Target Bias | Selection Behavior | Best For |
-| :--- | :---: | :---: | :--- |
-| **`autoconduck`** | Neutral (`0.00`) | Standard SLA-based selection | Everyday software engineering & mixed workflows |
-| **`autoconduck-budget`** | Cost-saving (`-0.20`) | Biases SLA-qualified selection toward lower cost | Repetitive tasks, small edits, cost minimization |
-| **`autoconduck-expensive`** | Quality-first (`+0.20`) | Biases SLA-qualified selection toward higher capability | Architecture refactors, deep reasoning, greenfield code |
+| Pseudo-Model | Selection Behavior | Best For |
+| :--- | :--- | :--- |
+| **`autoconduck`** | Standard SLA capability fit-gate, selects the **cheapest** qualifying model | Everyday software engineering & mixed workflows |
+| **`autoconduck-budget`** | Standard SLA capability fit-gate, selects the **cheapest** qualifying model | Repetitive tasks, small edits, and high-frequency runs |
+| **`autoconduck-expensive`** | Standard SLA capability fit-gate, selects the **most expensive / capable** qualifying model | Complex architectural refactoring, deep reasoning, greenfield design |
 
 ---
 
 ## How It Works Internally
 
-### 1. SLM Planning and SLA Selection (`routing/slm_planner.py`)
+### 1. Turn Guard (`server/turn_guard.py`)
 
-The embedded SLM generates an `ExecutionPlan` with per-subtask `CapabilitySLA` requirements. `ModelPool.select_by_sla()` and `pricing.select_for_sla()` filter active models by context, tools, reasoning, and cost, then choose the cheapest qualifying model. The fallback complexity signal is the simple word-count heuristic `orchestrator/helpers.py:complexity_of`.
+Turn Guard evaluates incoming messages synchronously in <2ms:
+- **`TurnAction.SLM_PLAN`**: Clean user turn without prior tool execution $\rightarrow$ invokes the embedded SLM planner.
+- **`TurnAction.DIRECT_ACTIVE_TIER`**: Healthy active tool loop $\rightarrow$ bypasses SLM replanning and routes directly to the active model tier. Healthy loops touching multiple files or turns are never interrupted.
+- **`TurnAction.ESCALATE_SLM`**: Genuine stagnation detected (3+ identical consecutive tool calls or 2+ consecutive tool execution errors) $\rightarrow$ triggers SLM diagnostic re-planning.
 
-### 2. Cost and Health Controls (`routing/pricing.py`)
+### 2. SLM Task Planning (`routing/slm_planner.py`)
 
-Models are mapped to a continuous logarithmic cost space:
+The local Small Language Model (defaulting to Qwen 2.5 Coder 0.5B ONNX) generates an `ExecutionPlan`:
+- **`route`**: `"fast_direct"` (single turn / simple tool loop) or `"dynamic_dag"` (multi-step workflow).
+- **`task_type`**: One of 10 types (`chat`, `explain`, `recon`, `single_edit`, `multi_edit`, `debug`, `refactor`, `full_workflow`, `git_ops`, `routine`).
+- **`confidence`**: Plan confidence score between `0.0` and `1.0`.
+- **`suggested_sla`**: `CapabilitySLA` containing context limits, tool requirements, reasoning requirements, and capability thresholds.
+- **`subtasks`**: Structured `SubTaskSpec` items declaring task scope, roles, constraints, and dependencies.
 
-```text
-scaled_cost(m) = ln(1 + price(m)) / ln(1 + max_price_in_pool)
-```
+### 3. "Fit-Gate Then Cheapest" Model Selection (`routing/model_pool.py`)
 
-AutoConduck matches the task value directly against candidate models:
-- **EMA Realized-Cost Blending:** After 3 turns, observed per-token costs blend with advertised pricing (`alpha = 0.1`).
-- **Degraded Provider Exclusion:** Automatically routes around providers with >20% error rates over a 300s sliding window.
-- **Spend Guard:** Bounded hourly/minute spend protection prevents runaway loops.
+AutoConduck matches candidate models using a multi-dimensional capability vector:
 
-### 3. Dynamic LangGraph Pipeline (`orchestrator/`)
+$$\text{Dimensions} = (\text{reasoning},\; \text{tool\_reliability},\; \text{code\_quality},\; \text{latency\_class})$$
 
-The SLM plan is compiled by `dynamic_factory.py` and `runner.py` into a dynamic LangGraph DAG with an optional LanceDB RAG node, parallel subtask fan-out via `subagents.py`, and a terminal Synthesizer node. Progress and reasoning are emitted to the harness through the SSE stream.
+1. **Task-Specific Weighting:** Dimension weights are assigned based on `plan.task_type` (`TASK_TYPE_WEIGHTS`).
+2. **Capability Fit Scoring:** Computes `capability_fit(vector, weights)` as:
+
+$$\text{fit} = \min_{d \in \text{dominant}} (\text{vector}[d]) + 0.1 \times \sum_{d} (w_d \times \text{vector}[d])$$
+
+3. **Confidence Floor Tightening:** Lower SLM plan confidence raises the capability floor:
+
+$$\text{floor} = \min(\text{base} + 0.15 \times (1 - \text{confidence}),\; 0.60)$$
+
+4. **Hard Filters:** Filters candidates by active status, tool support, reasoning support, minimum context window, and capability floor.
+5. **Opt-In Price Cap:** `CapabilitySLA.max_price_usd_per_mtok` (configured via `selection.path_price_cap_usd_per_mtok`, disabled by default `{}`) sets an optional price ceiling in USD per 1M tokens. If the price cap empties the pool, AutoConduck falls back to the cheapest qualifying model with `fallback_reason = "price_cap_emptied_pool"`.
+6. **Cheapest Selection:** Qualifying models are sorted by absolute cost ($P = \text{cost}_{\text{input}} + 0.5 \times \text{cost}_{\text{output}}$) ascending, picking the cheapest model (or most expensive if `autoconduck-expensive`).
+
+### 4. Dynamic LangGraph Pipeline (`orchestrator/`)
+
+When `plan.route == "dynamic_dag"`, `dynamic_factory.py` compiles a runtime `StateGraph`:
+- **RAG Node:** Ingests semantic code snippets from LanceDB when `plan.needs_rag == True`.
+- **Parallel Subtasks:** Independent subtask nodes execute concurrently with typed reducers (`Annotated[dict, _merge_dict]`).
+- **Synthesizer Node:** Combines findings, context, and code diffs into a unified markdown handoff response.
 
 ---
 
@@ -236,52 +275,95 @@ autoconduck
 
 ### Main Navigation Hub
 
-From the main menu, navigate directly to all major screens:
+From the main menu, navigate directly to all major views:
 
-- **Live Routing Stats (`d`):** Real-time routing decisions, latency histograms, and cost tracker.
-- **Configure Models (`m` / `e`):** Add custom providers, select models, and manage credentials.
-- **Check for Updates (`u`):** Check latest version and upgrade in-app.
-- **Settings (`s`):** Configure launch behavior, thresholds, and logging.
-- **Launch Agent (`a`):** Pick and launch a configured coding agent (Claude Code, OpenCode, Pi).
+- **Live Routing Stats (`d`):** Real-time routing decisions, latency histograms, token volume, and decision drill-down.
+- **Model Catalog (`m`):** Browse curated model presets and token pricing.
+- **Configure Integrations (`c`):** Set up providers, API keys, and custom endpoints.
+- **Edit Models (`e`):** Customize active models and capability overrides.
+- **Check for Updates (`u`):** Check latest version and upgrade in-place.
+- **Settings (`s`):** Interactive editor for thresholds, ports, and execution parameters.
+- **Launch Agent (`a`):** Pick and launch a configured coding agent.
 
 ### Keymap Reference
 
 | Key | Action |
 | :---: | :--- |
 | `Up` / `Down` | Move selection cursor |
-| `Enter` | Open / toggle selection |
+| `Enter` / `Space` | Open / toggle selection |
+| `Left` / `Esc` / `b` | Back / step float down |
+| `Right` / `+` | Advance / step float up |
 | `d` | Open detailed routing & latency drill-down |
-| `m` / `e` | Edit model sources & catalog |
-| `u` | Check for updates |
+| `m` | Open model catalog |
+| `c` | Configure integrations & API keys |
+| `e` | Edit models |
+| `u` | Check for updates & upgrade |
 | `s` | Open settings screen |
 | `a` | Open launch agent picker |
 | `p` | Pause / resume proxy routing |
 | `?` | Toggle keymap help |
-| `/` | Filter dashboard items |
-| `Ctrl+C` | Quit current screen / exit AutoConduck |
+| `/` | Filter list items |
+| `Ctrl+C` | Quit current screen / exit AutoConduck (`Ctrl+Q` disabled) |
+
+---
+
+## CLI Command Reference
+
+| Command | Description | Options & Flags |
+| :--- | :--- | :--- |
+| `autoconduck` | Launches interactive TUI dashboard | `--version` |
+| `autoconduck start` | Starts the AutoConduck proxy server | `--headless`, `--daemon`, `--port <int>`, `--host <str>`, `--claude`, `--opencode`, `--pi`, `--new-terminal` |
+| `autoconduck stop` | Stops the running proxy server & supervisor | `--port <int>` |
+| `autoconduck install [agents...]` | Configures agents & installs launcher shims | Positional: `claude`, `opencode`, `pi`, `omp`, `all` |
+| `autoconduck omp link` | Links Oh My Pi configuration to AutoConduck | |
+| `autoconduck omp unlink` | Reverts Oh My Pi configuration | |
+| `autoconduck edit` | Opens TUI directly on model/provider editor | |
+| `autoconduck stats` | Displays routing audit telemetry & cost stats | `--json`, `--days <int>`, `--reset`, `--force` |
+| `autoconduck update` | Upgrades AutoConduck to the latest release | `--dry-run` |
+| `autoconduck reset` | Reverts all agent configurations & cleans shims | `--force` |
+| `autoconduck uninstall` | Reverts configs, removes shims, & uninstalls | `--force` |
 
 ---
 
 ## Configuration Reference
 
-Configuration is stored in `~/.autoconduck/config.yaml` (or `$AUTOCONDUCK_HOME/config.yaml`), and credentials are kept securely in `~/.autoconduck/auth.yaml`.
+Configuration is stored in `~/.autoconduck/config.yaml` (or `$AUTOCONDUCK_HOME/config.yaml`), and credentials are kept in `~/.autoconduck/auth.yaml` (`0o600` permissions).
 
 ```yaml
+host: "127.0.0.1"
+port: 11434
+log_level: "INFO"
+ambiguous_low: 0.60
+ambiguous_high: 0.75
+escalation_threshold: 0.80
+
 selection:
-  degraded_error_rate: 0.20
-  degraded_window_s: 300
-  ambiguous_low: 0.60
-  ambiguous_high: 0.75
-  escalation_threshold: 0.80
-  hysteresis_floor: 0.50
+  # SLM Engine Settings
+  slm_model_path: "models/qwen2.5-coder-0.5b-instruct-q4.onnx"
+  slm_circuit_breaker_timeout_ms: 100
+  
+  # Session Guard & RAG
+  session_guard_compaction_ratio: 0.80
+  rag_max_tokens: 250
+  rag_db_path: "~/.autoconduck/rag_db"
+  
+  # Selection & Capability Floor Tunables
+  confidence_floor_k: 0.15
+  confidence_floor_max: 0.60
+  min_orchestrator_complexity: 0.72
+  slow_threshold: 0.75
   deescalation_threshold: 0.40
-  min_orchestrator_complexity: 0.62
-  tiebreaker_enabled: false
-  enable_fast_path_graph: true
+  
+  # Price Caps & Spend Guard (USD per 1M tokens)
+  path_price_cap_usd_per_mtok: {}
+  spend_guard_enabled: true
+  spend_guard_max_usd_per_min: 0.20
+  spend_guard_window_s: 300
+  
+  # Workspace Tools
   executor_enable_tools: true
   executor_max_tool_rounds: 10
   executor_enable_bash: false
-  expose_value_in_stats: true
 ```
 
 ### Custom Provider Registration
@@ -304,16 +386,20 @@ model_list:
 
 ## Audit & Observability
 
-AutoConduck exposes dedicated operational endpoints:
+AutoConduck exposes standard operational and proxy endpoints:
 
-- `GET /stats`: Returns live audit telemetry, routing breakdown (fast vs slow vs ambiguous), latency histograms, and estimated USD cost savings.
-- `GET /healthz`: Liveness and readiness health check endpoint.
+- `GET /healthz`: Health check endpoint (`{"status": "ok"}`).
+- `GET /v1/models`: OpenAI-compatible active models list.
+- `POST /v1/chat/completions`: OpenAI-compatible chat completion proxy (supports SSE `delta.reasoning_content`).
+- `POST /v1/messages`: Anthropic-compatible messages proxy (supports SSE `thinking_delta`).
+- `POST /v1/messages/count_tokens`: Anthropic token counting endpoint.
+- `GET /stats`: Returns live audit telemetry, decision breakdowns, token volume, latency histograms, and explainability metrics (`candidates_considered`, `binding_constraint`, `spend_cap_engaged`, `fallback_reason`).
 
 ```bash
-# Inspect routing audit logs and cost savings via CLI
+# View live telemetry in terminal
 autoconduck stats
 
-# Export JSON metrics
+# Export JSON audit telemetry
 autoconduck stats --json
 ```
 
@@ -331,8 +417,14 @@ pip install -e .
 # Run test suite
 python -m pytest
 
-# Refresh dynamic model catalog
-python scripts/refresh_catalog.py
+# Run smoke test
+python scripts/end_to_end_smoke.py
+
+# Version bump (syncs pyproject.toml, __init__.py, package.json, docs)
+python scripts/bump_version.py --patch
+
+# Update graphify knowledge graph
+graphify update .
 ```
 
 ---
