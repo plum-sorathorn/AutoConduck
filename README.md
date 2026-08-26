@@ -22,7 +22,7 @@
 
 Coding agents (**Claude Code**, **OpenCode**, **Pi**, and **Oh My Pi**) frequently send every prompt, from a single-line typo fix, git status check, or docstring lookup to a 20-file architecture migration, to a single expensive frontier model. This incurs massive token spend on routine turns while bottlenecking large multi-step changes without structured task decomposition.
 
-**AutoConduck 0.3.5** transforms local model routing into an autonomous, SLM-driven execution engine:
+**AutoConduck 0.3.5** transforms local model routing into an autonomous, SLM-driven orchestration engine:
 
 - **Turn Guard (0ms / <2ms):** Synchronous, regex-only classifier that detects active tool loops and dispatches them directly to the active model tier without replanning overhead. Stagnation is detected only on 3+ identical consecutive calls or 2+ consecutive errors.
 - **Embedded SLM Task Architect (Qwen 2.5 Coder 0.5B ONNX / GGUF):** Local small language model generates validated Pydantic task plans in <100ms, specifying exact DAG topology, subtask constraints, and SLA requirements.
