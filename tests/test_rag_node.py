@@ -35,9 +35,9 @@ except ImportError:
 
 def test_rag_fallback_store_table_operations():
     """In-memory or native LanceDB connection creates tables, inserts records, and searches."""
-    from autoconduck._compat.lancedb_fallback import connect
+    from autoconduck._compat.lancedb_fallback import LanceDBFallbackConnection
 
-    db = connect(tempfile.mkdtemp())
+    db = LanceDBFallbackConnection(tempfile.mkdtemp())
     table = db.create_table("api_symbols", schema=None)
     assert table is not None
 
